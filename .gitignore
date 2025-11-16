@@ -2,6 +2,7 @@
 db
 app.py
 out.txt
+test.js
 
 # Logs
 logs
