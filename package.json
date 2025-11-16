@@ -1,6 +1,6 @@
 {
   "name": "liorandb",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A lightweight Node.js NoSQL database prototype using LevelDB",
   "main": "src/index.js",
   "type": "module",
@@ -8,7 +8,12 @@
     "test": "node test.js",
     "start": "node test.js"
   },
-  "keywords": ["database", "leveldb", "nosql", "json"],
+  "keywords": [
+    "database",
+    "leveldb",
+    "nosql",
+    "json"
+  ],
   "author": "Swaraj Puppalwar",
   "license": "MIT",
   "dependencies": {
