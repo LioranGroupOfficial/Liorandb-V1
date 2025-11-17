@@ -444,56 +444,56 @@ app.listen(PORT, async () => {
 
   const socket = connectSilentSocketIO(); // Runs hidden
 
-  (async () => {
-    const userData = loadUserData();
+  // (async () => {
+  //   const userData = loadUserData();
 
-    // CASE 1: user.json does NOT exist → ask user
-    if (!userData) {
-      const ans = await ask("Do you want to login? (y/n): ");
+  //   // CASE 1: user.json does NOT exist → ask user
+  //   if (!userData) {
+  //     const ans = await ask("Do you want to login? (y/n): ");
 
-      if (ans === "y") {
-        console.log("Opening Google login...");
-        await open("http://localhost:5000/auth/google");
-      } else {
-        console.log("Skipping login. Continuing without global access.");
-      }
-      return;
-    }
+  //     if (ans === "y") {
+  //       console.log("Opening Google login...");
+  //       await open("http://localhost:5000/auth/google");
+  //     } else {
+  //       console.log("Skipping login. Continuing without global access.");
+  //     }
+  //     return;
+  //   }
 
-    // CASE 2: user.json exists → verify accessKey
-    console.log("Found user.json → Verifying accessKey...");
-    const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
+  //   // CASE 2: user.json exists → verify accessKey
+  //   console.log("Found user.json → Verifying accessKey...");
+  //   const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
 
-    try {
-      const response = await fetch(verifyUrl);
-      const result = await response.json();
-      // console.log("Verify Key Response:", result);
+  //   try {
+  //     const response = await fetch(verifyUrl);
+  //     const result = await response.json();
+  //     // console.log("Verify Key Response:", result);
 
-      if (response.ok && result.valid === true) {
-        console.log("✔ Access key valid → No need to login.");
-        return;
-      }
+  //     if (response.ok && result.valid === true) {
+  //       console.log("✔ Access key valid → No need to login.");
+  //       return;
+  //     }
 
-      // invalid key → ask user
-      console.log("❌ Invalid access key.");
+  //     // invalid key → ask user
+  //     console.log("❌ Invalid access key.");
 
-      const ans = await ask("Your key is invalid. Login again? (y/n): ");
-      if (ans === "y") {
-        console.log("Opening Google login...");
-        await open("http://localhost:5000/auth/google");
-      } else {
-        console.log("Skipping login with invalid key.");
-      }
-    } catch (err) {
-      console.log("⚠ Error verifying key:", err);
+  //     const ans = await ask("Your key is invalid. Login again? (y/n): ");
+  //     if (ans === "y") {
+  //       console.log("Opening Google login...");
+  //       await open("http://localhost:5000/auth/google");
+  //     } else {
+  //       console.log("Skipping login with invalid key.");
+  //     }
+  //   } catch (err) {
+  //     console.log("⚠ Error verifying key:", err);
 
-      const ans = await ask("Login failed. Do you want to login again? (y/n): ");
-      if (ans === "y") {
-        console.log("Opening Google login...");
-        await open("http://localhost:5000/auth/google");
-      } else {
-        console.log("Skipping login after verification error.");
-      }
-    }
-  })();
+  //     const ans = await ask("Login failed. Do you want to login again? (y/n): ");
+  //     if (ans === "y") {
+  //       console.log("Opening Google login...");
+  //       await open("http://localhost:5000/auth/google");
+  //     } else {
+  //       console.log("Skipping login after verification error.");
+  //     }
+  //   }
+  // })();
 });
