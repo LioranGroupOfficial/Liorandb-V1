@@ -14,17 +14,63 @@ export class LioranDB {
     }
   }
 
+  /** Get or auto-create collection object */
   collection(name) {
     if (this.collections.has(name)) {
       return this.collections.get(name);
     }
 
     const colPath = path.join(this.basePath, name);
+
+    // auto-create directory
+    if (!fs.existsSync(colPath)) {
+      fs.mkdirSync(colPath, { recursive: true });
+    }
+
     const col = new Collection(colPath);
     this.collections.set(name, col);
     return col;
   }
 
+  /** Create collection manually */
+  async createCollection(name) {
+    const colPath = path.join(this.basePath, name);
+
+    if (fs.existsSync(colPath)) {
+      throw new Error("Collection already exists");
+    }
+
+    // create folder
+    await fs.promises.mkdir(colPath, { recursive: true });
+
+    // load into memory map
+    const col = new Collection(colPath);
+    this.collections.set(name, col);
+
+    return true;
+  }
+
+  /** Delete collection fully */
+  async deleteCollection(name) {
+    const colPath = path.join(this.basePath, name);
+
+    if (!fs.existsSync(colPath)) {
+      throw new Error("Collection does not exist");
+    }
+
+    // close LevelDB instance if opened
+    if (this.collections.has(name)) {
+      await this.collections.get(name).close().catch(() => {});
+      this.collections.delete(name);
+    }
+
+    // force delete directory
+    await fs.promises.rm(colPath, { recursive: true, force: true });
+
+    return true;
+  }
+
+  /** Rename collection */
   async renameCollection(oldName, newName) {
     const oldPath = path.join(this.basePath, oldName);
     const newPath = path.join(this.basePath, newName);
@@ -32,34 +78,30 @@ export class LioranDB {
     if (!fs.existsSync(oldPath)) throw new Error("Collection does not exist");
     if (fs.existsSync(newPath)) throw new Error("New collection name exists");
 
-    // 1️⃣ Close open ClassicLevel instance
     if (this.collections.has(oldName)) {
-      await this.collections.get(oldName).close();
+      await this.collections.get(oldName).close().catch(() => {});
       this.collections.delete(oldName);
     }
 
-    // 2️⃣ Rename directory safely
     await fs.promises.rename(oldPath, newPath);
 
-    // 3️⃣ Reopen under new name
     const newCol = new Collection(newPath);
     this.collections.set(newName, newCol);
 
     return true;
   }
 
+  /** Drop a collection (alias deleteCollection) */
   async dropCollection(name) {
-    const p = path.join(this.basePath, name);
+    return this.deleteCollection(name);
+  }
 
-    if (!fs.existsSync(p)) return false;
+  /** List all collections */
+  async listCollections() {
+    const dirs = await fs.promises.readdir(this.basePath, { withFileTypes: true });
 
-    // close first
-    if (this.collections.has(name)) {
-      await this.collections.get(name).close();
-      this.collections.delete(name);
-    }
-
-    await fs.promises.rm(p, { recursive: true, force: true });
-    return true;
+    return dirs
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
   }
 }
