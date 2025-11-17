@@ -6,10 +6,11 @@
   "type": "module",
   "scripts": {
     "test": "node ./test/test.js",
-    "start": "node ./test/test.js"
+    "start": "node ./test/test.js",
+    "dev": "nodemon ./server.js"
   },
   "bin": {
-    "liorandb": "./serve.js"
+    "liorandb": "./server.js"
   },
   "keywords": [
     "database",
@@ -25,7 +26,11 @@
     "crypto": "^1.0.1",
     "express": "^5.1.0",
     "node-fetch": "^3.3.2",
+    "nodemon": "^3.1.11",
+    "open": "^11.0.0",
+    "socket.io-client": "^4.8.1",
     "subleveldown": "^6.0.1",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "ws": "^8.18.3"
   }
 }
