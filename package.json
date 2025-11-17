@@ -2,7 +2,7 @@
   "name": "liorandb",
   "version": "1.0.2",
   "description": "A lightweight Node.js NoSQL database prototype using LevelDB",
-  "main": "src/index.js",
+  "main": "lioran-connector.js",
   "type": "module",
   "scripts": {
     "test": "node ./test/test.js",
