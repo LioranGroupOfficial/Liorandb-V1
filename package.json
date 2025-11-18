@@ -1,6 +1,6 @@
 {
   "name": "liorandb",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A lightweight Node.js NoSQL database prototype using LevelDB",
   "main": "./src/index.js",
   "type": "module",
