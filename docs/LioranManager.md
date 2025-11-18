@@ -3,9 +3,9 @@
 The `LioranManager` provides an interactive command-line interface for managing your LioranDB instance. It allows you to perform administrative tasks such as user management and Cross-Origin Resource Sharing (CORS) configuration.
 
 ## Table of Contents
-*   [Getting Started](../getting-started.md)
-*   [CLI Commands](./cli.md)
-*   [LioranConnector](./lioran-connector.md)
+*   [Getting Started](https://github.com/YouthVibe/LioranDB/blob/main/docs/getting-started.md)
+*   [CLI Commands](https://github.com/YouthVibe/LioranDB/blob/main/docs/cli.md)
+*   [LioranConnector](https://github.com/YouthVibe/LioranDB/blob/main/docs/lioran-connector.md)
 
 ## Accessing the LioranManager
 

@@ -3,9 +3,9 @@
 The LioranDB CLI provides a set of commands to interact with your LioranDB instance, manage users, and control the server. Below are the available commands and their usage.
 
 ## Table of Contents
-*   [Getting Started](../getting-started.md)
-*   [LioranManager](./LioranManager.md)
-*   [LioranConnector](./lioran-connector.md)
+*   [Getting Started](https://github.com/YouthVibe/LioranDB/blob/main/docs/getting-started.md)
+*   [LioranManager](https://github.com/YouthVibe/LioranDB/blob/main/docs/LioranManager.md)
+*   [LioranConnector](https://github.com/YouthVibe/LioranDB/blob/main/docs/lioran-connector.md)
 
 ## Global Help
 

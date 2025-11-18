@@ -3,9 +3,9 @@
 Welcome to LioranDB! This guide will help you get up and running with LioranDB quickly.
 
 ## Table of Contents
-*   [CLI Commands](./cli.md)
-*   [LioranConnector](./lioran-connector.md)
-*   [LioranManager](./LioranManager.md)
+*   [CLI Commands](https://github.com/YouthVibe/LioranDB/blob/main/docs/cli.md)
+*   [LioranConnector](https://github.com/YouthVibe/LioranDB/blob/main/docs/lioran-connector.md)
+*   [LioranManager](https://github.com/YouthVibe/LioranDB/blob/main/docs/LioranManager.md)
 
 ## 1. Installation
 

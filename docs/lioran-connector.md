@@ -3,9 +3,9 @@
 The `LioranConnector` is the primary class for interacting with your LioranDB instance programmatically from Node.js applications. It provides methods for database, collection, and document management, as well as authentication.
 
 ## Table of Contents
-*   [Getting Started](../getting-started.md)
-*   [CLI Commands](./cli.md)
-*   [LioranManager](./LioranManager.md)
+*   [Getting Started](https://github.com/YouthVibe/LioranDB/blob/main/docs/getting-started.md)
+*   [CLI Commands](https://github.com/YouthVibe/LioranDB/blob/main/docs/cli.md)
+*   [LioranManager](https://github.com/YouthVibe/LioranDB/blob/main/docs/LioranManager.md)
 
 ## Installation
 

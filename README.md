@@ -2,10 +2,10 @@
 
 ## Documentation
 
-*   [Getting Started](./docs/getting-started.md)
-*   [CLI Commands](./docs/cli.md)
-*   [LioranManager](./docs/LioranManager.md)
-*   [LioranConnector](./docs/lioran-connector.md)
+*   [Getting Started](https://github.com/YouthVibe/LioranDB/blob/main/docs/getting-started.md)
+*   [CLI Commands](https://github.com/YouthVibe/LioranDB/blob/main/docs/cli.md)
+*   [LioranManager](https://github.com/YouthVibe/LioranDB/blob/main/docs/LioranManager.md)
+*   [LioranConnector](https://github.com/YouthVibe/LioranDB/blob/main/docs/lioran-connector.md)
 
 
 Welcome to LioranDB! This documentation will guide you through setting up and using LioranDB, a simple and powerful database solution.
