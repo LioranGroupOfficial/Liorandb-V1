@@ -1,6 +1,6 @@
 {
   "name": "liorandb",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "LioranDB is a lightweight, file-based database solution designed for simplicity and ease of use. It offers a command-line interface (CLI) for server management, user authentication, and CORS configuration, alongside a Node.js connector with a MongoDB-like API for seamless programmatic interaction.",
   "main": "./src/index.js",
   "type": "module",
