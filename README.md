@@ -1,98 +1,145 @@
-# P2P-DB Documentation
+# LioranDB
 
-Welcome to the P2P-DB documentation. This database is designed for peer-to-peer applications.
+## Documentation
 
-## Getting Started
+*   [Developer Documentation](./docs/LioranDB-dev-docs.md)
+*   [Getting Started](./docs/getting-started.md)
+*   [CLI Commands](./docs/cli.md)
+*   [LioranManager](./docs/LioranManager.md)
+*   [LioranConnector](./docs/lioran-connector.md)
 
-## API Reference
 
-### LioranManager
+Welcome to LioranDB! This documentation will guide you through setting up and using LioranDB, a simple and powerful database solution.
 
-The `LioranManager` class is the entry point for interacting with the P2P-DB. It allows you to manage multiple databases.
+## 1. Installation
 
-#### Constructor
+To get started with LioranDB, you need to install it via npm. Open your terminal and run the following command:
 
-`new LioranManager()`
+```bash
+npm i liorandb
+```
 
-Initializes a new `LioranManager` instance. It sets up the root path for storing databases.
+## 2. Running the LioranDB Server
 
-#### Methods
+LioranDB can be run in two modes: local and global (P2P).
 
-- `createDatabase(name)`: Creates a new database with the given name.
-- `openDatabase(name)`: Opens an existing database.
-- `closeDatabase(name)`: Closes an open database.
-- `renameDatabase(oldName, newName)`: Renames an existing database.
-- `deleteDatabase(name)`: Deletes a database and all its contents.
-- `listDatabases()`: Lists all available databases.
+### Local Mode (Default)
 
-### LioranDB
+To start the LioranDB server locally, which will be accessible at `http://localhost:2008`, use the `serve` command:
 
-The `LioranDB` class represents a single database and provides methods for managing collections within that database.
+```bash
+npx liorandb serve
+```
 
-#### Constructor
+### Global P2P Mode (Coming Soon)
 
-`new LioranDB(basePath, dbName, manager)`
+LioranDB will soon support a global P2P mode, allowing your device to be accessible globally via an access-key. This feature is currently under development.
 
-- `basePath`: The base path where the database files are stored.
-- `dbName`: The name of the database.
-- `manager`: A reference to the `LioranManager` instance.
+```bash
+npx liorandb serve --global # Coming Soon!
+```
 
-#### Methods
+## 3. Authentication
 
-- `collection(name)`: Retrieves or creates a collection with the given name.
-- `renameCollection(oldName, newName)`: Renames an existing collection.
-- `dropCollection(name)`: Deletes a collection and all its documents.
+### Logging In
 
-### Collection
+To log into your LioranDB account and obtain an API key, use the `login` command. This will open an interactive login flow:
 
-The `Collection` class represents a collection within a database and provides methods for performing CRUD operations on documents.
+```bash
+npx liorandb login
+```
 
-#### Constructor
+### Logging Out
 
-`new Collection(dir)`
+To log out and clear all stored credentials, use the `logout` command:
 
-- `dir`: The directory where the collection's data is stored.
+```bash
+npx liorandb logout
+```
 
-#### Methods
+## 4. Using the LioranConnector (Node.js)
 
-- `close()`: Closes the underlying database connection for the collection.
-- `insertOne(doc)`: Inserts a single document into the collection.
-- `insertMany(docs)`: Inserts multiple documents into the collection.
-- `find(query)`: Finds documents matching the given query.
-- `findOne(query)`: Finds a single document matching the given query.
-- `updateOne(filter, update, options)`: Updates a single document matching the filter.
-- `updateMany(filter, update)`: Updates multiple documents matching the filter.
-- `deleteOne(filter)`: Deletes a single document matching the filter.
-- `deleteMany(filter)`: Deletes multiple documents matching the filter.
-- `countDocuments(filter)`: Counts documents matching the given filter.
+The `LioranConnector` class provides a convenient way to interact with your LioranDB instance from your Node.js applications. Below is a comprehensive example demonstrating its usage.
 
-### Query Utilities
+First, import the `LioranConnector`:
 
-These functions are used internally for document matching and updating.
+```javascript
+import { LioranConnector } from "liorandb";
+```
 
-#### `matchDocument(doc, query)`
+Here's a full example:
 
-Compares a document against a query to determine if it matches. Supports various operators like `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, and `$in`.
+```javascript
+import { LioranConnector } from "liorandb";
 
-#### `applyUpdate(oldDoc, update)`
 
-Applies update operations to a document. Supports `$set` and `$inc` operators, as well as direct merging of properties.
+async function main() {
+  // --- LOGIN ---
+  // Before you can interact with LioranDB, you need to log in to get an API key.
+  // Replace "http://localhost:2008", "admin", and "admin" with your server URL and credentials.
+  const { apiKey } = await LioranConnector.login(
+    "http://localhost:2008",
+    "admin",
+    "admin"
+  );
 
-The `LioranManager` class is the entry point for interacting with the P2P-DB. It allows you to manage multiple databases.
 
-#### Constructor
+  // Create connector client
+  // Initialize the LioranConnector with your server's base URL and the obtained API key.
+  const client = new LioranConnector("http://localhost:2008", apiKey);
 
-`new LioranManager()`
 
-Initializes a new `LioranManager` instance. It sets up the root path for storing databases.
+  // === MONGO STYLE USAGE ===
+  // LioranDB provides a MongoDB-like interface for ease of use.
 
-#### Methods
+  // You can create and delete databases directly via the client.
+  // client.createDatabase("schoolDB");
+  // client.deleteDatabase("schoolDB");
 
-- `createDatabase(name)`: Creates a new database with the given name.
-- `openDatabase(name)`: Opens an existing database.
-- `closeDatabase(name)`: Closes an open database.
-- `renameDatabase(oldName, newName)`: Renames an existing database.
-- `deleteDatabase(name)`: Deletes a database and all its contents.
-- `listDatabases()`: Lists all available databases.
 
-## Examples
+  // Get a reference to a specific database. If it doesn't exist, LioranDB will create it.
+  const db = client.db("schoolDB");
+  // Get a reference to a collection within that database. If it doesn't exist, LioranDB will create it.
+  const students = db.collection("students");
+
+
+  console.log("\n--- INSERT ONE ---");
+  // Insert a single document into the "students" collection.
+  await students.insertOne({ name: "Swaraj", age: 17 });
+
+
+  console.log("\n--- FIND ---");
+  // Find documents that match a specific query. Here, we find all students with age 17.
+  const found = await students.find({ age: 17 });
+  console.log(found);
+
+
+  console.log("\n--- UPDATE MANY ---");
+  // Update multiple documents. Here, we change the age of all students named "Swaraj" to 18.
+  await students.updateMany({ name: "Swaraj" }, { age: 18 });
+
+
+  console.log("\n--- FIND AFTER UPDATE ---");
+  // Verify the update by finding the document again.
+  const updated = await students.find({ name: "Swaraj" });
+  console.log(updated);
+
+
+  console.log("\n--- DELETE MANY ---");
+  // Delete multiple documents. Here, we delete all documents in the "students" collection.
+  await students.deleteMany({});
+
+
+  console.log("\n--- LIST DATABASES ---");
+  // List all databases currently managed by LioranDB.
+  console.log(await client.listDatabases());
+
+
+  console.log("\nDONE");
+}
+
+
+main().catch(err => console.error("Error:", err));
+```
+
+This documentation should help you get started with LioranDB quickly and efficiently. If you have any questions, feel free to refer to other documentation files or reach out to the community.

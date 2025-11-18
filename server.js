@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+const args = process.argv.slice(2);
+const isGlobal = args.includes("--global");
+const isLocal = args.includes("--local");
+
 // server.js
 import express from "express";
 import crypto from "crypto";
@@ -220,46 +224,6 @@ function setupConsoleCommands() {
   });
 }
 
-app.get("/callback", async (req, res) => {
-  const token = req.query.token;
-  if (!token) {
-    res.send("No token received");
-    return;
-  }
-
-  // console.log("Received Google OAuth token:", token);
-
-  try {
-    const response = await fetch("http://localhost:5000/user/getUser", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    const result = await response.json();
-
-    if (!result.userId || !result.accessKey) {
-      // console.log("❌ Backend did not return userId or accessKey:", result);
-      return res.send("Failed to get user details from auth server.");
-    }
-
-    // Save user.json inside BaseDBFolder
-    saveUserData({
-      userId: result.userId,
-      accessKey: result.accessKey
-    });
-
-    // console.log("✔ User details saved:", result);
-
-    res.send("Login successful! User data stored locally.");
-  } catch (err) {
-    console.error("Error fetching user details:", err);
-    res.send("Error fetching user details.");
-  }
-});
-
 /* ============================================================
    LOGIN
 ============================================================ */
@@ -437,63 +401,66 @@ app.use((req, res) => {
 /* ============================================================
    START SERVER
 ============================================================ */
-app.listen(PORT, async () => {
-  console.log(`LioranDB admin server running on port ${PORT}`);
-  // WAIT 500ms before login check (to avoid TTY conflicts)
-  await new Promise(r => setTimeout(r, 500));
+if (isLocal) {
 
-  const socket = connectSilentSocketIO(); // Runs hidden
+  app.listen(PORT, async () => {
+    console.log(`LioranDB admin server running on port ${PORT}`);
+    // WAIT 500ms before login check (to avoid TTY conflicts)
+    await new Promise(r => setTimeout(r, 500));
 
-  // (async () => {
-  //   const userData = loadUserData();
+    const socket = connectSilentSocketIO(); // Runs hidden
 
-  //   // CASE 1: user.json does NOT exist → ask user
-  //   if (!userData) {
-  //     const ans = await ask("Do you want to login? (y/n): ");
+    // (async () => {
+    //   const userData = loadUserData();
 
-  //     if (ans === "y") {
-  //       console.log("Opening Google login...");
-  //       await open("http://localhost:5000/auth/google");
-  //     } else {
-  //       console.log("Skipping login. Continuing without global access.");
-  //     }
-  //     return;
-  //   }
+    //   // CASE 1: user.json does NOT exist → ask user
+    //   if (!userData) {
+    //     const ans = await ask("Do you want to login? (y/n): ");
 
-  //   // CASE 2: user.json exists → verify accessKey
-  //   console.log("Found user.json → Verifying accessKey...");
-  //   const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
+    //     if (ans === "y") {
+    //       console.log("Opening Google login...");
+    //       await open("http://localhost:5000/auth/google");
+    //     } else {
+    //       console.log("Skipping login. Continuing without global access.");
+    //     }
+    //     return;
+    //   }
 
-  //   try {
-  //     const response = await fetch(verifyUrl);
-  //     const result = await response.json();
-  //     // console.log("Verify Key Response:", result);
+    //   // CASE 2: user.json exists → verify accessKey
+    //   console.log("Found user.json → Verifying accessKey...");
+    //   const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
 
-  //     if (response.ok && result.valid === true) {
-  //       console.log("✔ Access key valid → No need to login.");
-  //       return;
-  //     }
+    //   try {
+    //     const response = await fetch(verifyUrl);
+    //     const result = await response.json();
+    //     // console.log("Verify Key Response:", result);
 
-  //     // invalid key → ask user
-  //     console.log("❌ Invalid access key.");
+    //     if (response.ok && result.valid === true) {
+    //       console.log("✔ Access key valid → No need to login.");
+    //       return;
+    //     }
 
-  //     const ans = await ask("Your key is invalid. Login again? (y/n): ");
-  //     if (ans === "y") {
-  //       console.log("Opening Google login...");
-  //       await open("http://localhost:5000/auth/google");
-  //     } else {
-  //       console.log("Skipping login with invalid key.");
-  //     }
-  //   } catch (err) {
-  //     console.log("⚠ Error verifying key:", err);
+    //     // invalid key → ask user
+    //     console.log("❌ Invalid access key.");
 
-  //     const ans = await ask("Login failed. Do you want to login again? (y/n): ");
-  //     if (ans === "y") {
-  //       console.log("Opening Google login...");
-  //       await open("http://localhost:5000/auth/google");
-  //     } else {
-  //       console.log("Skipping login after verification error.");
-  //     }
-  //   }
-  // })();
-});
+    //     const ans = await ask("Your key is invalid. Login again? (y/n): ");
+    //     if (ans === "y") {
+    //       console.log("Opening Google login...");
+    //       await open("http://localhost:5000/auth/google");
+    //     } else {
+    //       console.log("Skipping login with invalid key.");
+    //     }
+    //   } catch (err) {
+    //     console.log("⚠ Error verifying key:", err);
+
+    //     const ans = await ask("Login failed. Do you want to login again? (y/n): ");
+    //     if (ans === "y") {
+    //       console.log("Opening Google login...");
+    //       await open("http://localhost:5000/auth/google");
+    //     } else {
+    //       console.log("Skipping login after verification error.");
+    //     }
+    //   }
+    // })();
+  });
+}
