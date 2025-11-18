@@ -2,7 +2,6 @@
 
 ## Documentation
 
-*   [Developer Documentation](./docs/LioranDB-dev-docs.md)
 *   [Getting Started](./docs/getting-started.md)
 *   [CLI Commands](./docs/cli.md)
 *   [LioranManager](./docs/LioranManager.md)
