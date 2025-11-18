@@ -401,7 +401,7 @@ app.use((req, res) => {
 /* ============================================================
    START SERVER
 ============================================================ */
-if (isLocal) {
+if (isLocal || (!isLocal && !isGlobal)) {
 
   app.listen(PORT, async () => {
     console.log(`LioranDB admin server running on port ${PORT}`);
