@@ -43,7 +43,7 @@ app.get("/callback", async (req, res) => {
     }
 
     try {
-        const response = await fetch("http://localhost:5000/user/getUser", {
+        const response = await fetch("https://liorandb-server.onrender.com/user/getUser", {
             method: "GET",
             headers: {
                 "Authorization": `Bearer ${token}`,
@@ -83,14 +83,14 @@ app.listen(PORT, async () => {
     // CASE 1 → user.json NOT FOUND → Open login → Exit
     if (!userData) {
         console.log("No user.json found → Opening Google login...");
-        await open("http://localhost:5000/auth/google");
+        await open("https://liorandb-server.onrender.com/auth/google");
         return;
     }
 
     // CASE 2 → user.json found → Verify key
     console.log("Found user.json → Verifying accessKey...");
 
-    const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
+    const verifyUrl = `https://liorandb-server.onrender.com/user/verifyKey/${userData.accessKey}`;
 
     try {
         const response = await fetch(verifyUrl);
@@ -103,11 +103,11 @@ app.listen(PORT, async () => {
         }
 
         console.log("❌ Invalid access key → Opening login...");
-        await open("http://localhost:5000/auth/google");
+        await open("https://liorandb-server.onrender.com/auth/google");
 
     } catch (err) {
         console.log("⚠ Error verifying key:", err);
         console.log("Opening Google login...");
-        await open("http://localhost:5000/auth/google");
+        await open("https://liorandb-server.onrender.com/auth/google");
     }
 });

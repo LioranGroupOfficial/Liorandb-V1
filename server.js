@@ -12,7 +12,7 @@ import path from "path";
 import fetch from "node-fetch";
 import readline from "readline";
 // silent-socket.js
-import { connectSilentSocketIO } from "./silent-socketio.js";
+import { connectSilentSocketIOHost } from "./silent-socketio.js";
 import { LioranManager, getBaseDBFolder } from "./src/index.js";
 
 const app = express();
@@ -113,33 +113,54 @@ function ask(question) {
   );
 }
 
+const GLOBAL_ACCESS_KEY = loadUserData()?.accessKey || null;
+
 /* ============================================================
-   AUTH MIDDLEWARE
+   AUTH MIDDLEWARE (UPDATED WITH GLOBAL KEY + CORS BYPASS)
 ============================================================ */
 async function auth(req, res, next) {
   const apiKey = req.headers["x-api-key"];
   if (!apiKey) return res.status(401).json({ error: "Missing API key" });
 
+  /* ------------------------------------------------------------
+     1) LOCAL USER CHECK
+  ------------------------------------------------------------ */
   const user = await usersColl.findOne({ apiKey });
-  if (!user) return res.status(401).json({ error: "Unauthorized" });
 
-  // if (user.expires < new Date()) {
-  //   return res.status(403).json({ error: "API key expired" });
-  // }
+  if (user) {
+    const cors = await corsColl.findOne({ username: user.username });
+    const origin = req.headers.origin;
 
-  const cors = await corsColl.findOne({ username: user.username });
-  const origin = req.headers.origin;
+    if (
+      cors?.allowedCors?.length &&
+      !cors.allowedCors.includes("*") &&
+      !cors.allowedCors.includes(origin)
+    ) {
+      return res.status(403).json({ error: "CORS not allowed" });
+    }
 
-  if (
-    cors?.allowedCors?.length &&
-    !cors.allowedCors.includes("*") &&
-    !cors.allowedCors.includes(origin)
-  ) {
-    return res.status(403).json({ error: "CORS not allowed" });
+    req.user = user;
+    return next();
   }
 
-  req.user = user;
-  next();
+  /* ------------------------------------------------------------
+     2) GLOBAL ACCESS KEY CHECK
+  ------------------------------------------------------------ */
+  if (GLOBAL_ACCESS_KEY && apiKey === GLOBAL_ACCESS_KEY) {
+    req.user = {
+      username: "GLOBAL",
+      permissions: ["createDB", "deleteDB", "readDB", "writeDB"],
+      isGlobal: true
+    };
+
+    // SKIP CORS for global
+    return next();
+  }
+
+  /* ------------------------------------------------------------
+     3) FAIL → UNAUTHORIZED
+  ------------------------------------------------------------ */
+  return res.status(401).json({ error: "Unauthorized" });
 }
 
 /* ============================================================
@@ -408,7 +429,7 @@ if (isLocal || (!isLocal && !isGlobal)) {
     // WAIT 500ms before login check (to avoid TTY conflicts)
     await new Promise(r => setTimeout(r, 500));
 
-    const socket = connectSilentSocketIO(); // Runs hidden
+    const socket = connectSilentSocketIOHost(); // Runs hidden
 
     // (async () => {
     //   const userData = loadUserData();
@@ -419,7 +440,7 @@ if (isLocal || (!isLocal && !isGlobal)) {
 
     //     if (ans === "y") {
     //       console.log("Opening Google login...");
-    //       await open("http://localhost:5000/auth/google");
+    //       await open("https://liorandb-server.onrender.com/auth/google");
     //     } else {
     //       console.log("Skipping login. Continuing without global access.");
     //     }
@@ -428,7 +449,7 @@ if (isLocal || (!isLocal && !isGlobal)) {
 
     //   // CASE 2: user.json exists → verify accessKey
     //   console.log("Found user.json → Verifying accessKey...");
-    //   const verifyUrl = `http://localhost:5000/user/verifyKey/${userData.accessKey}`;
+    //   const verifyUrl = `https://liorandb-server.onrender.com/user/verifyKey/${userData.accessKey}`;
 
     //   try {
     //     const response = await fetch(verifyUrl);
@@ -446,7 +467,7 @@ if (isLocal || (!isLocal && !isGlobal)) {
     //     const ans = await ask("Your key is invalid. Login again? (y/n): ");
     //     if (ans === "y") {
     //       console.log("Opening Google login...");
-    //       await open("http://localhost:5000/auth/google");
+    //       await open("https://liorandb-server.onrender.com/auth/google");
     //     } else {
     //       console.log("Skipping login with invalid key.");
     //     }
@@ -456,7 +477,7 @@ if (isLocal || (!isLocal && !isGlobal)) {
     //     const ans = await ask("Login failed. Do you want to login again? (y/n): ");
     //     if (ans === "y") {
     //       console.log("Opening Google login...");
-    //       await open("http://localhost:5000/auth/google");
+    //       await open("https://liorandb-server.onrender.com/auth/google");
     //     } else {
     //       console.log("Skipping login after verification error.");
     //     }

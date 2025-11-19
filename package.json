@@ -32,6 +32,7 @@
     "socket.io-client": "^4.8.1",
     "subleveldown": "^6.0.1",
     "uuid": "^9.0.0",
+    "wrtc": "^0.4.7",
     "ws": "^8.18.3"
   }
 }
