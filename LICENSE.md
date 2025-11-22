@@ -1,35 +1,41 @@
-MIT License
+LIORANDB LICENSE
 
 Copyright (c) 2025 Swaraj Puppalwar
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is hereby granted to any person obtaining a copy of this software and associated documentation files (the "Software") to use, copy, modify, and distribute the Software for PERSONAL, NON-COMMERCIAL PURPOSES ONLY, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
 
-**Special Conditions for LioranDB:**
+SPECIAL CONDITIONS FOR LIORANDB
 
-Notwithstanding the terms of the MIT License above, the following additional conditions apply to LioranDB:
+Notwithstanding the general permission above, the following additional conditions apply specifically to LioranDB:
 
-1.  **Personal Use**: You are granted permission to use this Software for personal, non-commercial purposes without restriction.
+1. Personal Use
+   Permission is granted to use the Software for personal projects, educational purposes, experimentation, and non-commercial development only.
 
-2.  **Commercial and Production Use**: Any use of this Software for commercial purposes, including but not limited to resale, integration into commercial products, or deployment in a production environment for commercial gain, is strictly prohibited without obtaining a separate commercial license key from LioranDB's official SaaS platform.
+2. Commercial and Production Use
+   Any use of the Software for commercial purposes, including but not limited to:
 
-3.  **No Resale**: You may not resell, redistribute, or sublicense this Software as a standalone product or as part of any commercial offering without explicit written permission and a valid commercial license from Swaraj Puppalwar.
+* deployment in production environments,
+* integration into paid products or services,
+* hosting for third parties,
+* resale or monetization of any form,
 
-By using this Software, you agree to abide by both the MIT License and these Special Conditions.
+is strictly prohibited without obtaining a separate commercial license from the official LioranDB SaaS platform or direct written authorization from Swaraj Puppalwar or Lioran Group.
+
+3. No Resale or Redistribution
+   You may not sell, sublicense, redistribute, or repackage the Software as a standalone product or as part of any commercial offering without explicit written permission and a valid commercial agreement.
+
+4. Ownership
+   All intellectual property rights in the Software, including but not limited to source code, architecture, brand identity, and system design, remain the exclusive property of Swaraj Puppalwar and Lioran Group.
+
+By using this Software, you agree to comply fully with this license and all associated conditions.
+
+This license supersedes and replaces any previous licensing terms related to LioranDB.
+
+© 2025 Swaraj Puppalwar & Lioran Group. All rights reserved.
