@@ -116,15 +116,26 @@ if (flags.includes("-h") || flags.includes("--help")) {
 
 // ---------- COMMAND ROUTING ----------
 switch (command) {
-    case "serve":
+    case "serve": {
+        const hasGlobal = flags.includes("--global");
+        const hasLocal = flags.includes("--local");
+
+        // Default behavior: local mode
+        const isGlobal = hasGlobal;
+        const isLocal = hasLocal || !hasGlobal;  // If nothing -> true
+
         console.log(
-            C.yellow(flags.includes("--global")
-                ? "\n🔗 Starting LioranDB in GLOBAL P2P mode..."
-                : "\n📦 Starting LioranDB locally at http://localhost:2008 ..."
+            C.yellow(
+                isGlobal
+                    ? "\n🔗 Starting LioranDB in GLOBAL P2P mode..."
+                    : "\n📦 Starting LioranDB locally at http://localhost:2008 ..."
             )
         );
-        run("./server.js");
+
+        run("./server.js", { isLocal, isGlobal });
         break;
+    }
+
 
     case "login":
         console.log(C.green("\n🔐 Opening login flow...\n"));

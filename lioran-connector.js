@@ -220,7 +220,7 @@ class LioranConnector {
         path,
         method,
         body: body || undefined,
-        apiKey: this.accessKey
+        apiKey: this.apiKey
       });
     }
 
@@ -323,16 +323,27 @@ class LioranConnector {
   // =====================================================================
   // AUTH (only for local mode)
   // =====================================================================
-  static async login(baseURL, username, password) {
-    const res = await fetch(`${baseURL}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+  async login({ baseURL = "http://localhost:2008", username, password }) {
+    if (this.isGlobal) {
+      const data = await this.request(`/login`, "POST", {
+        username,
+        password,
+      });
+      this.apiKey = data.apiKey;
+      return data;
+    }
+    else {
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
-    return data;
+      const res = await fetch(`${baseURL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Login failed");
+      return data;
+    }
   }
 
   // =====================================================================
@@ -341,32 +352,32 @@ class LioranConnector {
   destroy() {
     try {
       if (this.dataChannel) {
-        try { this.dataChannel.onopen = null; } catch {}
-        try { this.dataChannel.onclose = null; } catch {}
-        try { this.dataChannel.onerror = null; } catch {}
-        try { this.dataChannel.onmessage = null; } catch {}
-        try { this.dataChannel.close(); } catch {}
+        try { this.dataChannel.onopen = null; } catch { }
+        try { this.dataChannel.onclose = null; } catch { }
+        try { this.dataChannel.onerror = null; } catch { }
+        try { this.dataChannel.onmessage = null; } catch { }
+        try { this.dataChannel.close(); } catch { }
         this.dataChannel = null;
       }
 
       if (this.peer) {
-        try { this.peer.onicecandidate = null; } catch {}
-        try { this.peer.ondatachannel = null; } catch {}
-        try { this.peer.close(); } catch {}
+        try { this.peer.onicecandidate = null; } catch { }
+        try { this.peer.ondatachannel = null; } catch { }
+        try { this.peer.close(); } catch { }
         this.peer = null;
       }
 
       if (this.socket) {
-        try { this.socket.io.opts.reconnection = false; } catch {}
-        try { this.socket.off(); } catch {}
-        try { this.socket.removeAllListeners?.(); } catch {}
-        try { this.socket.disconnect(); } catch {}
-        try { this.socket.io?.engine?.close?.(); } catch {}
+        try { this.socket.io.opts.reconnection = false; } catch { }
+        try { this.socket.off(); } catch { }
+        try { this.socket.removeAllListeners?.(); } catch { }
+        try { this.socket.disconnect(); } catch { }
+        try { this.socket.io?.engine?.close?.(); } catch { }
         this.socket = null;
       }
 
       for (const [reqId, { reject }] of this.pendingRequests.entries()) {
-        try { reject(new Error("Connection destroyed")); } catch {}
+        try { reject(new Error("Connection destroyed")); } catch { }
       }
       this.pendingRequests.clear();
 

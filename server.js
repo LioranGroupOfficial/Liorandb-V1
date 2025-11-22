@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 const args = process.argv.slice(2);
 const isGlobal = args.includes("--global");
-const isLocal = args.includes("--local");
 
 // server.js
 import express from "express";
@@ -422,66 +421,12 @@ app.use((req, res) => {
 /* ============================================================
    START SERVER
 ============================================================ */
-if (isLocal || (!isLocal && !isGlobal)) {
+app.listen(PORT, async () => {
+  console.log(`LioranDB admin server running on port ${PORT}`);
+  // WAIT 500ms before login check (to avoid TTY conflicts)
+  await new Promise(r => setTimeout(r, 500));
 
-  app.listen(PORT, async () => {
-    console.log(`LioranDB admin server running on port ${PORT}`);
-    // WAIT 500ms before login check (to avoid TTY conflicts)
-    await new Promise(r => setTimeout(r, 500));
-
-    const socket = connectSilentSocketIOHost(); // Runs hidden
-
-    // (async () => {
-    //   const userData = loadUserData();
-
-    //   // CASE 1: user.json does NOT exist → ask user
-    //   if (!userData) {
-    //     const ans = await ask("Do you want to login? (y/n): ");
-
-    //     if (ans === "y") {
-    //       console.log("Opening Google login...");
-    //       await open("https://liorandb-server.onrender.com/auth/google");
-    //     } else {
-    //       console.log("Skipping login. Continuing without global access.");
-    //     }
-    //     return;
-    //   }
-
-    //   // CASE 2: user.json exists → verify accessKey
-    //   console.log("Found user.json → Verifying accessKey...");
-    //   const verifyUrl = `https://liorandb-server.onrender.com/user/verifyKey/${userData.accessKey}`;
-
-    //   try {
-    //     const response = await fetch(verifyUrl);
-    //     const result = await response.json();
-    //     // console.log("Verify Key Response:", result);
-
-    //     if (response.ok && result.valid === true) {
-    //       console.log("✔ Access key valid → No need to login.");
-    //       return;
-    //     }
-
-    //     // invalid key → ask user
-    //     console.log("❌ Invalid access key.");
-
-    //     const ans = await ask("Your key is invalid. Login again? (y/n): ");
-    //     if (ans === "y") {
-    //       console.log("Opening Google login...");
-    //       await open("https://liorandb-server.onrender.com/auth/google");
-    //     } else {
-    //       console.log("Skipping login with invalid key.");
-    //     }
-    //   } catch (err) {
-    //     console.log("⚠ Error verifying key:", err);
-
-    //     const ans = await ask("Login failed. Do you want to login again? (y/n): ");
-    //     if (ans === "y") {
-    //       console.log("Opening Google login...");
-    //       await open("https://liorandb-server.onrender.com/auth/google");
-    //     } else {
-    //       console.log("Skipping login after verification error.");
-    //     }
-    //   }
-    // })();
-  });
-}
+  if (isGlobal) {
+    connectSilentSocketIOHost(); // Runs hidden
+  }
+});

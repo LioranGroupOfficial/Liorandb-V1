@@ -209,7 +209,18 @@ export function connectSilentSocketIOHost() {
 
   // === ICE & Signaling ===
 
-  socket.on("connect", () => {
+  socket.on("connect", async () => {
+    const res = await fetch("https://liorandb-server.onrender.com/user/socketId", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ socketId: socket.id, accessKey: loadUserData().accessKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("Failed to update socketId:", data.error || `HTTP ${res.status}`);
+      return;
+    }
+
     socket.emit("join-room", roomId);
   });
 
