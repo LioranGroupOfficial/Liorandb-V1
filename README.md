@@ -1,144 +1,224 @@
-# LioranDB
+# @liorandb/core
 
-## Documentation
+**LioranDB Core Module** – Lightweight, local-first, peer-to-peer database management for Node.js.
 
-*   [Getting Started](https://github.com/YouthVibe/LioranDB/blob/main/docs/getting-started.md)
-*   [CLI Commands](https://github.com/YouthVibe/LioranDB/blob/main/docs/cli.md)
-*   [LioranManager](https://github.com/YouthVibe/LioranDB/blob/main/docs/LioranManager.md)
-*   [LioranConnector](https://github.com/YouthVibe/LioranDB/blob/main/docs/lioran-connector.md)
+This is the **core system-level module** of LioranDB. It provides foundational database management functionality, including collections, queries, updates, encryption, and environment setup. **Note:** This is not the final database product, but a core module designed to be used in larger systems.
 
+---
 
-Welcome to LioranDB! This documentation will guide you through setting up and using LioranDB, a simple and powerful database solution.
+## Table of Contents
 
-## 1. Installation
+* [Installation](#installation)
+* [Overview](#overview)
+* [Getting Started](#getting-started)
+* [API Reference](#api-reference)
 
-To get started with LioranDB, you need to install it via npm. Open your terminal and run the following command:
+  * [LioranManager](#lioranmanager)
+  * [LioranDB](#liorandb)
+  * [Collection](#collection)
+  * [Query Operators](#query-operators)
+  * [Update Operators](#update-operators)
+  * [Utilities](#utilities)
+* [Encryption](#encryption)
+* [Environment Setup](#environment-setup)
+* [License](#license)
 
-```bash
-npm i liorandb
-```
+---
 
-## 2. Running the LioranDB Server
-
-LioranDB can be run in two modes: local and global (P2P).
-
-### Local Mode (Default)
-
-To start the LioranDB server locally, which will be accessible at `http://localhost:2008`, use the `serve` command:
-
-```bash
-npx liorandb serve
-```
-
-### Global P2P Mode (Coming Soon)
-
-LioranDB will soon support a global P2P mode, allowing your device to be accessible globally via an access-key. This feature is currently under development.
+## Installation
 
 ```bash
-npx liorandb serve --global # Coming Soon!
+npm install @liorandb/core
 ```
 
-## 3. Authentication
+> Node.js v18+ recommended.
 
-### Logging In
+---
 
-To log into your LioranDB account and obtain an API key, use the `login` command. This will open an interactive login flow:
+## Overview
 
-```bash
-npx liorandb login
-```
+`@liorandb/core` provides:
 
-### Logging Out
+* Local-first, file-based database directories.
+* MongoDB-style API (`db`, `collection`, `insertOne`, `find`, `updateOne`, etc.).
+* Peer-to-peer-friendly design.
+* Data encryption at rest.
+* Automatic environment configuration.
+* TypeScript typings for full developer support.
 
-To log out and clear all stored credentials, use the `logout` command:
+This module is intended for **Node.js projects** and can serve as the core database engine for larger LioranDB systems.
 
-```bash
-npx liorandb logout
-```
+---
 
-## 4. Using the LioranConnector (Node.js)
-
-The `LioranConnector` class provides a convenient way to interact with your LioranDB instance from your Node.js applications. Below is a comprehensive example demonstrating its usage.
-
-First, import the `LioranConnector`:
+## Getting Started
 
 ```javascript
-import { LioranConnector } from "liorandb";
-```
-
-Here's a full example:
-
-```javascript
-import { LioranConnector } from "liorandb";
-
+import { LioranManager } from "@liorandb/core";
 
 async function main() {
-  // --- LOGIN ---
-  // Before you can interact with LioranDB, you need to log in to get an API key.
-  // Replace "http://localhost:2008", "admin", and "admin" with your server URL and credentials.
-  const { apiKey } = await LioranConnector.login(
-    "http://localhost:2008",
-    "admin",
-    "admin"
-  );
+  const manager = new LioranManager();
+  const db = await manager.db("myDatabase");
 
+  const users = db.collection("users");
 
-  // Create connector client
-  // Initialize the LioranConnector with your server's base URL and the obtained API key.
-  const client = new LioranConnector("http://localhost:2008", apiKey);
+  // Insert a document
+  const user = await users.insertOne({ name: "Alice", age: 25 });
 
+  // Query documents
+  const results = await users.find({ age: { $gte: 18 } });
 
-  // === MONGO STYLE USAGE ===
-  // LioranDB provides a MongoDB-like interface for ease of use.
-
-  // You can create and delete databases directly via the client.
-  // client.createDatabase("schoolDB");
-  // client.deleteDatabase("schoolDB");
-
-
-  // Get a reference to a specific database. If it doesn't exist, LioranDB will create it.
-  const db = client.db("schoolDB");
-  // Get a reference to a collection within that database. If it doesn't exist, LioranDB will create it.
-  const students = db.collection("students");
-
-
-  console.log("\n--- INSERT ONE ---");
-  // Insert a single document into the "students" collection.
-  await students.insertOne({ name: "Swaraj", age: 17 });
-
-
-  console.log("\n--- FIND ---");
-  // Find documents that match a specific query. Here, we find all students with age 17.
-  const found = await students.find({ age: 17 });
-  console.log(found);
-
-
-  console.log("\n--- UPDATE MANY ---");
-  // Update multiple documents. Here, we change the age of all students named "Swaraj" to 18.
-  await students.updateMany({ name: "Swaraj" }, { age: 18 });
-
-
-  console.log("\n--- FIND AFTER UPDATE ---");
-  // Verify the update by finding the document again.
-  const updated = await students.find({ name: "Swaraj" });
-  console.log(updated);
-
-
-  console.log("\n--- DELETE MANY ---");
-  // Delete multiple documents. Here, we delete all documents in the "students" collection.
-  await students.deleteMany({});
-
-
-  console.log("\n--- LIST DATABASES ---");
-  // List all databases currently managed by LioranDB.
-  console.log(await client.listDatabases());
-
-
-  console.log("\nDONE");
+  console.log(results);
 }
 
-
-main().catch(err => console.error("Error:", err));
+main();
 ```
 
-This documentation should help you get started with LioranDB quickly and efficiently. If you have any questions, feel free to refer to other documentation files or reach out to the community.
+---
+
+## API Reference
+
+### LioranManager
+
+Manages databases and provides MongoDB-style client access.
+
+```ts
+class LioranManager {
+  rootPath: string;
+  db(name: string): Promise<LioranDB>;
+  createDatabase(name: string): Promise<LioranDB>;
+  openDatabase(name: string): Promise<LioranDB>;
+  closeDatabase(name: string): Promise<void>;
+  renameDatabase(oldName: string, newName: string): Promise<boolean>;
+  deleteDatabase(name: string): Promise<boolean>;
+  dropDatabase(name: string): Promise<boolean>;
+  listDatabases(): Promise<string[]>;
+}
+```
+
+**Example:**
+
+```javascript
+const manager = new LioranManager();
+await manager.createDatabase("testDB");
+const db = await manager.db("testDB");
+```
+
+### LioranDB
+
+Represents a single database instance with multiple collections.
+
+```ts
+class LioranDB {
+  basePath: string;
+  dbName: string;
+  collection<T>(name: string): Collection<T>;
+  createCollection(name: string): Promise<boolean>;
+  deleteCollection(name: string): Promise<boolean>;
+  dropCollection(name: string): Promise<boolean>;
+  renameCollection(oldName: string, newName: string): Promise<boolean>;
+  listCollections(): Promise<string[]>;
+}
+```
+
+**Example:**
+
+```javascript
+const users = db.collection("users");
+await db.createCollection("products");
+const collections = await db.listCollections();
+```
+
+### Collection
+
+Handles documents within a database.
+
+```ts
+class Collection<T extends { _id?: string }> {
+  insertOne(doc: T): Promise<T>;
+  insertMany(docs: T[]): Promise<T[]>;
+  find(query?: FilterQuery<T>): Promise<T[]>;
+  findOne(query?: FilterQuery<T>): Promise<T | null>;
+  updateOne(filter: FilterQuery<T>, update: UpdateQuery<T>, options?: { upsert?: boolean }): Promise<T | null>;
+  updateMany(filter: FilterQuery<T>, update: UpdateQuery<T>): Promise<T[]>;
+  deleteOne(filter: FilterQuery<T>): Promise<boolean>;
+  deleteMany(filter: FilterQuery<T>): Promise<number>;
+  countDocuments(filter?: FilterQuery<T>): Promise<number>;
+  close(): Promise<void>;
+}
+```
+
+**Example:**
+
+```javascript
+await users.insertOne({ name: "Bob", age: 30 });
+const adults = await users.find({ age: { $gte: 18 } });
+await users.updateOne({ name: "Bob" }, { $inc: { age: 1 } });
+await users.deleteOne({ name: "Alice" });
+```
+
+### Query Operators
+
+* `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, `$eq`, `$in`
+
+**Example:**
+
+```javascript
+users.find({ age: { $gte: 18, $lt: 65 } });
+```
+
+### Update Operators
+
+* `$set` – set field values
+* `$inc` – increment numeric fields
+
+**Example:**
+
+```javascript
+users.updateOne({ name: "Alice" }, { $set: { city: "Mumbai" }, $inc: { age: 1 } });
+```
+
+### Utilities
+
+```ts
+function getBaseDBFolder(): string;
+```
+
+Returns the root folder for LioranDB databases. Automatically sets environment variables if missing.
+
+---
+
+## Encryption
+
+All documents are encrypted using **AES-256-GCM**.
+
+* Uses a master key stored in `.secureKey` within the base folder.
+* Data is encrypted automatically before storage and decrypted on retrieval.
+
+**Utility Functions:**
+
+* `encryptData(obj)`
+* `decryptData(encStr)`
+
+**Master Key Management:**
+
+* Managed via `getMasterKey()`
+* Auto-generates 256-bit key if not found.
+
+---
+
+## Environment Setup
+
+* `getBaseDBFolder()` ensures `LIORANDB_PATH` is set.
+* Auto-generates scripts for **Windows PowerShell** or **Linux/macOS bash**.
+* Guides users to set system-wide environment variables if missing.
+
+---
+
+## License
+
+**Author:** Swaraj Puppalwar
+**License:** LIORANDB LICENSE
+
+---
+
+**Keywords:** p2p-database, lioran, liorandb, p2p-db, peer-to-peer-db, peer-to-peer-database, localfirst-db, localfirst-database
