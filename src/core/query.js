@@ -15,6 +15,7 @@ export function matchDocument(doc, query) {
         if (op === "$lt" && !(val < v)) return false;
         if (op === "$lte" && !(val <= v)) return false;
         if (op === "$ne" && (val === v)) return false;
+        if (op === "$eq" && val !== v) return false;
         if (op === "$in" && (!Array.isArray(v) || !v.includes(val))) return false;
       }
     } else {

@@ -60,7 +60,9 @@ export class LioranDB {
 
     // close LevelDB instance if opened
     if (this.collections.has(name)) {
-      await this.collections.get(name).close().catch(() => {});
+      const col = this.collections.get(name);
+      await col.close().catch(() => {});
+      await col.db.clear().catch(() => {});
       this.collections.delete(name);
     }
 

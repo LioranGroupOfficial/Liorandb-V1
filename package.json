@@ -1,38 +1,27 @@
 {
-  "name": "liorandb",
-  "version": "1.0.10",
-  "description": "LioranDB is a lightweight, file-based database solution designed for simplicity and ease of use. It offers a command-line interface (CLI) for server management, user authentication, and CORS configuration, alongside a Node.js connector with a MongoDB-like API for seamless programmatic interaction.",
+  "name": "@liorandb/core",
+  "version": "1.0.0",
+  "description": "LioranDB is a lightweight, local-first, peer-to-peer, file-based database with a MongoDB-style Node.js API and a simple CLI for seamless distributed development.",
   "main": "./src/index.js",
+  "types": "./src/index.d.ts",
   "type": "module",
-  "scripts": {
-    "test": "node ./test/test.js",
-    "start": "node ./test/test.js",
-    "dev": "nodemon ./server.js"
-  },
-  "bin": {
-    "liorandb": "./cli.js"
-  },
+  "scripts": {},
+  "bin": {},
   "keywords": [
-    "database",
-    "leveldb",
-    "nosql",
-    "json"
+    "p2p-database",
+    "lioran",
+    "liorandb",
+    "p2p-db",
+    "peer-to-peer-db",
+    "peer-to-peer-database",
+    "localfirst-db",
+    "localfirst-database"
   ],
   "author": "Swaraj Puppalwar",
   "license": "LIORANDB LICENSE",
   "dependencies": {
     "classic-level": "^1.3.0",
-    "cors": "^2.8.5",
     "crypto": "^1.0.1",
-    "express": "^5.1.0",
-    "inquirer": "^9.3.8",
-    "node-fetch": "^3.3.2",
-    "nodemon": "^3.1.11",
-    "open": "^11.0.0",
-    "socket.io-client": "^4.8.1",
-    "subleveldown": "^6.0.1",
-    "uuid": "^9.0.0",
-    "wrtc": "^0.4.7",
-    "ws": "^8.18.3"
+    "uuid": "^9.0.0"
   }
 }
