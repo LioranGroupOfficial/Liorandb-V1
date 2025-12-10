@@ -1,18 +1,19 @@
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
-import { getBaseDBFolder } from "./rootpath.js";
-
-const KEY_FILE = path.join(getBaseDBFolder(), ".secureKey");
 
 export function getMasterKey() {
-  if (!fs.existsSync(KEY_FILE)) {
-    // generate 32-byte random key (256-bit)
-    const key = crypto.randomBytes(32).toString("hex");
-    fs.writeFileSync(KEY_FILE, key, { encoding: "utf8", mode: 0o600 });
-    return key;
+  let key = process.env.LIORANDB_MASTER_KEY;
+
+  if (!key) {
+    throw new Error(
+      "Master encryption key missing! Set LIORANDB_MASTER_KEY in system environment variables."
+    );
   }
 
-  const key = fs.readFileSync(KEY_FILE, "utf8").trim();
+  key = key.trim();
+
+  if (key.length !== 64) {
+    throw new Error("Invalid master key length (should be 64 hex chars / 256-bit).");
+  }
+
   return key;
 }
