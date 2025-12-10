@@ -3,7 +3,6 @@ db
 app.py
 out.txt
 test
-project_log.txt
 
 # Logs
 logs
