@@ -3,8 +3,6 @@ db
 app.py
 out.txt
 test
-.npmrc
-test.js
 
 # Logs
 logs
