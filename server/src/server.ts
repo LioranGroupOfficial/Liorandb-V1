@@ -1,11 +1,12 @@
-import dotenv from "dotenv";
-dotenv.config();
-
+// src/server.ts
 import app from "./app";
 
-
-const PORT = process.env.PORT || 4000;
+const PORT = 4000;
 
 app.listen(PORT, () => {
-  console.log(`LioranDB API running on port ${PORT}`);
+  console.log("======================================");
+  console.log("🚀 LioranDB Host is LIVE");
+  console.log(`📡 Listening on port: ${PORT}`);
+  console.log(`🧠 Mode: ${process.env.NODE_ENV || "development"}`);
+  console.log("======================================");
 });

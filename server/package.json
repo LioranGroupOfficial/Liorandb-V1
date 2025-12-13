@@ -1,5 +1,5 @@
 {
-  "name": "server",
+  "name": "@liorandb/server",
   "version": "1.0.0",
   "description": "",
   "main": "dist/server.js",
@@ -22,9 +22,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@liorandb/core": "^1.0.2",
+    "@liorandb/core": "^1.0.3",
     "bcryptjs": "^3.0.3",
-    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3"
   }
