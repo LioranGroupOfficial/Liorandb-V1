@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/core",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "LioranDB is a lightweight, local-first, peer-to-peer, file-based database with a MongoDB-style Node.js API and a simple CLI for seamless distributed development.",
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
