@@ -4,6 +4,7 @@ app.py
 out.txt
 test
 .npmrc
+server
 
 # Logs
 logs
