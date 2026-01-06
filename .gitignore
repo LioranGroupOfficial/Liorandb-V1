@@ -5,6 +5,9 @@ out.txt
 test
 .npmrc
 server
+save_src_tree.py
+log.txt
+test.ts
 
 # Logs
 logs

@@ -2,21 +2,20 @@ import crypto from "crypto";
 import os from "os";
 
 /**
- * Returns a 256-bit master key derived from machine hardware.
- * No env vars. No files. Machine-bound.
+ * Default machine-bound key (used ONLY if user does not supply one)
  */
 export function getMasterKey() {
-  const hardwareFingerprint = [
+  const fingerprint = [
     os.hostname(),
     os.platform(),
     os.arch(),
-    os.cpus()?.[0]?.model || "unknown-cpu",
-    os.cpus()?.length.toString() || "0",
-    os.totalmem().toString()
+    os.cpus()?.[0]?.model || "unknown",
+    os.cpus()?.length || 0,
+    os.totalmem()
   ].join("|");
 
   return crypto
     .createHash("sha256")
-    .update(hardwareFingerprint)
+    .update(fingerprint)
     .digest(); // 32 bytes
 }
