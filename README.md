@@ -1,27 +1,34 @@
 # @liorandb/core
 
-**LioranDB Core Module** – Lightweight, local-first, peer-to-peer database management for Node.js.
+**LioranDB Core** is a lightweight, encrypted, TypeScript-first embedded database engine for Node.js.
 
-This is the **core system-level module** of LioranDB. It provides foundational database management functionality, including collections, queries, updates, encryption, and environment setup. **Note:** This is not the final database product, but a core module designed to be used in larger systems.
+Think of it as:
+
+* ⚡ **LevelDB speed** (powered by `classic-level`)
+* 🔐 **Built-in encryption** (transparent at rest)
+* 🧠 **Mongo-like API** (collections, queries, updates)
+* 📦 **Zero external services** (no server, no daemon)
+* 🧩 **Type-safe by design** (written 100% in TypeScript)
+
+Perfect for:
+
+* Local-first apps
+* Desktop / CLI tools
+* Edge & serverless experiments
+* P2P & offline-sync systems
 
 ---
 
-## Table of Contents
+## Features
 
-* [Installation](#installation)
-* [Overview](#overview)
-* [Getting Started](#getting-started)
-* [API Reference](#api-reference)
-
-  * [LioranManager](#lioranmanager)
-  * [LioranDB](#liorandb)
-  * [Collection](#collection)
-  * [Query Operators](#query-operators)
-  * [Update Operators](#update-operators)
-  * [Utilities](#utilities)
-* [Encryption](#encryption)
-* [Environment Setup](#environment-setup)
-* [License](#license)
+* 📂 Multiple databases under one manager
+* 📁 Multiple collections per database
+* 🔑 Optional encryption (AES-based, transparent)
+* 🧵 Write-queue for consistency (no race conditions)
+* 🧠 Simple query matching
+* 🧩 Strong TypeScript inference
+* 🚫 No native bindings
+* 🚀 Fast startup & low memory
 
 ---
 
@@ -31,194 +38,210 @@ This is the **core system-level module** of LioranDB. It provides foundational d
 npm install @liorandb/core
 ```
 
-> Node.js v18+ recommended.
+---
+
+## Quick Start (30 seconds)
+
+```ts
+import { LioranManager } from "@liorandb/core"
+
+const manager = new LioranManager({
+  encryptionKey: "my-secret-key"
+})
+
+const db = await manager.db("app")
+
+const users = db.collection<{ name: string; age: number }>("users")
+
+await users.insertOne({ name: "Swaraj", age: 17 })
+
+const result = await users.find({ name: "Swaraj" })
+console.log(result)
+```
+
+No config. No server. Just code.
 
 ---
 
-## Overview
+## Core Concepts
 
-`@liorandb/core` provides:
+### 1️⃣ LioranManager
 
-* Local-first, file-based database directories.
-* MongoDB-style API (`db`, `collection`, `insertOne`, `find`, `updateOne`, etc.).
-* Peer-to-peer-friendly design.
-* Data encryption at rest.
-* Automatic environment configuration.
-* TypeScript typings for full developer support.
+The **root controller**. Manages databases, encryption and lifecycle.
 
-This module is intended for **Node.js projects** and can serve as the core database engine for larger LioranDB systems.
+```ts
+const manager = new LioranManager({
+  rootPath: "./data",        // optional
+  encryptionKey: "secret"   // optional
+})
+```
+
+Responsibilities:
+
+* Creates databases
+* Opens databases
+* Tracks open instances
+* Applies encryption globally
 
 ---
 
-## Getting Started
+### 2️⃣ Database
 
-```javascript
-import { LioranManager } from "@liorandb/core";
+Each database is a **folder on disk**.
 
-async function main() {
-  const manager = new LioranManager();
-  const db = await manager.db("myDatabase");
-
-  const users = db.collection("users");
-
-  // Insert a document
-  const user = await users.insertOne({ name: "Alice", age: 25 });
-
-  // Query documents
-  const results = await users.find({ age: { $gte: 18 } });
-
-  console.log(results);
-}
-
-main();
+```ts
+const db = await manager.db("mydb")
 ```
+
+* Databases are created automatically if missing
+* Re-opening returns the same instance
 
 ---
 
-## API Reference
+### 3️⃣ Collections
 
-### LioranManager
-
-Manages databases and provides MongoDB-style client access.
+Collections are **LevelDB instances** stored inside the database.
 
 ```ts
-class LioranManager {
-  rootPath: string;
-  db(name: string): Promise<LioranDB>;
-  createDatabase(name: string): Promise<LioranDB>;
-  openDatabase(name: string): Promise<LioranDB>;
-  closeDatabase(name: string): Promise<void>;
-  renameDatabase(oldName: string, newName: string): Promise<boolean>;
-  deleteDatabase(name: string): Promise<boolean>;
-  dropDatabase(name: string): Promise<boolean>;
-  listDatabases(): Promise<string[]>;
-}
+const posts = db.collection<{ title: string; views: number }>("posts")
 ```
 
-**Example:**
+* One folder per collection
+* Fully typed
+* JSON documents only
 
-```javascript
-const manager = new LioranManager();
-await manager.createDatabase("testDB");
-const db = await manager.db("testDB");
-```
+---
 
-### LioranDB
+## Collection API
 
-Represents a single database instance with multiple collections.
+### insertOne
 
 ```ts
-class LioranDB {
-  basePath: string;
-  dbName: string;
-  collection<T>(name: string): Collection<T>;
-  createCollection(name: string): Promise<boolean>;
-  deleteCollection(name: string): Promise<boolean>;
-  dropCollection(name: string): Promise<boolean>;
-  renameCollection(oldName: string, newName: string): Promise<boolean>;
-  listCollections(): Promise<string[]>;
-}
+await users.insertOne({ name: "Alex", age: 22 })
 ```
 
-**Example:**
+* Auto-generates `_id`
+* `_id` can be provided manually
 
-```javascript
-const users = db.collection("users");
-await db.createCollection("products");
-const collections = await db.listCollections();
-```
+---
 
-### Collection
-
-Handles documents within a database.
+### find
 
 ```ts
-class Collection<T extends { _id?: string }> {
-  insertOne(doc: T): Promise<T>;
-  insertMany(docs: T[]): Promise<T[]>;
-  find(query?: FilterQuery<T>): Promise<T[]>;
-  findOne(query?: FilterQuery<T>): Promise<T | null>;
-  updateOne(filter: FilterQuery<T>, update: UpdateQuery<T>, options?: { upsert?: boolean }): Promise<T | null>;
-  updateMany(filter: FilterQuery<T>, update: UpdateQuery<T>): Promise<T[]>;
-  deleteOne(filter: FilterQuery<T>): Promise<boolean>;
-  deleteMany(filter: FilterQuery<T>): Promise<number>;
-  countDocuments(filter?: FilterQuery<T>): Promise<number>;
-  close(): Promise<void>;
-}
+const all = await users.find()
+const adults = await users.find({ age: 18 })
 ```
 
-**Example:**
+* Partial object matching
+* Returns an array
 
-```javascript
-await users.insertOne({ name: "Bob", age: 30 });
-const adults = await users.find({ age: { $gte: 18 } });
-await users.updateOne({ name: "Bob" }, { $inc: { age: 1 } });
-await users.deleteOne({ name: "Alice" });
-```
+---
 
-### Query Operators
-
-* `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, `$eq`, `$in`
-
-**Example:**
-
-```javascript
-users.find({ age: { $gte: 18, $lt: 65 } });
-```
-
-### Update Operators
-
-* `$set` – set field values
-* `$inc` – increment numeric fields
-
-**Example:**
-
-```javascript
-users.updateOne({ name: "Alice" }, { $set: { city: "Mumbai" }, $inc: { age: 1 } });
-```
-
-### Utilities
+### updateOne
 
 ```ts
-function getBaseDBFolder(): string;
+await users.updateOne(
+  { name: "Alex" },
+  { $set: { age: 23 } }
+)
 ```
 
-Returns the root folder for LioranDB databases. Automatically sets environment variables if missing.
+Supported operators:
+
+* `$set`
+* `$unset`
+* `$inc`
 
 ---
 
 ## Encryption
 
-All documents are encrypted using **AES-256-GCM**.
+Encryption is **transparent and automatic**.
 
-* Uses a master key stored in `.secureKey` within the base folder.
-* Data is encrypted automatically before storage and decrypted on retrieval.
+```ts
+const manager = new LioranManager({
+  encryptionKey: process.env.DB_KEY
+})
+```
 
-**Utility Functions:**
+* Data is encrypted before writing to disk
+* Decrypted automatically on read
+* Wrong key = unreadable data
 
-* `encryptData(obj)`
-* `decryptData(encStr)`
-
-**Master Key Management:**
-
-* Managed via `getMasterKey()`
-* Auto-generates 256-bit key if not found.
+> Encryption is global per manager instance.
 
 ---
 
-## Environment Setup
+## File Structure on Disk
 
-* `getBaseDBFolder()` ensures `LIORANDB_PATH` is set.
-* Auto-generates scripts for **Windows PowerShell** or **Linux/macOS bash**.
-* Guides users to set system-wide environment variables if missing.
+```
+rootPath/
+└─ app/
+   ├─ users/
+   ├─ posts/
+   └─ comments/
+```
+
+* Human-readable folders
+* Binary LevelDB data inside
+
+---
+
+## Type Safety
+
+LioranDB is **TypeScript-native**.
+
+```ts
+const users = db.collection<{ name: string; age: number }>("users")
+
+users.insertOne({ name: "Sam" })      // ❌ age missing
+users.insertOne({ name: "Sam", age: 20 }) // ✅
+```
+
+No `any`. No runtime guessing.
+
+---
+
+## Closing Databases
+
+```ts
+await manager.closeDatabase("app")
+```
+
+* Closes all collections
+* Flushes LevelDB handles
+
+---
+
+## Design Philosophy
+
+* **Simple > clever**
+* **Local-first**
+* **No magic network calls**
+* **Readable source > black box**
+
+LioranDB is intentionally small and hackable.
+
+---
+
+## Roadmap
+
+* 🔁 P2P sync layer
+* 🧠 Indexing
+* 🧾 Schema validation
+* ⚡ WAL (write-ahead log)
+* 🌐 Browser storage adapter
 
 ---
 
 ## License
 
-**Author:** Swaraj Puppalwar
-**License:** LIORANDB LICENSE
+LDEP
 
 ---
 
-**Keywords:** p2p-database, lioran, liorandb, p2p-db, peer-to-peer-db, peer-to-peer-database, localfirst-db, localfirst-database
+## Author
+
+Built by **Swaraj Puppalwar** 🚀
+
+> If you are building local-first or offline-first systems — this DB is for you.

@@ -1,4 +1,4 @@
-LIORANDB LICENSE
+LDEP LICENSE
 
 Copyright (c) 2025 Swaraj Puppalwar
 All rights reserved.
