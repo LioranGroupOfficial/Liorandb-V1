@@ -4,21 +4,24 @@ import { LioranDB } from "./core/database.js";
 import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
 
-export class LioranManager {
-  constructor(options = {}) {
-    const {
-      rootPath,
-      encryptionKey
-    } = options;
+export interface LioranManagerOptions {
+  rootPath?: string;
+  encryptionKey?: string | Buffer;
+}
 
-    // Root DB path (custom OR default)
+export class LioranManager {
+  rootPath: string;
+  openDBs: Map<string, LioranDB>;
+
+  constructor(options: LioranManagerOptions = {}) {
+    const { rootPath, encryptionKey } = options;
+
     this.rootPath = rootPath || getDefaultRootPath();
 
     if (!fs.existsSync(this.rootPath)) {
       fs.mkdirSync(this.rootPath, { recursive: true });
     }
 
-    // Optional custom encryption key
     if (encryptionKey) {
       setEncryptionKey(encryptionKey);
     }
@@ -26,11 +29,11 @@ export class LioranManager {
     this.openDBs = new Map();
   }
 
-  async db(name) {
+  async db(name: string): Promise<LioranDB> {
     return this.openDatabase(name);
   }
 
-  async createDatabase(name) {
+  async createDatabase(name: string): Promise<LioranDB> {
     const dbPath = path.join(this.rootPath, name);
 
     if (fs.existsSync(dbPath)) {
@@ -41,7 +44,7 @@ export class LioranManager {
     return this.openDatabase(name);
   }
 
-  async openDatabase(name) {
+  async openDatabase(name: string): Promise<LioranDB> {
     const dbPath = path.join(this.rootPath, name);
 
     if (!fs.existsSync(dbPath)) {
@@ -49,19 +52,18 @@ export class LioranManager {
     }
 
     if (this.openDBs.has(name)) {
-      return this.openDBs.get(name);
+      return this.openDBs.get(name)!;
     }
 
     const db = new LioranDB(dbPath, name, this);
     this.openDBs.set(name, db);
-
     return db;
   }
 
-  async closeDatabase(name) {
+  async closeDatabase(name: string): Promise<void> {
     if (!this.openDBs.has(name)) return;
 
-    const db = this.openDBs.get(name);
+    const db = this.openDBs.get(name)!;
 
     for (const [, col] of db.collections.entries()) {
       await col.close();
@@ -70,7 +72,7 @@ export class LioranManager {
     this.openDBs.delete(name);
   }
 
-  async renameDatabase(oldName, newName) {
+  async renameDatabase(oldName: string, newName: string): Promise<boolean> {
     const oldPath = path.join(this.rootPath, oldName);
     const newPath = path.join(this.rootPath, newName);
 
@@ -86,11 +88,11 @@ export class LioranManager {
     return true;
   }
 
-  async deleteDatabase(name) {
+  async deleteDatabase(name: string): Promise<boolean> {
     return this.dropDatabase(name);
   }
 
-  async dropDatabase(name) {
+  async dropDatabase(name: string): Promise<boolean> {
     const dbPath = path.join(this.rootPath, name);
 
     if (!fs.existsSync(dbPath)) return false;
@@ -100,8 +102,11 @@ export class LioranManager {
     return true;
   }
 
-  async listDatabases() {
-    const items = await fs.promises.readdir(this.rootPath, { withFileTypes: true });
+  async listDatabases(): Promise<string[]> {
+    const items = await fs.promises.readdir(this.rootPath, {
+      withFileTypes: true
+    });
+
     return items.filter(i => i.isDirectory()).map(i => i.name);
   }
 }

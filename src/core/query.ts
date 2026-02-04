@@ -1,8 +1,8 @@
-function getByPath(obj, path) {
+function getByPath(obj: any, path: string): any {
   return path.split(".").reduce((o, p) => (o ? o[p] : undefined), obj);
 }
 
-export function matchDocument(doc, query) {
+export function matchDocument(doc: any, query: any): boolean {
   for (const key of Object.keys(query)) {
     const cond = query[key];
     const val = getByPath(doc, key);
@@ -14,9 +14,10 @@ export function matchDocument(doc, query) {
         if (op === "$gte" && !(val >= v)) return false;
         if (op === "$lt" && !(val < v)) return false;
         if (op === "$lte" && !(val <= v)) return false;
-        if (op === "$ne" && (val === v)) return false;
+        if (op === "$ne" && val === v) return false;
         if (op === "$eq" && val !== v) return false;
-        if (op === "$in" && (!Array.isArray(v) || !v.includes(val))) return false;
+        if (op === "$in" && (!Array.isArray(v) || !v.includes(val)))
+          return false;
       }
     } else {
       if (val !== cond) return false;
@@ -25,38 +26,35 @@ export function matchDocument(doc, query) {
   return true;
 }
 
-export function applyUpdate(oldDoc, update) {
+export function applyUpdate(oldDoc: any, update: any): any {
   const doc = structuredClone(oldDoc);
 
-  // $set
   if (update.$set) {
     for (const k in update.$set) {
       const parts = k.split(".");
       let cur = doc;
       for (let i = 0; i < parts.length - 1; i++) {
-        cur[parts[i]] = cur[parts[i]] ?? {};
+        cur[parts[i]] ??= {};
         cur = cur[parts[i]];
       }
-      cur[parts.at(-1)] = update.$set[k];
+      cur[parts.at(-1)!] = update.$set[k];
     }
   }
 
-  // $inc
   if (update.$inc) {
     for (const k in update.$inc) {
       const val = getByPath(doc, k) ?? 0;
       const parts = k.split(".");
       let cur = doc;
       for (let i = 0; i < parts.length - 1; i++) {
-        cur[parts[i]] = cur[parts[i]] ?? {};
+        cur[parts[i]] ??= {};
         cur = cur[parts[i]];
       }
-      cur[parts.at(-1)] = val + update.$inc[k];
+      cur[parts.at(-1)!] = val + update.$inc[k];
     }
   }
 
-  // Direct merge (no operators)
-  const hasOp = Object.keys(update).some((k) => k.startsWith("$"));
+  const hasOp = Object.keys(update).some(k => k.startsWith("$"));
   if (!hasOp) {
     return { ...doc, ...update };
   }

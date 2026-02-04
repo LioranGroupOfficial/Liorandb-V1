@@ -1,9 +1,15 @@
 import path from "path";
 import fs from "fs";
 import { Collection } from "./collection.js";
+import type { LioranManager } from "../LioranManager.js";
 
 export class LioranDB {
-  constructor(basePath, dbName, manager) {
+  basePath: string;
+  dbName: string;
+  manager: LioranManager;
+  collections: Map<string, Collection>;
+
+  constructor(basePath: string, dbName: string, manager: LioranManager) {
     this.basePath = basePath;
     this.dbName = dbName;
     this.manager = manager;
@@ -14,66 +20,51 @@ export class LioranDB {
     }
   }
 
-  /** Get or auto-create collection object */
-  collection(name) {
+  collection<T = any>(name: string): Collection<T> {
     if (this.collections.has(name)) {
-      return this.collections.get(name);
+      return this.collections.get(name)!;
     }
 
     const colPath = path.join(this.basePath, name);
 
-    // auto-create directory
     if (!fs.existsSync(colPath)) {
       fs.mkdirSync(colPath, { recursive: true });
     }
 
-    const col = new Collection(colPath);
+    const col = new Collection<T>(colPath);
     this.collections.set(name, col);
     return col;
   }
 
-  /** Create collection manually */
-  async createCollection(name) {
+  async createCollection(name: string): Promise<boolean> {
     const colPath = path.join(this.basePath, name);
 
     if (fs.existsSync(colPath)) {
       throw new Error("Collection already exists");
     }
 
-    // create folder
     await fs.promises.mkdir(colPath, { recursive: true });
-
-    // load into memory map
-    const col = new Collection(colPath);
-    this.collections.set(name, col);
-
+    this.collections.set(name, new Collection(colPath));
     return true;
   }
 
-  /** Delete collection fully */
-  async deleteCollection(name) {
+  async deleteCollection(name: string): Promise<boolean> {
     const colPath = path.join(this.basePath, name);
 
     if (!fs.existsSync(colPath)) {
       throw new Error("Collection does not exist");
     }
 
-    // close LevelDB instance if opened
     if (this.collections.has(name)) {
-      const col = this.collections.get(name);
-      await col.close().catch(() => {});
-      await col.db.clear().catch(() => {});
+      await this.collections.get(name)!.close();
       this.collections.delete(name);
     }
 
-    // force delete directory
     await fs.promises.rm(colPath, { recursive: true, force: true });
-
     return true;
   }
 
-  /** Rename collection */
-  async renameCollection(oldName, newName) {
+  async renameCollection(oldName: string, newName: string): Promise<boolean> {
     const oldPath = path.join(this.basePath, oldName);
     const newPath = path.join(this.basePath, newName);
 
@@ -81,29 +72,24 @@ export class LioranDB {
     if (fs.existsSync(newPath)) throw new Error("New collection name exists");
 
     if (this.collections.has(oldName)) {
-      await this.collections.get(oldName).close().catch(() => {});
+      await this.collections.get(oldName)!.close();
       this.collections.delete(oldName);
     }
 
     await fs.promises.rename(oldPath, newPath);
-
-    const newCol = new Collection(newPath);
-    this.collections.set(newName, newCol);
-
+    this.collections.set(newName, new Collection(newPath));
     return true;
   }
 
-  /** Drop a collection (alias deleteCollection) */
-  async dropCollection(name) {
+  async dropCollection(name: string): Promise<boolean> {
     return this.deleteCollection(name);
   }
 
-  /** List all collections */
-  async listCollections() {
-    const dirs = await fs.promises.readdir(this.basePath, { withFileTypes: true });
+  async listCollections(): Promise<string[]> {
+    const dirs = await fs.promises.readdir(this.basePath, {
+      withFileTypes: true
+    });
 
-    return dirs
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
+    return dirs.filter(d => d.isDirectory()).map(d => d.name);
   }
 }
