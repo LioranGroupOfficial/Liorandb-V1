@@ -1,10 +1,11 @@
 import { Router } from "express";
 import {
   insertDocument,
+  insertMany,
   findDocuments,
-  getDocument,
-  updateDocument,
-  deleteDocument,
+  updateMany,
+  deleteMany,
+  countDocuments,
 } from "../controllers/document.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
@@ -12,9 +13,10 @@ import { authMiddleware } from "../middleware/auth.middleware";
 const router = Router({ mergeParams: true });
 
 router.post("/", authMiddleware, insertDocument);
+router.post("/bulk", authMiddleware, insertMany);
 router.post("/find", authMiddleware, findDocuments);
-router.get("/:id", authMiddleware, getDocument);
-router.patch("/:id", authMiddleware, updateDocument);
-router.delete("/:id", authMiddleware, deleteDocument);
+router.patch("/updateMany", authMiddleware, updateMany);
+router.post("/deleteMany", authMiddleware, deleteMany);
+router.post("/count", authMiddleware, countDocuments);
 
 export default router;

@@ -1,81 +1,50 @@
-// src/controllers/document.controller.ts
 import { Request, Response } from "express";
 import { manager } from "../config/database";
 
 export const insertDocument = async (req: Request, res: Response) => {
-  try {
-    const { db, col } = req.params;
-    const doc = req.body;
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
 
-    const database = await manager.db(db);
-    // make this a generic any collection to avoid type issues for arbitrary collections
-    const collection = database.collection<any>(col);
-    const created = await collection.insertOne(doc);
+  const doc = await collection.insertOne(req.body);
+  res.json({ ok: true, doc });
+};
 
-    res.json({ ok: true, doc: created });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "server error" });
-  }
+export const insertMany = async (req: Request, res: Response) => {
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
+
+  const docs = await collection.insertMany(req.body.docs || []);
+  res.json({ ok: true, docs });
 };
 
 export const findDocuments = async (req: Request, res: Response) => {
-  try {
-    const { db, col } = req.params;
-    const { query } = req.body;
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
 
-    const database = await manager.db(db);
-    const collection = database.collection<any>(col);
-    const results = await collection.find(query || {});
-
-    res.json({ results });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "server error" });
-  }
+  const results = await collection.find(req.body.query || {});
+  res.json({ results });
 };
 
-export const getDocument = async (req: Request, res: Response) => {
-  try {
-    const { db, col, id } = req.params;
+export const updateMany = async (req: Request, res: Response) => {
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
 
-    const database = await manager.db(db);
-    const collection = database.collection<any>(col);
-    const doc = await collection.findOne({ _id: id });
-
-    res.json({ doc });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "server error" });
-  }
+  const docs = await collection.updateMany(req.body.filter, req.body.update);
+  res.json({ updated: docs });
 };
 
-export const updateDocument = async (req: Request, res: Response) => {
-  try {
-    const { db, col, id } = req.params;
+export const deleteMany = async (req: Request, res: Response) => {
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
 
-    const database = await manager.db(db);
-    const collection = database.collection<any>(col);
-    const updated = await collection.updateOne({ _id: id }, req.body);
-
-    res.json({ updated });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "server error" });
-  }
+  const count = await collection.deleteMany(req.body.filter || {});
+  res.json({ deleted: count });
 };
 
-export const deleteDocument = async (req: Request, res: Response) => {
-  try {
-    const { db, col, id } = req.params;
+export const countDocuments = async (req: Request, res: Response) => {
+  const collection = (await manager.db(req.params.db))
+    .collection<any>(req.params.col);
 
-    const database = await manager.db(db);
-    const collection = database.collection<any>(col);
-    const ok = await collection.deleteOne({ _id: id });
-
-    res.json({ ok });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "server error" });
-  }
+  const count = await collection.countDocuments(req.body.filter || {});
+  res.json({ count });
 };
