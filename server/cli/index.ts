@@ -1,59 +1,13 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+
 import readline from "readline";
 import util from "util";
 import bcrypt from "bcryptjs";
 
-import { manager } from "../src/config/database";
-import { getAuthCollection } from "../src/config/database";
+import { manager, getAuthCollection } from "../src/config/database";
 import { AuthUser } from "../src/types/auth-user";
 
-const program = new Command();
-
-/* -------------------------------- CLI COMMAND MODE -------------------------------- */
-
-program
-  .name("liorandb")
-  .description("LioranDB CLI - Interactive Database Shell")
-  .version("1.0.0");
-
-program
-  .command("user")
-  .description("Manage users")
-  .command("create <username> <password>")
-  .description("Create a new user")
-  .action(async (username, password) => {
-    try {
-      const users = await getAuthCollection();
-      const existing = await users.findOne({ username });
-      if (existing) {
-        console.error("Error: Username already exists.");
-        process.exit(1);
-      }
-
-      const hashed = await bcrypt.hash(password, 10);
-      await users.insertOne({
-        username,
-        password: hashed,
-        createdAt: new Date().toISOString(),
-      } as AuthUser);
-
-      console.log(`✔ User '${username}' created successfully`);
-      process.exit(0);
-    } catch (err) {
-      console.error("Error:", err);
-      process.exit(1);
-    }
-  });
-
 /* -------------------------------- INTERACTIVE MODE -------------------------------- */
-
-if (process.argv.length > 2) {
-  program.parse(process.argv);
-  process.exit(0);
-}
-
-/* -------------------------------- REPL MODE -------------------------------- */
 
 console.log("🚀 LioranDB Interactive Shell");
 console.log("Type: help   to see commands\n");
@@ -67,9 +21,11 @@ const rl = readline.createInterface({
 
 let currentDB = "default";
 
+/* -------------------------------- HELP -------------------------------- */
+
 async function printHelp() {
   console.log(`
-Commands:
+Database:
   show dbs
   use <dbname>
   show collections
@@ -77,6 +33,7 @@ Commands:
   db.dropCollection("<name>")
   db.renameCollection("<old>", "<new>")
 
+CRUD:
   db.<collection>.insert({...})
   db.<collection>.insertMany([...])
   db.<collection>.find({...})
@@ -87,10 +44,18 @@ Commands:
   db.<collection>.deleteMany({...filter})
   db.<collection>.count({...})
 
+User Management:
+  user.create("username","password")
+  user.delete("username")
+  user.list()
+
+System:
   clear
   exit
 `);
 }
+
+/* -------------------------------- HELPERS -------------------------------- */
 
 function safeParse(obj: string) {
   try {
@@ -100,9 +65,54 @@ function safeParse(obj: string) {
   }
 }
 
+/* -------------------------------- USER COMMAND HANDLER -------------------------------- */
+
+async function handleUserCommand(cmd: string) {
+  const users = await getAuthCollection();
+
+  if (cmd.startsWith("user.create")) {
+    const args = cmd.match(/\("(.+?)","(.+?)"\)/);
+    if (!args) return console.error("Invalid syntax");
+
+    const [, username, password] = args;
+
+    const existing = await users.findOne({ username });
+    if (existing) return console.error("User already exists");
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    await users.insertOne({
+      username,
+      password: hashed,
+      createdAt: new Date().toISOString(),
+    } as AuthUser);
+
+    return console.log(`✔ User '${username}' created`);
+  }
+
+  if (cmd.startsWith("user.delete")) {
+    const args = cmd.match(/\("(.+?)"\)/);
+    if (!args) return console.error("Invalid syntax");
+
+    const [, username] = args;
+    const r = await users.deleteOne({ username });
+
+    return console.log(`Deleted: ${r}`);
+  }
+
+  if (cmd === "user.list()") {
+    const list = await users.find({});
+    return console.table(list.map((u: any) => ({
+      username: u.username,
+      createdAt: u.createdAt
+    })));
+  }
+}
+
+/* -------------------------------- MAIN COMMAND HANDLER -------------------------------- */
+
 async function handleCommand(input: string) {
   const cmd = input.trim();
-
   if (!cmd) return;
 
   if (cmd === "exit") process.exit(0);
@@ -150,6 +160,14 @@ async function handleCommand(input: string) {
     return console.log("✔ Collection renamed");
   }
 
+  /* -------- USER COMMANDS -------- */
+
+  if (cmd.startsWith("user.")) {
+    return handleUserCommand(cmd);
+  }
+
+  /* -------- DATABASE CRUD -------- */
+
   if (cmd.startsWith("db.")) {
     const match = cmd.match(/^db\.([^.]+)\.(.+)$/);
     if (!match) return console.error("Invalid syntax");
@@ -160,19 +178,14 @@ async function handleCommand(input: string) {
 
     if (action.startsWith("insertMany")) {
       const match = action.match(/^insertMany\((.*)\)$/);
-
-      if (!match) throw new Error("Invalid insertMany format");
-      const data = JSON.parse(match[1]);
+      const data = JSON.parse(match![1]);
       const r = await col.insertMany(data);
       return console.log(util.inspect(r, false, 10, true));
     }
 
     if (action.startsWith("insert")) {
       const match = action.match(/^insert\((.*)\)$/);
-
-      if (!match) throw new Error("Invalid insert format");
-
-      const data = JSON.parse(match[1]);
+      const data = JSON.parse(match![1]);
       const r = await col.insertOne(data);
       return console.log(util.inspect(r, false, 10, true));
     }
@@ -191,9 +204,7 @@ async function handleCommand(input: string) {
 
     if (action.startsWith("updateMany")) {
       const match = action.match(/^updateMany\((.*)\)$/);
-      if (!match) throw new Error("Invalid updateMany format");
-
-      const args = safeParse(`[${match[1]}]`);
+      const args = safeParse(`[${match![1]}]`);
       const r = await col.updateMany(args[0], args[1]);
       return console.log(util.inspect(r, false, 10, true));
     }
