@@ -117,6 +117,10 @@ dist
 # Serverless directories
 .serverless/
 
+log.txt
+server
+save_src_tree.py
+
 # FuseBox cache
 .fusebox/
 

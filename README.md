@@ -1,173 +1,316 @@
 # @liorandb/driver
 
-A fully MongoDB-style, TypeScript-first Node.js driver for **LioranDB Server**.
+Official **MongoDB-styled TypeScript / JavaScript SDK** for interacting with **LioranDB Host API**.
 
-This driver mimics the official **MongoDB Node.js Driver** patterns:
-
-* `client.connect()` → connects & authenticates
-* `client.db(name)` → select database
-* `db.collection(name)` → select a collection
-* Collection helpers that look like MongoDB: `insertOne`, `find`, `findOne`, `updateOne`, `deleteOne`
+Designed for **simplicity, speed, and developer experience**, this driver gives you a fully MongoDB-like API over a lightweight REST backend.
 
 ---
 
-# 🚀 Features
+## ✨ Features
 
-* 100% **MongoDB-like driver API**
-* URI authentication (`lioran://user:pass@host:port`)
-* `client.db().collection()` pattern
-* Auto JWT login & token injection
+* MongoDB-style API
+* Promise-based async operations
 * Full TypeScript support
-* Zero dependencies except Axios
+* Zero config
+* Clean class architecture
+* High performance
 
 ---
 
-# 📦 Installation
+## 📦 Installation
 
-```
+```bash
 npm install @liorandb/driver
 ```
 
-Dev tools (if contributing):
+or
 
-```
-npm install -D typescript ts-node-dev @types/node
+```bash
+yarn add @liorandb/driver
 ```
 
 ---
 
-# 🔌 Connection String Format
+## 🚀 Quick Start
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:password@localhost:4000");
+
+await client.connect();
+
+const db = client.db("mydb");
+const users = db.collection("users");
+
+await users.insertOne({ name: "Swaraj", age: 17 });
+
+const results = await users.find({ age: { $gt: 16 } });
+console.log(results);
+```
+
+---
+
+## 🔐 Connection URI Format
 
 ```
-lioran://username:password@host:port
+lioran://<username>:<password>@<host>:<port>
 ```
 
 Example:
 
 ```
-lioran://admin:secret@localhost:8080
+lioran://admin:123456@localhost:4000
 ```
 
 ---
 
-# 🧩 Quick Start (MongoDB Style)
+## 🧱 API Reference
+
+---
+
+## Client
 
 ```ts
-import { LioranDBClient } from "@liorandb/driver";
+const client = new LioranClient(uri);
+```
 
-const client = new LioranDBClient("lioran://admin:admin@localhost:8080");
+### connect()
 
+```ts
 await client.connect();
+```
 
-const db = client.db("testDB");
+Authenticate and establish connection.
+
+---
+
+### db(name)
+
+```ts
+const db = client.db("mydb");
+```
+
+Returns a DB instance.
+
+---
+
+### listDatabases()
+
+```ts
+await client.listDatabases();
+```
+
+---
+
+### createDatabase(name)
+
+```ts
+await client.createDatabase("mydb");
+```
+
+---
+
+### dropDatabase(name)
+
+```ts
+await client.dropDatabase("mydb");
+```
+
+---
+
+### renameDatabase(old, new)
+
+```ts
+await client.renameDatabase("mydb", "newdb");
+```
+
+---
+
+## DB
+
+```ts
+const db = client.db("mydb");
+```
+
+---
+
+### collection(name)
+
+```ts
 const users = db.collection("users");
-
-await users.insertOne({ name: "Swaraj", age: 17 });
-
-const res = await users.find({ age: 17 });
-console.log(res);
 ```
 
 ---
 
-# 📚 Full API Reference
-
-## 🌐 `client.connect()`
-
-Authenticates using URI credentials and stores JWT internally.
-
----
-
-# 🗄️ Databases
-
-### `client.db(name)`
-
-Selects a database.
-
----
-
-# 📁 Collections
-
-### `db.collection(name)`
-
-Selects a collection from the database.
-
----
-
-# 📄 Document Methods (MongoDB Style)
-
-### `insertOne(document)`
-
-Inserts a single document.
+### listCollections()
 
 ```ts
-await users.insertOne({ username: "dev" });
-```
-
-### `find(query)`
-
-Returns an array of matching documents.
-
-```ts
-await users.find({ active: true });
-```
-
-### `findOne(query)`
-
-Returns the first matching document.
-
-```ts
-await users.findOne({ id: "abc" });
-```
-
-### `updateOne(filter, update)`
-
-Updates fields of a single document.
-
-```ts
-await users.updateOne({ id: "abc" }, { age: 18 });
-```
-
-### `deleteOne(filter)`
-
-Deletes one document.
-
-```ts
-await users.deleteOne({ id: "abc" });
+await db.listCollections();
 ```
 
 ---
 
-# 🏗 Project Structure
+### createCollection(name)
 
+```ts
+await db.createCollection("users");
 ```
+
+---
+
+### dropCollection(name)
+
+```ts
+await db.dropCollection("users");
+```
+
+---
+
+### renameCollection(old, new)
+
+```ts
+await db.renameCollection("users", "customers");
+```
+
+---
+
+## Collection
+
+```ts
+const users = db.collection("users");
+```
+
+---
+
+### insertOne(doc)
+
+```ts
+await users.insertOne({ name: "John", age: 20 });
+```
+
+---
+
+### insertMany(docs)
+
+```ts
+await users.insertMany([
+  { name: "A" },
+  { name: "B" }
+]);
+```
+
+---
+
+### find(filter)
+
+```ts
+await users.find({ age: { $gt: 18 } });
+```
+
+---
+
+### findOne(filter)
+
+```ts
+await users.findOne({ name: "John" });
+```
+
+---
+
+### updateMany(filter, update)
+
+```ts
+await users.updateMany(
+  { age: { $lt: 18 } },
+  { $set: { minor: true } }
+);
+```
+
+---
+
+### deleteMany(filter)
+
+```ts
+await users.deleteMany({ inactive: true });
+```
+
+---
+
+### count(filter)
+
+```ts
+await users.count({ active: true });
+```
+
+---
+
+### stats()
+
+```ts
+await users.stats();
+```
+
+---
+
+## 🧠 MongoDB Compatibility
+
+| MongoDB        | Lioran Driver |
+| -------------- | ------------- |
+| insertOne      | insertOne     |
+| insertMany     | insertMany    |
+| find           | find          |
+| findOne        | findOne       |
+| updateMany     | updateMany    |
+| deleteMany     | deleteMany    |
+| countDocuments | count         |
+
+---
+
+## ⚙ TypeScript Support
+
+The driver is fully typed and provides:
+
+* Typed filters
+* Typed update operators
+* Autocomplete support
+
+---
+
+## 🛡 Error Handling
+
+All functions throw descriptive errors when:
+
+* Authentication fails
+* Invalid query
+* Network errors
+
+Always wrap in try/catch for production.
+
+---
+
+## 🧪 Example Project Structure
+
+```bash
 src/
-  client.ts          // LioranDBClient
-  db.ts              // DB wrapper
-  collection.ts      // Collection wrapper
-  index.ts
-  types.ts
-  utils/
-    parseUri.ts
+ ├── db.ts
+ ├── index.ts
 ```
 
 ---
 
-# 📤 Publishing
+## 📄 License
 
-```
-npm login
-npm publish
-```
+MIT
 
 ---
 
-# 🤝 Contributing
+## 🧠 Maintained By
 
-Follow MongoDB-style API structure. PRs welcome.
+**LioranDB Team** — Building next-gen developer tools 🚀
 
 ---
 
-# 📄 License
+## ⭐ Star Us
 
-MIT License
+If you like LioranDB, please star the repository and help us grow 🙌

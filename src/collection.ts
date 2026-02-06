@@ -1,6 +1,5 @@
-// src/collection.ts
 import { AxiosInstance } from "axios";
-import { DocumentData } from "./types";
+import { DocumentData, Filter, UpdateQuery } from "./types";
 
 export class Collection {
   constructor(
@@ -10,27 +9,55 @@ export class Collection {
   ) {}
 
   async insertOne(doc: DocumentData) {
-    return (await this.http.post(`/db/${this.dbName}/collections/${this.colName}`, doc)).data;
+    return (await this.http.post(
+      `/db/${this.dbName}/collections/${this.colName}`,
+      doc
+    )).data.doc;
   }
 
-  async find(query: object) {
-    return (await this.http.post(`/db/${this.dbName}/collections/${this.colName}/find`, { query })).data.results;
+  async insertMany(docs: DocumentData[]) {
+    return (await this.http.post(
+      `/db/${this.dbName}/collections/${this.colName}/bulk`,
+      { docs }
+    )).data.docs;
   }
 
-  async findOne(query: object) {
-    const results = await this.find(query);
-    return results.length > 0 ? results[0] : null;
+  async find(filter: Filter = {}) {
+    return (await this.http.post(
+      `/db/${this.dbName}/collections/${this.colName}/find`,
+      { query: filter }
+    )).data.results;
   }
 
-  async updateOne(filter: object, update: object) {
-    const doc = await this.findOne(filter);
-    if (!doc?._id) throw new Error("Document not found for update");
-    return (await this.http.patch(`/db/${this.dbName}/collections/${this.colName}/${doc._id}`, update)).data;
+  async findOne(filter: Filter = {}) {
+    const res = await this.find(filter);
+    return res[0] || null;
   }
 
-  async deleteOne(filter: object) {
-    const doc = await this.findOne(filter);
-    if (!doc?._id) throw new Error("Document not found for delete");
-    return (await this.http.delete(`/db/${this.dbName}/collections/${this.colName}/${doc._id}`)).data;
+  async updateMany(filter: Filter, update: UpdateQuery) {
+    return (await this.http.patch(
+      `/db/${this.dbName}/collections/${this.colName}/updateMany`,
+      { filter, update }
+    )).data;
+  }
+
+  async deleteMany(filter: Filter) {
+    return (await this.http.post(
+      `/db/${this.dbName}/collections/${this.colName}/deleteMany`,
+      { filter }
+    )).data;
+  }
+
+  async count(filter: Filter = {}) {
+    return (await this.http.post(
+      `/db/${this.dbName}/collections/${this.colName}/count`,
+      { filter }
+    )).data.count;
+  }
+
+  async stats() {
+    return (await this.http.get(
+      `/db/${this.dbName}/collections/${this.colName}/stats`
+    )).data;
   }
 }

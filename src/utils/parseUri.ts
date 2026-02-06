@@ -1,4 +1,3 @@
-// src/utils/parseUri.ts
 export interface ParsedURI {
   host: string;
   port: number;
@@ -13,8 +12,14 @@ export function parseUri(uri: string): ParsedURI {
 
   const stripped = uri.replace("lioran://", "");
   const [creds, server] = stripped.split("@");
+
+  if (!creds || !server) {
+    throw new Error("Invalid LioranDB URI");
+  }
+
   const [username, password] = creds.split(":");
   const [host, portStr] = server.split(":");
+
   const port = Number(portStr);
 
   if (!username || !password || !host || !port) {
