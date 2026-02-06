@@ -120,6 +120,7 @@ dist
 log.txt
 server
 save_src_tree.py
+liorandb-studio
 
 # FuseBox cache
 .fusebox/
