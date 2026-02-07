@@ -2,6 +2,8 @@
 app.py
 log.txt
 logs
+bundle
+executable
 
 # Logs
 logs
