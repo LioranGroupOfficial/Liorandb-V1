@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/studio",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "bin": {
     "liorandb-studio": "./bin/index.js"
   },
