@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 // src/server.ts
 import app from "./app";
 

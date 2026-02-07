@@ -4,8 +4,8 @@ import readline from "readline";
 import util from "util";
 import bcrypt from "bcryptjs";
 
-import { manager, getAuthCollection } from "../src/config/database";
-import { AuthUser } from "../src/types/auth-user";
+import { manager, getAuthCollection } from "../config/database";
+import { AuthUser } from "../types/auth-user";
 
 /* -------------------------------- INTERACTIVE MODE -------------------------------- */
 

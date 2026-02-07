@@ -1,18 +1,17 @@
 {
   "name": "@liorandb/db",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "LioranDB server and CLI",
   "main": "dist/server.js",
-  "types": "dist/server.d.ts",
   "bin": {
-    "dbi": "dist/cli.js",
-    "serve": "dist/server.js"
+    "ldb-cli": "dist/cli/index.js",
+    "ldb-serve": "dist/server.js"
   },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "cli": "ts-node cli/index.ts"
+    "cli": "ts-node src/cli/index.ts"
   },
   "files": [
     "dist"
@@ -23,8 +22,8 @@
     "server",
     "cli"
   ],
-  "author": "Your Name",
-  "license": "ISC",
+  "author": "Lioran Group",
+  "license": "LDEP",
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/commander": "^2.12.0",
