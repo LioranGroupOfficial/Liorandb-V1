@@ -119,6 +119,12 @@ dist
 
 # FuseBox cache
 .fusebox/
+liorandb-studio
+server
+stest
+dtest
+log.txt
+save_src_tree.py
 
 # DynamoDB Local files
 .dynamodb/
