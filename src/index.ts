@@ -1,4 +1,4 @@
-export * from "./client";
+export { LioranClient } from "./client";
 export * from "./db";
 export * from "./collection";
 export * from "./types";
