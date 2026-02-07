@@ -32,7 +32,7 @@ export class LioranDBService {
     if (!this.client) throw new Error('Client not connected');
     try {
       const dbs = await this.client.listDatabases();
-      return dbs as Database[];
+      return ((dbs as unknown) as string[]).map(name => ({ name }));
     } catch (error) {
       throw new Error(`Failed to list databases: ${error}`);
     }
@@ -71,7 +71,7 @@ export class LioranDBService {
     try {
       const db = this.client.db(dbName);
       const collections = await db.listCollections();
-      return collections as Collection[];
+      return ((collections as unknown) as string[]).map(name => ({ name }));
     } catch (error) {
       throw new Error(`Failed to list collections: ${error}`);
     }
@@ -124,7 +124,7 @@ export class LioranDBService {
       const collection = db.collection(collectionName);
       const documents = await collection.find(filter || {});
       return {
-        documents: documents.slice(0, limit) as Document[],
+        documents: ((documents as unknown) as Document[]).slice(0, limit),
         count: documents.length,
       };
     } catch (error) {
@@ -142,7 +142,7 @@ export class LioranDBService {
       const db = this.client.db(dbName);
       const collection = db.collection(collectionName);
       const doc = await collection.findOne(filter);
-      return (doc as Document) || null;
+      return ((doc as unknown) as Document) || null;
     } catch (error) {
       throw new Error(`Failed to find document: ${error}`);
     }
@@ -157,7 +157,9 @@ export class LioranDBService {
     try {
       const db = this.client.db(dbName);
       const collection = db.collection(collectionName);
-      const result = await collection.insertOne(doc);
+      const { _id, ...docData } = doc;
+      const docToInsert = { ...docData, ...(typeof _id === 'string' || _id === undefined ? { _id } : {}) };
+      const result = await collection.insertOne(docToInsert as any);
       return result as unknown as string;
     } catch (error) {
       throw new Error(`Failed to insert document: ${error}`);
@@ -173,7 +175,11 @@ export class LioranDBService {
     try {
       const db = this.client.db(dbName);
       const collection = db.collection(collectionName);
-      const result = await collection.insertMany(docs);
+      const cleanedDocs = docs.map(({ _id, ...docData }) => ({
+        ...docData,
+        ...(typeof _id === 'string' || _id === undefined ? { _id } : {})
+      }));
+      const result = await collection.insertMany(cleanedDocs as any);
       return result as unknown as string[];
     } catch (error) {
       throw new Error(`Failed to insert documents: ${error}`);
