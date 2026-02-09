@@ -9,6 +9,12 @@ process.on("message", async (msg: any) => {
     let result;
 
     switch (action) {
+      case "shutdown": {
+        await manager.closeAll();
+        result = true;
+        break;
+      }
+
       case "db": {
         const db = await manager.db(args.db);
         result = true;

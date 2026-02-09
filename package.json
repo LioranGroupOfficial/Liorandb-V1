@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts --dts --format esm",
+    "build": "tsup src/index.ts src/worker/dbWorker.ts --dts --format esm",
     "prepublishOnly": "npm run build"
   },
   "exports": {

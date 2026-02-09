@@ -1,13 +1,27 @@
 import { fork, ChildProcess } from "child_process";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function resolveWorkerPath() {
+  // dist/ipc/queue.js → dist/worker/dbWorker.js
+  return path.resolve(__dirname, "../dist/worker/dbWorker.js");
+}
 
 export class DBQueue {
   private worker: ChildProcess;
   private seq = 0;
   private pending = new Map<number, (r: any) => void>();
+  private isShutdown = false;
 
   constructor() {
-    this.worker = fork(path.resolve("dist/worker/dbWorker.js"));
+    const workerPath = resolveWorkerPath();
+
+    this.worker = fork(workerPath, [], {
+      stdio: ["inherit", "inherit", "inherit", "ipc"],
+    });
 
     this.worker.on("message", (msg: any) => {
       const cb = this.pending.get(msg.id);
@@ -16,9 +30,22 @@ export class DBQueue {
         cb(msg);
       }
     });
+
+    this.worker.on("exit", () => {
+      this.isShutdown = true;
+    });
+
+    // Auto cleanup
+    process.on("exit", () => this.shutdown());
+    process.on("SIGINT", () => this.shutdown());
+    process.on("SIGTERM", () => this.shutdown());
   }
 
   exec(action: string, args: any) {
+    if (this.isShutdown) {
+      return Promise.reject(new Error("DBQueue is shutdown"));
+    }
+
     return new Promise((resolve, reject) => {
       const id = ++this.seq;
 
@@ -29,6 +56,22 @@ export class DBQueue {
 
       this.worker.send({ id, action, args });
     });
+  }
+
+  async shutdown() {
+    if (this.isShutdown) return;
+
+    this.isShutdown = true;
+
+    try {
+      this.worker.send({ action: "shutdown" });
+    } catch {}
+
+    setTimeout(() => {
+      try {
+        this.worker.kill("SIGTERM");
+      } catch {}
+    }, 200);
   }
 }
 

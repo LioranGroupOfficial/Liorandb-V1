@@ -59,7 +59,6 @@ export class LioranManager {
     }
 
     await fs.promises.mkdir(dbPath, { recursive: true });
-
     return this.db(name);
   }
 
@@ -93,10 +92,19 @@ export class LioranManager {
     this.openDBs.delete(name);
   }
 
+  /**
+   * Gracefully shuts down everything.
+   * - Closes all databases
+   * - Terminates IPC worker if running
+   */
   async closeAll(): Promise<void> {
-    if (this.ipc || this.closed) return;
-
+    if (this.closed) return;
     this.closed = true;
+
+    if (this.ipc) {
+      await dbQueue.shutdown();
+      return;
+    }
 
     for (const db of this.openDBs.values()) {
       try {
@@ -107,17 +115,21 @@ export class LioranManager {
     this.openDBs.clear();
   }
 
+  /**
+   * Alias for closeAll() (clean public API)
+   */
+  async close(): Promise<void> {
+    return this.closeAll();
+  }
+
   private _registerShutdownHooks() {
     const shutdown = async () => {
       await this.closeAll();
-      process.exit(0);
     };
 
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    process.on("exit", () => {
-      this.closeAll().catch(() => {});
-    });
+    process.on("exit", shutdown);
   }
 
   private _assertOpen() {
@@ -185,7 +197,8 @@ export class LioranManager {
     return {
       rootPath: this.rootPath,
       openDatabases: this.ipc ? ["<ipc>"] : [...this.openDBs.keys()],
-      ipc: this.ipc
+      ipc: this.ipc,
+      closed: this.closed
     };
   }
 }
