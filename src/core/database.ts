@@ -20,6 +20,8 @@ export class LioranDB {
     }
   }
 
+  /* -------------------------------- COLLECTION -------------------------------- */
+
   collection<T = any>(name: string): Collection<T> {
     if (this.collections.has(name)) {
       return this.collections.get(name)!;
@@ -68,8 +70,13 @@ export class LioranDB {
     const oldPath = path.join(this.basePath, oldName);
     const newPath = path.join(this.basePath, newName);
 
-    if (!fs.existsSync(oldPath)) throw new Error("Collection does not exist");
-    if (fs.existsSync(newPath)) throw new Error("New collection name exists");
+    if (!fs.existsSync(oldPath)) {
+      throw new Error("Collection does not exist");
+    }
+
+    if (fs.existsSync(newPath)) {
+      throw new Error("New collection name already exists");
+    }
 
     if (this.collections.has(oldName)) {
       await this.collections.get(oldName)!.close();
@@ -77,7 +84,9 @@ export class LioranDB {
     }
 
     await fs.promises.rename(oldPath, newPath);
-    this.collections.set(newName, new Collection(newPath));
+
+    const col = new Collection(newPath);
+    this.collections.set(newName, col);
     return true;
   }
 
@@ -91,5 +100,26 @@ export class LioranDB {
     });
 
     return dirs.filter(d => d.isDirectory()).map(d => d.name);
+  }
+
+  /* -------------------------------- LIFECYCLE -------------------------------- */
+
+  async close(): Promise<void> {
+    for (const col of this.collections.values()) {
+      try {
+        await col.close();
+      } catch {}
+    }
+    this.collections.clear();
+  }
+
+  /* -------------------------------- DEBUG -------------------------------- */
+
+  getStats() {
+    return {
+      dbName: this.dbName,
+      basePath: this.basePath,
+      collections: [...this.collections.keys()]
+    };
   }
 }

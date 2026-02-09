@@ -12,6 +12,7 @@ export interface LioranManagerOptions {
 export class LioranManager {
   rootPath: string;
   openDBs: Map<string, LioranDB>;
+  private closed = false;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey } = options;
@@ -27,13 +28,18 @@ export class LioranManager {
     }
 
     this.openDBs = new Map();
+    this._registerShutdownHooks();
   }
+
+  /* -------------------------------- CORE -------------------------------- */
 
   async db(name: string): Promise<LioranDB> {
     return this.openDatabase(name);
   }
 
   async createDatabase(name: string): Promise<LioranDB> {
+    this._assertOpen();
+
     const dbPath = path.join(this.rootPath, name);
 
     if (fs.existsSync(dbPath)) {
@@ -45,6 +51,8 @@ export class LioranManager {
   }
 
   async openDatabase(name: string): Promise<LioranDB> {
+    this._assertOpen();
+
     const dbPath = path.join(this.rootPath, name);
 
     if (!fs.existsSync(dbPath)) {
@@ -60,17 +68,49 @@ export class LioranManager {
     return db;
   }
 
+  /* -------------------------------- LIFECYCLE -------------------------------- */
+
   async closeDatabase(name: string): Promise<void> {
     if (!this.openDBs.has(name)) return;
 
     const db = this.openDBs.get(name)!;
-
-    for (const [, col] of db.collections.entries()) {
-      await col.close();
-    }
-
+    await db.close();
     this.openDBs.delete(name);
   }
+
+  async closeAll(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+
+    for (const db of this.openDBs.values()) {
+      try {
+        await db.close();
+      } catch {}
+    }
+
+    this.openDBs.clear();
+  }
+
+  private _registerShutdownHooks() {
+    const shutdown = async () => {
+      await this.closeAll();
+      process.exit(0);
+    };
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("exit", () => {
+      this.closeAll().catch(() => {});
+    });
+  }
+
+  private _assertOpen() {
+    if (this.closed) {
+      throw new Error("LioranManager is closed");
+    }
+  }
+
+  /* -------------------------------- MANAGEMENT -------------------------------- */
 
   async renameDatabase(oldName: string, newName: string): Promise<boolean> {
     const oldPath = path.join(this.rootPath, oldName);
@@ -79,6 +119,7 @@ export class LioranManager {
     if (!fs.existsSync(oldPath)) {
       throw new Error(`Database "${oldName}" not found`);
     }
+
     if (fs.existsSync(newPath)) {
       throw new Error(`Database "${newName}" already exists`);
     }
@@ -108,5 +149,14 @@ export class LioranManager {
     });
 
     return items.filter(i => i.isDirectory()).map(i => i.name);
+  }
+
+  /* -------------------------------- DEBUG -------------------------------- */
+
+  getStats() {
+    return {
+      rootPath: this.rootPath,
+      openDatabases: [...this.openDBs.keys()]
+    };
   }
 }
