@@ -2,6 +2,7 @@ import path from "path";
 import fs from "fs";
 import { Collection } from "./collection.js";
 import type { LioranManager } from "../LioranManager.js";
+import type { ZodSchema } from "zod";
 
 export class LioranDB {
   basePath: string;
@@ -22,9 +23,11 @@ export class LioranDB {
 
   /* -------------------------------- COLLECTION -------------------------------- */
 
-  collection<T = any>(name: string): Collection<T> {
+  collection<T = any>(name: string, schema?: ZodSchema<T>): Collection<T> {
     if (this.collections.has(name)) {
-      return this.collections.get(name)!;
+      const col = this.collections.get(name)!;
+      if (schema) col.setSchema(schema);
+      return col as Collection<T>;
     }
 
     const colPath = path.join(this.basePath, name);
@@ -33,12 +36,16 @@ export class LioranDB {
       fs.mkdirSync(colPath, { recursive: true });
     }
 
-    const col = new Collection<T>(colPath);
+    const col = new Collection<T>(colPath, schema);
     this.collections.set(name, col);
+
     return col;
   }
 
-  async createCollection(name: string): Promise<boolean> {
+  async createCollection<T = any>(
+    name: string,
+    schema?: ZodSchema<T>
+  ): Promise<Collection<T>> {
     const colPath = path.join(this.basePath, name);
 
     if (fs.existsSync(colPath)) {
@@ -46,8 +53,11 @@ export class LioranDB {
     }
 
     await fs.promises.mkdir(colPath, { recursive: true });
-    this.collections.set(name, new Collection(colPath));
-    return true;
+
+    const col = new Collection<T>(colPath, schema);
+    this.collections.set(name, col);
+
+    return col;
   }
 
   async deleteCollection(name: string): Promise<boolean> {
@@ -87,6 +97,7 @@ export class LioranDB {
 
     const col = new Collection(newPath);
     this.collections.set(newName, col);
+
     return true;
   }
 

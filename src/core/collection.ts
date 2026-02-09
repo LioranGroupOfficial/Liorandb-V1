@@ -4,6 +4,8 @@ import { ClassicLevel } from "classic-level";
 import { matchDocument, applyUpdate } from "./query.js";
 import { v4 as uuid } from "uuid";
 import { encryptData, decryptData } from "../utils/encryption.js";
+import type { ZodSchema } from "zod";
+import { validateSchema } from "../utils/schema.js";
 
 export interface UpdateOptions {
   upsert?: boolean;
@@ -14,14 +16,24 @@ export class Collection<T = any> {
   db: ClassicLevel<string, string>;
   private queue: Promise<any>;
   private walPath: string;
+  private schema?: ZodSchema<T>;
 
-  constructor(dir: string) {
+  constructor(dir: string, schema?: ZodSchema<T>) {
     this.dir = dir;
     this.db = new ClassicLevel(dir);
     this.queue = Promise.resolve();
     this.walPath = path.join(dir, "__wal.log");
+    this.schema = schema;
 
     this.recoverFromWAL().catch(console.error);
+  }
+
+  setSchema(schema: ZodSchema<T>) {
+    this.schema = schema;
+  }
+
+  private validate(doc: any): T {
+    return this.schema ? validateSchema(this.schema, doc) : doc;
   }
 
   /* ---------------- WAL ---------------- */
@@ -175,7 +187,8 @@ export class Collection<T = any> {
 
   private async _insertOne(doc: T & { _id?: string }): Promise<T> {
     const _id = doc._id ?? uuid();
-    const final = { _id, ...doc } as T;
+    const final = this.validate({ _id, ...doc });
+
     await this.db.put(String(_id), encryptData(final));
     return final;
   }
@@ -188,34 +201,19 @@ export class Collection<T = any> {
 
     for (const d of docs) {
       const _id = d._id ?? uuid();
-      const final = { _id, ...d } as T;
+      const final = this.validate({ _id, ...d });
+
       ops.push({
         type: "put",
         key: String(_id),
         value: encryptData(final)
       });
+
       out.push(final);
     }
 
     await this.db.batch(ops);
     return out;
-  }
-
-  private async _find(query: any): Promise<T[]> {
-    const out: T[] = [];
-    for await (const [, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
-      if (matchDocument(value, query)) out.push(value);
-    }
-    return out;
-  }
-
-  private async _findOne(query: any): Promise<T | null> {
-    for await (const [, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
-      if (matchDocument(value, query)) return value;
-    }
-    return null;
   }
 
   private async _updateOne(
@@ -225,19 +223,26 @@ export class Collection<T = any> {
   ): Promise<T | null> {
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         const updated = applyUpdate(value, update);
         updated._id = value._id;
-        await this.db.put(key, encryptData(updated));
-        return updated;
+
+        const validated = this.validate(updated);
+        await this.db.put(key, encryptData(validated));
+
+        return validated;
       }
     }
 
     if (options?.upsert) {
       const doc = applyUpdate(filter, update);
       doc._id ??= uuid();
-      await this.db.put(String(doc._id), encryptData(doc));
-      return doc;
+
+      const validated = this.validate(doc);
+      await this.db.put(String(doc._id), encryptData(validated));
+
+      return validated;
     }
 
     return null;
@@ -245,47 +250,80 @@ export class Collection<T = any> {
 
   private async _updateMany(filter: any, update: any): Promise<T[]> {
     const updated: T[] = [];
+
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         const doc = applyUpdate(value, update);
         doc._id = value._id;
-        await this.db.put(key, encryptData(doc));
-        updated.push(doc);
+
+        const validated = this.validate(doc);
+        await this.db.put(key, encryptData(validated));
+
+        updated.push(validated);
       }
     }
+
     return updated;
+  }
+
+  private async _find(query: any): Promise<T[]> {
+    const out: T[] = [];
+
+    for await (const [, enc] of this.db.iterator()) {
+      const value = decryptData(enc);
+      if (matchDocument(value, query)) out.push(value);
+    }
+
+    return out;
+  }
+
+  private async _findOne(query: any): Promise<T | null> {
+    for await (const [, enc] of this.db.iterator()) {
+      const value = decryptData(enc);
+      if (matchDocument(value, query)) return value;
+    }
+
+    return null;
   }
 
   private async _deleteOne(filter: any): Promise<boolean> {
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         await this.db.del(key);
         return true;
       }
     }
+
     return false;
   }
 
   private async _deleteMany(filter: any): Promise<number> {
     let count = 0;
+
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         await this.db.del(key);
         count++;
       }
     }
+
     return count;
   }
 
   private async _countDocuments(filter: any): Promise<number> {
     let c = 0;
+
     for await (const [, enc] of this.db.iterator()) {
       const value = decryptData(enc);
       if (matchDocument(value, filter)) c++;
     }
+
     return c;
   }
 }
