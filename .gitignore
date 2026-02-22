@@ -121,6 +121,8 @@ dist
 # Serverless directories
 .serverless/
 
+.vscode
+
 # FuseBox cache
 .fusebox/
 dtest
