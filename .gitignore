@@ -121,6 +121,7 @@ dist
 .serverless/
 stest
 dtest
+.vscode
 
 # FuseBox cache
 .fusebox/

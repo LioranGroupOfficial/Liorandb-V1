@@ -2,7 +2,14 @@
 import { LioranManager } from "@liorandb/core";
 import { AuthUser } from "../types/auth-user";
 
-export const manager = new LioranManager();
+import { parseCLIArgs } from "../utils/cli";
+
+const cli = parseCLIArgs();
+
+export const manager = new LioranManager({
+  rootPath: cli.rootPath || "./lioran-data",
+  encryptionKey: cli.encryptionKey || "default-encryption-key",
+});
 
 export async function getAuthCollection() {
   const db = await manager.db("_auth");
