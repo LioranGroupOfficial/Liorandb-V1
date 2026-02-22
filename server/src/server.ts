@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // src/server.ts
+import os from "os";
 import app from "./app";
 import { parseCLIArgs } from "./utils/cli";
 
@@ -12,22 +13,36 @@ console.log(`🔐 Encryption   : ${cli.encryptionKey ? "Enabled" : "Disabled"}`)
 
 const PORT = 4000;
 
+function printHostAddresses(port: number) {
+  const urls = new Set<string>();
+
+  // Localhost
+  urls.add(`http://localhost:${port}`);
+  urls.add(`http://127.0.0.1:${port}`);
+
+  // Network interfaces
+  const nets = os.networkInterfaces();
+
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === "IPv4" && !net.internal) {
+        urls.add(`http://${net.address}:${port}`);
+      }
+    }
+  }
+
+  console.log("🌐 Available Host URLs:");
+  for (const url of urls) {
+    console.log(`   → ${url}`);
+  }
+}
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log("======================================");
   console.log("🚀 LioranDB Host is LIVE");
   console.log(`📡 Listening on port: ${PORT}`);
-  // print all running host IPs
-  console.log(`🌐 Host Address: localhost:4000`);
-  const os = require("os");
-  const networkInterfaces = os.networkInterfaces();
-  for (const interfaceName in networkInterfaces) {
-    const interfaceInfo = networkInterfaces[interfaceName];
-    for (const addressInfo of interfaceInfo) {
-      if (addressInfo.family === "IPv4" && !addressInfo.internal) {
-        console.log(`🌐 Host Address: ${addressInfo.address}:4000`);
-      }
-    }
-  }
-  // console.log(`🧠 Mode: ${process.env.NODE_ENV || "development"}`);
+
+  printHostAddresses(PORT);
+
   console.log("======================================");
 });
