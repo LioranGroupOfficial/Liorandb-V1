@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/db",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "LioranDB server and CLI",
   "main": "dist/server.js",
   "bin": {
