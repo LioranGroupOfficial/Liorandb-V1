@@ -87,7 +87,7 @@ async function handleUserCommand(cmd: string) {
   const users = await getAuthCollection();
 
   if (cmd.startsWith("user.create")) {
-    const args = cmd.match(/\("(.+?)","(.+?)"\)/);
+    const args = cmd.match(/\(\s*"(.+?)"\s*,\s*"(.+?)"\s*\)/);
     if (!args) return console.error("❌ Invalid syntax");
 
     const [, username, password] = args;
