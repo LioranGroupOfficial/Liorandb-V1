@@ -1,5 +1,5 @@
 // src/config/database.ts
-import { LioranManager } from "@liorandb/core";
+import { LioranManager, getBaseDBFolder } from "@liorandb/core";
 import { AuthUser } from "../types/auth-user";
 
 import { parseCLIArgs } from "../utils/cli";
@@ -7,8 +7,9 @@ import { parseCLIArgs } from "../utils/cli";
 const cli = parseCLIArgs();
 
 export const manager = new LioranManager({
-  rootPath: cli.rootPath || "./lioran-data",
+  rootPath: cli.rootPath || getBaseDBFolder(),
   encryptionKey: cli.encryptionKey || "default-encryption-key",
+  ipc: true
 });
 
 export async function getAuthCollection() {
