@@ -1,6 +1,7 @@
 export interface LioranManagerOptions {
   rootPath?: string
-  encryptionKey?: string | Buffer
+  encryptionKey?: string | Buffer,
+  ipc?: boolean
 }
 
 export interface UpdateOptions {
