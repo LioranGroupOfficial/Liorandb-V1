@@ -4,24 +4,110 @@ import { Collection } from "./collection.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
 
+type TXOp = { tx: number; col: string; op: string; args: any[] };
+type TXCommit = { tx: number; commit: true };
+type WALEntry = TXOp | TXCommit;
+
+class DBTransactionContext {
+  private ops: TXOp[] = [];
+
+  constructor(
+    private db: LioranDB,
+    public readonly txId: number
+  ) {}
+
+  collection(name: string) {
+    return new Proxy({}, {
+      get: (_, prop: string) => {
+        return (...args: any[]) => {
+          this.ops.push({
+            tx: this.txId,
+            col: name,
+            op: prop,
+            args
+          });
+        };
+      }
+    });
+  }
+
+  async commit() {
+    await this.db.writeWAL(this.ops);
+    await this.db.writeWAL([{ tx: this.txId, commit: true }]);
+    await this.db.applyTransaction(this.ops);
+    await this.db.clearWAL();
+  }
+}
+
 export class LioranDB {
   basePath: string;
   dbName: string;
   manager: LioranManager;
   collections: Map<string, Collection>;
+  private walPath: string;
+
+  private static TX_SEQ = 0;
 
   constructor(basePath: string, dbName: string, manager: LioranManager) {
     this.basePath = basePath;
     this.dbName = dbName;
     this.manager = manager;
     this.collections = new Map();
+    this.walPath = path.join(basePath, "__tx_wal.log");
 
-    if (!fs.existsSync(basePath)) {
-      fs.mkdirSync(basePath, { recursive: true });
-    }
+    fs.mkdirSync(basePath, { recursive: true });
+
+    this.recoverFromWAL().catch(console.error);
   }
 
-  /* -------------------------------- COLLECTION -------------------------------- */
+  async writeWAL(entries: WALEntry[]) {
+    const fd = await fs.promises.open(this.walPath, "a");
+    for (const e of entries) {
+      await fd.write(JSON.stringify(e) + "\n");
+    }
+    await fd.sync();
+    await fd.close();
+  }
+
+  async clearWAL() {
+    try { await fs.promises.unlink(this.walPath); } catch {}
+  }
+
+  private async recoverFromWAL() {
+    if (!fs.existsSync(this.walPath)) return;
+
+    const lines = (await fs.promises.readFile(this.walPath, "utf8"))
+      .split("\n")
+      .filter(Boolean);
+
+    const committed = new Set<number>();
+    const ops = new Map<number, TXOp[]>();
+
+    for (const line of lines) {
+      const entry: WALEntry = JSON.parse(line);
+
+      if ("commit" in entry) {
+        committed.add(entry.tx);
+      } else {
+        if (!ops.has(entry.tx)) ops.set(entry.tx, []);
+        ops.get(entry.tx)!.push(entry);
+      }
+    }
+
+    for (const tx of committed) {
+      const txOps = ops.get(tx);
+      if (txOps) await this.applyTransaction(txOps);
+    }
+
+    await this.clearWAL();
+  }
+
+  async applyTransaction(ops: TXOp[]) {
+    for (const { col, op, args } of ops) {
+      const collection = this.collection(col);
+      await (collection as any)._exec(op, args);
+    }
+  }
 
   collection<T = any>(name: string, schema?: ZodSchema<T>): Collection<T> {
     if (this.collections.has(name)) {
@@ -31,106 +117,27 @@ export class LioranDB {
     }
 
     const colPath = path.join(this.basePath, name);
-
-    if (!fs.existsSync(colPath)) {
-      fs.mkdirSync(colPath, { recursive: true });
-    }
+    fs.mkdirSync(colPath, { recursive: true });
 
     const col = new Collection<T>(colPath, schema);
     this.collections.set(name, col);
-
     return col;
   }
 
-  async createCollection<T = any>(
-    name: string,
-    schema?: ZodSchema<T>
-  ): Promise<Collection<T>> {
-    const colPath = path.join(this.basePath, name);
+  async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
+    const txId = ++LioranDB.TX_SEQ;
+    const tx = new DBTransactionContext(this, txId);
 
-    if (fs.existsSync(colPath)) {
-      throw new Error("Collection already exists");
-    }
+    const result = await fn(tx);
+    await tx.commit();
 
-    await fs.promises.mkdir(colPath, { recursive: true });
-
-    const col = new Collection<T>(colPath, schema);
-    this.collections.set(name, col);
-
-    return col;
+    return result;
   }
-
-  async deleteCollection(name: string): Promise<boolean> {
-    const colPath = path.join(this.basePath, name);
-
-    if (!fs.existsSync(colPath)) {
-      throw new Error("Collection does not exist");
-    }
-
-    if (this.collections.has(name)) {
-      await this.collections.get(name)!.close();
-      this.collections.delete(name);
-    }
-
-    await fs.promises.rm(colPath, { recursive: true, force: true });
-    return true;
-  }
-
-  async renameCollection(oldName: string, newName: string): Promise<boolean> {
-    const oldPath = path.join(this.basePath, oldName);
-    const newPath = path.join(this.basePath, newName);
-
-    if (!fs.existsSync(oldPath)) {
-      throw new Error("Collection does not exist");
-    }
-
-    if (fs.existsSync(newPath)) {
-      throw new Error("New collection name already exists");
-    }
-
-    if (this.collections.has(oldName)) {
-      await this.collections.get(oldName)!.close();
-      this.collections.delete(oldName);
-    }
-
-    await fs.promises.rename(oldPath, newPath);
-
-    const col = new Collection(newPath);
-    this.collections.set(newName, col);
-
-    return true;
-  }
-
-  async dropCollection(name: string): Promise<boolean> {
-    return this.deleteCollection(name);
-  }
-
-  async listCollections(): Promise<string[]> {
-    const dirs = await fs.promises.readdir(this.basePath, {
-      withFileTypes: true
-    });
-
-    return dirs.filter(d => d.isDirectory()).map(d => d.name);
-  }
-
-  /* -------------------------------- LIFECYCLE -------------------------------- */
 
   async close(): Promise<void> {
     for (const col of this.collections.values()) {
-      try {
-        await col.close();
-      } catch {}
+      try { await col.close(); } catch {}
     }
     this.collections.clear();
-  }
-
-  /* -------------------------------- DEBUG -------------------------------- */
-
-  getStats() {
-    return {
-      dbName: this.dbName,
-      basePath: this.basePath,
-      collections: [...this.collections.keys()]
-    };
   }
 }

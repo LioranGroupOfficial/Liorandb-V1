@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { ClassicLevel } from "classic-level";
 import { matchDocument, applyUpdate } from "./query.js";
 import { v4 as uuid } from "uuid";
@@ -14,19 +12,13 @@ export interface UpdateOptions {
 export class Collection<T = any> {
   dir: string;
   db: ClassicLevel<string, string>;
-  private queue: Promise<any>;
-  private walPath: string;
+  private queue: Promise<any> = Promise.resolve();
   private schema?: ZodSchema<T>;
-  private walCounter = 0;
 
   constructor(dir: string, schema?: ZodSchema<T>) {
     this.dir = dir;
-    this.db = new ClassicLevel(dir);
-    this.queue = Promise.resolve();
-    this.walPath = path.join(dir, "__wal.log");
+    this.db = new ClassicLevel(dir, { valueEncoding: "utf8" });
     this.schema = schema;
-
-    this.recoverFromWAL().catch(console.error);
   }
 
   setSchema(schema: ZodSchema<T>) {
@@ -37,349 +29,187 @@ export class Collection<T = any> {
     return this.schema ? validateSchema(this.schema, doc) : doc;
   }
 
-  /* ---------------- WAL ---------------- */
-
-  private async writeWAL(entry: any) {
-    await fs.promises.appendFile(
-      this.walPath,
-      JSON.stringify(entry) + "\n"
-    );
-  }
-
-  private async clearWAL() {
-    if (fs.existsSync(this.walPath)) {
-      await fs.promises.unlink(this.walPath);
-    }
-  }
-
-  private async maybeCheckpoint() {
-    if (++this.walCounter >= 100) {
-      this.walCounter = 0;
-      await this.clearWAL();
-    }
-  }
-
-  private async recoverFromWAL() {
-    if (!fs.existsSync(this.walPath)) return;
-
-    const lines = (await fs.promises.readFile(this.walPath, "utf8"))
-      .split("\n")
-      .filter(Boolean);
-
-    for (const line of lines) {
-      try {
-        const { op, args } = JSON.parse(line);
-        await this._exec(op, args, false);
-      } catch (err) {
-        console.error("WAL recovery failed:", err);
-      }
-    }
-
-    await this.clearWAL();
-  }
-
-  /* ---------------- Queue ---------------- */
-
   private _enqueue<R>(task: () => Promise<R>): Promise<R> {
     this.queue = this.queue.then(task).catch(console.error);
     return this.queue;
   }
 
-  /* ---------------- Core Executor ---------------- */
-
-  private async _exec(op: string, args: any[], log = true) {
-    if (log) await this.writeWAL({ op, args });
-
-    let result: any;
-
-    switch (op) {
-      case "insertOne":
-        result = await this._insertOne(args[0]);
-        break;
-
-      case "insertMany":
-        result = await this._insertMany(args[0]);
-        break;
-
-      case "find":
-        result = await this._find(args[0]);
-        break;
-
-      case "findOne":
-        result = await this._findOne(args[0]);
-        break;
-
-      case "updateOne":
-        result = await this._updateOne(args[0], args[1], args[2]);
-        break;
-
-      case "updateMany":
-        result = await this._updateMany(args[0], args[1]);
-        break;
-
-      case "deleteOne":
-        result = await this._deleteOne(args[0]);
-        break;
-
-      case "deleteMany":
-        result = await this._deleteMany(args[0]);
-        break;
-
-      case "countDocuments":
-        result = await this._countDocuments(args[0]);
-        break;
-
-      default:
-        throw new Error(`Unknown operation: ${op}`);
-    }
-
-    if (log) await this.maybeCheckpoint();
-    return result;
-  }
-
-  /* ---------------- Public API ---------------- */
-
   async close(): Promise<void> {
-    try {
-      await this.db.close();
-    } catch {}
+    try { await this.db.close(); } catch {}
   }
 
-  insertOne(doc: T & { _id?: string }): Promise<T> {
+  async _exec(op: string, args: any[]) {
+    switch (op) {
+      case "insertOne": return this._insertOne(args[0]);
+      case "insertMany": return this._insertMany(args[0]);
+      case "find": return this._find(args[0]);
+      case "findOne": return this._findOne(args[0]);
+      case "updateOne": return this._updateOne(args[0], args[1], args[2]);
+      case "updateMany": return this._updateMany(args[0], args[1]);
+      case "deleteOne": return this._deleteOne(args[0]);
+      case "deleteMany": return this._deleteMany(args[0]);
+      case "countDocuments": return this._countDocuments(args[0]);
+      default: throw new Error(`Unknown operation: ${op}`);
+    }
+  }
+
+  insertOne(doc: T & { _id?: string }) {
     return this._enqueue(() => this._exec("insertOne", [doc]));
   }
 
-  insertMany(docs: (T & { _id?: string })[] = []): Promise<T[]> {
+  insertMany(docs: (T & { _id?: string })[] = []) {
     return this._enqueue(() => this._exec("insertMany", [docs]));
   }
 
-  find(query: any = {}): Promise<T[]> {
+  find(query: any = {}) {
     return this._enqueue(() => this._exec("find", [query]));
   }
 
-  findOne(query: any = {}): Promise<T | null> {
+  findOne(query: any = {}) {
     return this._enqueue(() => this._exec("findOne", [query]));
   }
 
-  updateOne(
-    filter: any = {},
-    update: any = {},
-    options: UpdateOptions = { upsert: false }
-  ): Promise<T | null> {
+  updateOne(filter: any, update: any, options: UpdateOptions = {}) {
     return this._enqueue(() =>
       this._exec("updateOne", [filter, update, options])
     );
   }
 
-  updateMany(filter: any = {}, update: any = {}): Promise<T[]> {
+  updateMany(filter: any, update: any) {
     return this._enqueue(() =>
       this._exec("updateMany", [filter, update])
     );
   }
 
-  deleteOne(filter: any = {}): Promise<boolean> {
-    return this._enqueue(() => this._exec("deleteOne", [filter]));
+  deleteOne(filter: any) {
+    return this._enqueue(() =>
+      this._exec("deleteOne", [filter])
+    );
   }
 
-  deleteMany(filter: any = {}): Promise<number> {
-    return this._enqueue(() => this._exec("deleteMany", [filter]));
+  deleteMany(filter: any) {
+    return this._enqueue(() =>
+      this._exec("deleteMany", [filter])
+    );
   }
 
-  countDocuments(filter: any = {}): Promise<number> {
+  countDocuments(filter: any = {}) {
     return this._enqueue(() =>
       this._exec("countDocuments", [filter])
     );
   }
 
-  /* ---------------- Internal Ops ---------------- */
+  /* ---------------- Storage ---------------- */
 
-  private async _insertOne(doc: T & { _id?: string }): Promise<T> {
+  private async _insertOne(doc: any) {
     const _id = doc._id ?? uuid();
     const final = this.validate({ _id, ...doc });
-
     await this.db.put(String(_id), encryptData(final));
     return final;
   }
 
-  private async _insertMany(
-    docs: (T & { _id?: string })[]
-  ): Promise<T[]> {
-    const ops: Array<{ type: "put"; key: string; value: string }> = [];
-    const out: T[] = [];
+  private async _insertMany(docs: any[]) {
+    const batch: Array<{ type: "put"; key: string; value: string }> = [];
+    const out = [];
 
     for (const d of docs) {
       const _id = d._id ?? uuid();
       const final = this.validate({ _id, ...d });
-
-      ops.push({
-        type: "put",
-        key: String(_id),
-        value: encryptData(final)
-      });
-
+      batch.push({ type: "put", key: String(_id), value: encryptData(final) });
       out.push(final);
     }
 
-    await this.db.batch(ops);
+    await this.db.batch(batch);
     return out;
   }
 
-  /* ---------- FAST PATH (_id INDEX) ---------- */
-
-  private async _findOne(query: any): Promise<T | null> {
+  private async _findOne(query: any) {
     if (query?._id) {
       try {
         const enc = await this.db.get(String(query._id));
-        if (!enc) return null;
-        return decryptData(enc);
-      } catch {
-        return null;
-      }
+        return enc ? decryptData(enc) : null;
+      } catch { return null; }
     }
 
     for await (const [, enc] of this.db.iterator()) {
-      if (!enc) continue;
-      const value = decryptData(enc);
-      if (matchDocument(value, query)) return value;
+      const v = decryptData(enc);
+      if (matchDocument(v, query)) return v;
     }
 
     return null;
   }
 
-  private async _updateOne(
-    filter: any,
-    update: any,
-    options: UpdateOptions
-  ): Promise<T | null> {
-    if (filter?._id) {
-      try {
-        const enc = await this.db.get(String(filter._id));
-        if (!enc) throw new Error("Not found");
-        const value = decryptData(enc);
-
-        const updated = applyUpdate(value, update);
-        updated._id = value._id;
-
-        const validated = this.validate(updated);
-        await this.db.put(String(updated._id), encryptData(validated));
-
-        return validated;
-      } catch {
-        if (!options?.upsert) return null;
-      }
-    }
-
+  private async _updateOne(filter: any, update: any, options: UpdateOptions) {
     for await (const [key, enc] of this.db.iterator()) {
-      if (!enc) continue;
       const value = decryptData(enc);
-
       if (matchDocument(value, filter)) {
-        const updated = applyUpdate(value, update);
+        const updated = this.validate(applyUpdate(value, update)) as any;
         updated._id = value._id;
-
-        const validated = this.validate(updated);
-        await this.db.put(key, encryptData(validated));
-
-        return validated;
+        await this.db.put(key, encryptData(updated));
+        return updated;
       }
     }
 
     if (options?.upsert) {
-      const doc = applyUpdate(filter, update);
-      doc._id ??= uuid();
-
-      const validated = this.validate(doc);
-      await this.db.put(String(doc._id), encryptData(validated));
-
-      return validated;
+      const doc = this.validate({ _id: uuid(), ...applyUpdate({}, update) }) as any;
+      await this.db.put(String(doc._id), encryptData(doc));
+      return doc;
     }
 
     return null;
   }
 
-  private async _deleteOne(filter: any): Promise<boolean> {
-    if (filter?._id) {
-      try {
-        await this.db.del(String(filter._id));
-        return true;
-      } catch {
-        return false;
-      }
-    }
+  private async _updateMany(filter: any, update: any) {
+    const out = [];
 
     for await (const [key, enc] of this.db.iterator()) {
-      if (!enc) continue;
       const value = decryptData(enc);
-
       if (matchDocument(value, filter)) {
-        await this.db.del(key);
-        return true;
+        const updated = this.validate(applyUpdate(value, update)) as any;
+        updated._id = value._id;
+        await this.db.put(key, encryptData(updated));
+        out.push(updated);
       }
-    }
-
-    return false;
-  }
-
-  /* ---------- NORMAL OPS ---------- */
-
-  private async _updateMany(filter: any, update: any): Promise<T[]> {
-    const updated: T[] = [];
-
-    for await (const [key, enc] of this.db.iterator()) {
-      if (!enc) continue;
-      const value = decryptData(enc);
-
-      if (matchDocument(value, filter)) {
-        const doc = applyUpdate(value, update);
-        doc._id = value._id;
-
-        const validated = this.validate(doc);
-        await this.db.put(key, encryptData(validated));
-
-        updated.push(validated);
-      }
-    }
-
-    return updated;
-  }
-
-  private async _find(query: any): Promise<T[]> {
-    const out: T[] = [];
-
-    for await (const [, enc] of this.db.iterator()) {
-      if (!enc) continue;
-      const value = decryptData(enc);
-      if (matchDocument(value, query)) out.push(value);
     }
 
     return out;
   }
 
-  private async _deleteMany(filter: any): Promise<number> {
-    let count = 0;
+  private async _find(query: any) {
+    const out = [];
+    for await (const [, enc] of this.db.iterator()) {
+      const v = decryptData(enc);
+      if (matchDocument(v, query)) out.push(v);
+    }
+    return out;
+  }
 
+  private async _deleteOne(filter: any) {
     for await (const [key, enc] of this.db.iterator()) {
-      if (!enc) continue;
-      const value = decryptData(enc);
+      if (matchDocument(decryptData(enc), filter)) {
+        await this.db.del(key);
+        return true;
+      }
+    }
+    return false;
+  }
 
-      if (matchDocument(value, filter)) {
+  private async _deleteMany(filter: any) {
+    let count = 0;
+    for await (const [key, enc] of this.db.iterator()) {
+      if (matchDocument(decryptData(enc), filter)) {
         await this.db.del(key);
         count++;
       }
     }
-
     return count;
   }
 
-  private async _countDocuments(filter: any): Promise<number> {
+  private async _countDocuments(filter: any) {
     let c = 0;
-
     for await (const [, enc] of this.db.iterator()) {
-      if (!enc) continue;
-      const value = decryptData(enc);
-      if (matchDocument(value, filter)) c++;
+      if (matchDocument(decryptData(enc), filter)) c++;
     }
-
     return c;
   }
 }
