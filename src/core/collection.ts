@@ -17,6 +17,7 @@ export class Collection<T = any> {
   private queue: Promise<any>;
   private walPath: string;
   private schema?: ZodSchema<T>;
+  private walCounter = 0;
 
   constructor(dir: string, schema?: ZodSchema<T>) {
     this.dir = dir;
@@ -48,6 +49,13 @@ export class Collection<T = any> {
   private async clearWAL() {
     if (fs.existsSync(this.walPath)) {
       await fs.promises.unlink(this.walPath);
+    }
+  }
+
+  private async maybeCheckpoint() {
+    if (++this.walCounter >= 100) {
+      this.walCounter = 0;
+      await this.clearWAL();
     }
   }
 
@@ -125,7 +133,7 @@ export class Collection<T = any> {
         throw new Error(`Unknown operation: ${op}`);
     }
 
-    if (log) await this.clearWAL();
+    if (log) await this.maybeCheckpoint();
     return result;
   }
 
@@ -216,12 +224,53 @@ export class Collection<T = any> {
     return out;
   }
 
+  /* ---------- FAST PATH (_id INDEX) ---------- */
+
+  private async _findOne(query: any): Promise<T | null> {
+    if (query?._id) {
+      try {
+        const enc = await this.db.get(String(query._id));
+        if (!enc) return null;
+        return decryptData(enc);
+      } catch {
+        return null;
+      }
+    }
+
+    for await (const [, enc] of this.db.iterator()) {
+      if (!enc) continue;
+      const value = decryptData(enc);
+      if (matchDocument(value, query)) return value;
+    }
+
+    return null;
+  }
+
   private async _updateOne(
     filter: any,
     update: any,
     options: UpdateOptions
   ): Promise<T | null> {
+    if (filter?._id) {
+      try {
+        const enc = await this.db.get(String(filter._id));
+        if (!enc) throw new Error("Not found");
+        const value = decryptData(enc);
+
+        const updated = applyUpdate(value, update);
+        updated._id = value._id;
+
+        const validated = this.validate(updated);
+        await this.db.put(String(updated._id), encryptData(validated));
+
+        return validated;
+      } catch {
+        if (!options?.upsert) return null;
+      }
+    }
+
     for await (const [key, enc] of this.db.iterator()) {
+      if (!enc) continue;
       const value = decryptData(enc);
 
       if (matchDocument(value, filter)) {
@@ -248,10 +297,36 @@ export class Collection<T = any> {
     return null;
   }
 
+  private async _deleteOne(filter: any): Promise<boolean> {
+    if (filter?._id) {
+      try {
+        await this.db.del(String(filter._id));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    for await (const [key, enc] of this.db.iterator()) {
+      if (!enc) continue;
+      const value = decryptData(enc);
+
+      if (matchDocument(value, filter)) {
+        await this.db.del(key);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /* ---------- NORMAL OPS ---------- */
+
   private async _updateMany(filter: any, update: any): Promise<T[]> {
     const updated: T[] = [];
 
     for await (const [key, enc] of this.db.iterator()) {
+      if (!enc) continue;
       const value = decryptData(enc);
 
       if (matchDocument(value, filter)) {
@@ -272,6 +347,7 @@ export class Collection<T = any> {
     const out: T[] = [];
 
     for await (const [, enc] of this.db.iterator()) {
+      if (!enc) continue;
       const value = decryptData(enc);
       if (matchDocument(value, query)) out.push(value);
     }
@@ -279,32 +355,11 @@ export class Collection<T = any> {
     return out;
   }
 
-  private async _findOne(query: any): Promise<T | null> {
-    for await (const [, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
-      if (matchDocument(value, query)) return value;
-    }
-
-    return null;
-  }
-
-  private async _deleteOne(filter: any): Promise<boolean> {
-    for await (const [key, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
-
-      if (matchDocument(value, filter)) {
-        await this.db.del(key);
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private async _deleteMany(filter: any): Promise<number> {
     let count = 0;
 
     for await (const [key, enc] of this.db.iterator()) {
+      if (!enc) continue;
       const value = decryptData(enc);
 
       if (matchDocument(value, filter)) {
@@ -320,6 +375,7 @@ export class Collection<T = any> {
     let c = 0;
 
     for await (const [, enc] of this.db.iterator()) {
+      if (!enc) continue;
       const value = decryptData(enc);
       if (matchDocument(value, filter)) c++;
     }

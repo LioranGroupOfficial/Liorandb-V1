@@ -25,7 +25,12 @@ export function setEncryptionKey(key: string | Buffer): void {
 
 export function encryptData(obj: any): string {
   const iv = crypto.randomBytes(16);
-  const data = Buffer.from(JSON.stringify(obj), "utf8");
+  // const data = Buffer.from(JSON.stringify(obj), "utf8");
+  const json = JSON.stringify(obj);
+  if (json.length > 5_000_000) {
+    throw new Error("Document too large (>5MB)");
+  }
+  const data = Buffer.from(json, "utf8");
 
   const cipher = crypto.createCipheriv(algorithm, ACTIVE_KEY, iv);
   const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
