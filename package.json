@@ -1,7 +1,7 @@
 {
   "name": "@liorandb/core",
   "version": "1.0.12",
-  "description": "**LioranDB Core Module** – Lightweight, local-first, peer-to-peer database management for Node.js.",
+  "description": "LioranDB Core Module – Lightweight, local-first, peer-to-peer database management for Node.js.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
