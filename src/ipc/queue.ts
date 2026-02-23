@@ -6,22 +6,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function resolveWorkerPath() {
-  // dist/ipc/queue.js → dist/worker/dbWorker.js
   return path.resolve(__dirname, "../dist/worker/dbWorker.js");
 }
 
 export class DBQueue {
-  private worker: ChildProcess;
+  private worker!: ChildProcess;
   private seq = 0;
   private pending = new Map<number, (r: any) => void>();
   private isShutdown = false;
+  private restarting = false;
+  private workerAlive = false;
 
   constructor() {
+    this.spawnWorker();
+
+    process.once("exit", () => this.shutdown());
+    process.once("SIGINT", () => this.shutdown());
+    process.once("SIGTERM", () => this.shutdown());
+  }
+
+  /* ---------------- Worker Control ---------------- */
+
+  private spawnWorker() {
     const workerPath = resolveWorkerPath();
 
     this.worker = fork(workerPath, [], {
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
+
+    this.workerAlive = true;
 
     this.worker.on("message", (msg: any) => {
       const cb = this.pending.get(msg.id);
@@ -31,37 +44,45 @@ export class DBQueue {
       }
     });
 
-    // this.worker.on("exit", () => {
-    //   this.isShutdown = true;
-    // });
+    this.worker.once("exit", (code, signal) => {
+      this.workerAlive = false;
 
-    this.worker.on("exit", (code) => {
-      console.error("DB Worker crashed, restarting...");
-      setTimeout(() => {
-        this.isShutdown = false;
-        this.seq = 0;
-        this.pending.clear();
-        this.worker = fork(workerPath, [], {
-          stdio: ["inherit", "inherit", "inherit", "ipc"],
-        });
-      }, 1000);
+      if (this.isShutdown) return;
+
+      console.error("DB Worker crashed, restarting...", { code, signal });
+
+      this.restartWorker();
     });
-
-    // Auto cleanup
-    process.on("exit", () => this.shutdown());
-    process.on("SIGINT", () => this.shutdown());
-    process.on("SIGTERM", () => this.shutdown());
   }
+
+  private restartWorker() {
+    if (this.restarting || this.isShutdown) return;
+
+    this.restarting = true;
+
+    setTimeout(() => {
+      if (this.isShutdown) return;
+
+      for (const [, cb] of this.pending) {
+        cb({ ok: false, error: "IPC worker crashed" });
+      }
+      this.pending.clear();
+      this.seq = 0;
+
+      this.spawnWorker();
+      this.restarting = false;
+    }, 500);
+  }
+
+  /* ---------------- IPC Exec ---------------- */
 
   exec(action: string, args: any, timeout = 15000) {
     if (this.isShutdown) {
       return Promise.reject(new Error("DBQueue is shutdown"));
     }
 
-    if (this.pending.size > 5000) {
-      return Promise.reject(
-        new Error("IPC queue overflow — system overloaded")
-      );
+    if (!this.workerAlive) {
+      return Promise.reject(new Error("IPC worker not running"));
     }
 
     return new Promise((resolve, reject) => {
@@ -69,15 +90,13 @@ export class DBQueue {
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`IPC timeout for action=${action}`));
+        reject(new Error(`IPC timeout: ${action}`));
       }, timeout);
 
       this.pending.set(id, (msg) => {
         clearTimeout(timer);
         this.pending.delete(id);
-
-        if (msg.ok) resolve(msg.result);
-        else reject(new Error(msg.error));
+        msg.ok ? resolve(msg.result) : reject(new Error(msg.error));
       });
 
       try {
@@ -90,20 +109,29 @@ export class DBQueue {
     });
   }
 
+  /* ---------------- Clean Shutdown ---------------- */
+
   async shutdown() {
     if (this.isShutdown) return;
-
     this.isShutdown = true;
 
-    try {
-      this.worker.send({ action: "shutdown" });
-    } catch { }
-
-    setTimeout(() => {
+    if (this.workerAlive) {
       try {
-        this.worker.kill("SIGTERM");
-      } catch { }
-    }, 200);
+        this.worker.send({ action: "shutdown" });
+      } catch {}
+    }
+
+    await new Promise(resolve => {
+      if (!this.workerAlive) return resolve(null);
+      this.worker.once("exit", resolve);
+      setTimeout(resolve, 250);
+    });
+
+    for (const [, cb] of this.pending) {
+      cb({ ok: false, error: "IPC shutdown" });
+    }
+
+    this.pending.clear();
   }
 }
 
