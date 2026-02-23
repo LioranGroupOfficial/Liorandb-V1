@@ -8,7 +8,7 @@ import { parseCLIArgs } from "./utils/cli";
 const cli = parseCLIArgs();
 
 console.log("⚙ Runtime Config:");
-console.log(`📁 DB Root Path : ${cli.rootPath || "./lioran-data"}`);
+console.log(`📁 DB Root Path : ${cli.rootPath || "Default"}`);
 console.log(`🔐 Encryption   : ${cli.encryptionKey ? "Enabled" : "Disabled"}`);
 
 const PORT = 4000;
