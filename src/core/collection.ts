@@ -11,6 +11,14 @@ import { validateSchema } from "../utils/schema.js";
 import { Index } from "./index.js";
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 
+/* ===================== SCHEMA VERSIONING ===================== */
+
+export interface Migration<T = any> {
+  from: number;
+  to: number;
+  migrate: (doc: any) => T;
+}
+
 export interface UpdateOptions {
   upsert?: boolean;
 }
@@ -19,34 +27,61 @@ export class Collection<T = any> {
   dir: string;
   db: ClassicLevel<string, string>;
   private queue: Promise<any> = Promise.resolve();
+
   private schema?: ZodSchema<T>;
+  private schemaVersion: number = 1;
+  private migrations: Migration<T>[] = [];
+
   private indexes = new Map<string, Index>();
 
-  constructor(dir: string, schema?: ZodSchema<T>) {
+  constructor(
+    dir: string,
+    schema?: ZodSchema<T>,
+    schemaVersion: number = 1
+  ) {
     this.dir = dir;
     this.db = new ClassicLevel(dir, { valueEncoding: "utf8" });
     this.schema = schema;
+    this.schemaVersion = schemaVersion;
   }
 
-  /* ---------------------- INDEX MANAGEMENT ---------------------- */
+  /* ===================== SCHEMA ===================== */
 
-  registerIndex(index: Index) {
-    this.indexes.set(index.field, index);
-  }
-
-  getIndex(field: string) {
-    return this.indexes.get(field);
-  }
-
-  /* -------------------------- CORE -------------------------- */
-
-  setSchema(schema: ZodSchema<T>) {
+  setSchema(schema: ZodSchema<T>, version: number) {
     this.schema = schema;
+    this.schemaVersion = version;
+  }
+
+  addMigration(migration: Migration<T>) {
+    this.migrations.push(migration);
+    this.migrations.sort((a, b) => a.from - b.from);
   }
 
   private validate(doc: any): T {
     return this.schema ? validateSchema(this.schema, doc) : doc;
   }
+
+  private migrateIfNeeded(doc: any): T {
+    let currentVersion = doc.__v ?? 1;
+
+    if (currentVersion === this.schemaVersion) {
+      return doc;
+    }
+
+    let working = doc;
+
+    for (const migration of this.migrations) {
+      if (migration.from === currentVersion) {
+        working = migration.migrate(working);
+        currentVersion = migration.to;
+      }
+    }
+
+    working.__v = this.schemaVersion;
+    return this.validate(working);
+  }
+
+  /* ===================== QUEUE ===================== */
 
   private _enqueue<R>(task: () => Promise<R>): Promise<R> {
     this.queue = this.queue.then(task).catch(console.error);
@@ -60,23 +95,37 @@ export class Collection<T = any> {
     try { await this.db.close(); } catch {}
   }
 
-  /* -------------------- COMPACTION ENGINE -------------------- */
+  /* ===================== INDEX MANAGEMENT ===================== */
+
+  registerIndex(index: Index) {
+    this.indexes.set(index.field, index);
+  }
+
+  getIndex(field: string) {
+    return this.indexes.get(field);
+  }
+
+  private async _updateIndexes(oldDoc: any, newDoc: any) {
+    for (const index of this.indexes.values()) {
+      await index.update(oldDoc, newDoc);
+    }
+  }
+
+  /* ===================== COMPACTION ===================== */
 
   async compact(): Promise<void> {
     return this._enqueue(async () => {
-      // Close active DB handles
       try { await this.db.close(); } catch {}
 
-      // Run compaction engine
       await compactCollectionEngine(this);
 
-      // Reopen fresh DB
       this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
 
-      // Rebuild indexes
       await rebuildIndexes(this);
     });
   }
+
+  /* ===================== INTERNAL EXEC ===================== */
 
   async _exec(op: string, args: any[]) {
     switch (op) {
@@ -93,19 +142,15 @@ export class Collection<T = any> {
     }
   }
 
-  /* ------------------ INDEX HOOK ------------------ */
-
-  private async _updateIndexes(oldDoc: any, newDoc: any) {
-    for (const index of this.indexes.values()) {
-      await index.update(oldDoc, newDoc);
-    }
-  }
-
-  /* ---------------- Storage ---------------- */
+  /* ===================== STORAGE ===================== */
 
   private async _insertOne(doc: any) {
     const _id = doc._id ?? uuid();
-    const final = this.validate({ _id, ...doc });
+    const final = this.validate({
+      _id,
+      ...doc,
+      __v: this.schemaVersion
+    });
 
     await this.db.put(String(_id), encryptData(final));
     await this._updateIndexes(null, final);
@@ -114,12 +159,16 @@ export class Collection<T = any> {
   }
 
   private async _insertMany(docs: any[]) {
-    const batch: Array<{ type: "put"; key: string; value: string }> = [];
+    const batch: any[] = [];
     const out = [];
 
     for (const d of docs) {
       const _id = d._id ?? uuid();
-      const final = this.validate({ _id, ...d });
+      const final = this.validate({
+        _id,
+        ...d,
+        __v: this.schemaVersion
+      });
 
       batch.push({
         type: "put",
@@ -139,7 +188,7 @@ export class Collection<T = any> {
     return out;
   }
 
-  /* ---------------- QUERY ENGINE (INDEXED) ---------------- */
+  /* ===================== QUERY ===================== */
 
   private async _getCandidateIds(query: any): Promise<Set<string>> {
     const indexedFields = new Set(this.indexes.keys());
@@ -148,7 +197,6 @@ export class Collection<T = any> {
       query,
       {
         indexes: indexedFields,
-
         findByIndex: async (field, value) => {
           const idx = this.indexes.get(field);
           if (!idx) return null;
@@ -165,17 +213,32 @@ export class Collection<T = any> {
     );
   }
 
+  private async _readAndMigrate(id: string) {
+    const enc = await this.db.get(id);
+    if (!enc) return null;
+
+    const raw = decryptData(enc);
+    const migrated = this.migrateIfNeeded(raw);
+
+    // Lazy write-back if migrated
+    if (raw.__v !== this.schemaVersion) {
+      await this.db.put(id, encryptData(migrated));
+      await this._updateIndexes(raw, migrated);
+    }
+
+    return migrated;
+  }
+
   private async _find(query: any) {
     const ids = await this._getCandidateIds(query);
     const out = [];
 
     for (const id of ids) {
       try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
-
-        const doc = decryptData(enc);
-        if (matchDocument(doc, query)) out.push(doc);
+        const doc = await this._readAndMigrate(id);
+        if (doc && matchDocument(doc, query)) {
+          out.push(doc);
+        }
       } catch {}
     }
 
@@ -185,8 +248,7 @@ export class Collection<T = any> {
   private async _findOne(query: any) {
     if (query?._id) {
       try {
-        const enc = await this.db.get(String(query._id));
-        return enc ? decryptData(enc) : null;
+        return await this._readAndMigrate(String(query._id));
       } catch { return null; }
     }
 
@@ -194,11 +256,10 @@ export class Collection<T = any> {
 
     for (const id of ids) {
       try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
-
-        const doc = decryptData(enc);
-        if (matchDocument(doc, query)) return doc;
+        const doc = await this._readAndMigrate(id);
+        if (doc && matchDocument(doc, query)) {
+          return doc;
+        }
       } catch {}
     }
 
@@ -211,50 +272,41 @@ export class Collection<T = any> {
 
     for (const id of ids) {
       try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
-
-        if (matchDocument(decryptData(enc), filter)) count++;
+        const doc = await this._readAndMigrate(id);
+        if (doc && matchDocument(doc, filter)) {
+          count++;
+        }
       } catch {}
     }
 
     return count;
   }
 
-  /* ---------------- UPDATE ---------------- */
+  /* ===================== UPDATE ===================== */
 
   private async _updateOne(filter: any, update: any, options: UpdateOptions) {
     const ids = await this._getCandidateIds(filter);
 
     for (const id of ids) {
-      try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
+      const existing = await this._readAndMigrate(id);
+      if (!existing) continue;
 
-        const value = decryptData(enc);
+      if (matchDocument(existing, filter)) {
+        const updated = this.validate({
+          ...applyUpdate(existing, update),
+          _id: (existing as any)._id,
+          __v: this.schemaVersion
+        });
 
-        if (matchDocument(value, filter)) {
-          const updated = this.validate(applyUpdate(value, update)) as any;
-          updated._id = value._id;
+        await this.db.put(id, encryptData(updated));
+        await this._updateIndexes(existing, updated);
 
-          await this.db.put(id, encryptData(updated));
-          await this._updateIndexes(value, updated);
-
-          return updated;
-        }
-      } catch {}
+        return updated;
+      }
     }
 
     if (options?.upsert) {
-      const doc = this.validate({
-        _id: uuid(),
-        ...applyUpdate({}, update)
-      }) as any;
-
-      await this.db.put(String(doc._id), encryptData(doc));
-      await this._updateIndexes(null, doc);
-
-      return doc;
+      return this._insertOne(applyUpdate({}, update));
     }
 
     return null;
@@ -265,45 +317,40 @@ export class Collection<T = any> {
     const out = [];
 
     for (const id of ids) {
-      try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
+      const existing = await this._readAndMigrate(id);
+      if (!existing) continue;
 
-        const value = decryptData(enc);
+      if (matchDocument(existing, filter)) {
+        const updated = this.validate({
+          ...applyUpdate(existing, update),
+          _id: (existing as any)._id,
+          __v: this.schemaVersion
+        });
 
-        if (matchDocument(value, filter)) {
-          const updated = this.validate(applyUpdate(value, update)) as any;
-          updated._id = value._id;
+        await this.db.put(id, encryptData(updated));
+        await this._updateIndexes(existing, updated);
 
-          await this.db.put(id, encryptData(updated));
-          await this._updateIndexes(value, updated);
-
-          out.push(updated);
-        }
-      } catch {}
+        out.push(updated);
+      }
     }
 
     return out;
   }
 
-  /* ---------------- DELETE ---------------- */
+  /* ===================== DELETE ===================== */
 
   private async _deleteOne(filter: any) {
     const ids = await this._getCandidateIds(filter);
 
     for (const id of ids) {
-      try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
+      const existing = await this._readAndMigrate(id);
+      if (!existing) continue;
 
-        const value = decryptData(enc);
-
-        if (matchDocument(value, filter)) {
-          await this.db.del(id);
-          await this._updateIndexes(value, null);
-          return true;
-        }
-      } catch {}
+      if (matchDocument(existing, filter)) {
+        await this.db.del(id);
+        await this._updateIndexes(existing, null);
+        return true;
+      }
     }
 
     return false;
@@ -314,24 +361,20 @@ export class Collection<T = any> {
     let count = 0;
 
     for (const id of ids) {
-      try {
-        const enc = await this.db.get(id);
-        if (!enc) continue;
+      const existing = await this._readAndMigrate(id);
+      if (!existing) continue;
 
-        const value = decryptData(enc);
-
-        if (matchDocument(value, filter)) {
-          await this.db.del(id);
-          await this._updateIndexes(value, null);
-          count++;
-        }
-      } catch {}
+      if (matchDocument(existing, filter)) {
+        await this.db.del(id);
+        await this._updateIndexes(existing, null);
+        count++;
+      }
     }
 
     return count;
   }
 
-  /* ---------------- PUBLIC API (Mongo-style) ---------------- */
+  /* ===================== PUBLIC API ===================== */
 
   insertOne(doc: any) {
     return this._enqueue(() => this._exec("insertOne", [doc]));

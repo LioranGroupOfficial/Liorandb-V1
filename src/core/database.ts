@@ -7,6 +7,7 @@ import { Index, IndexOptions } from "./index.js";
 import { MigrationEngine } from "./migration.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
+import { decryptData } from "../utils/encryption.js";
 
 const exec = promisify(execFile);
 
@@ -25,7 +26,7 @@ type IndexMeta = {
 type DBMeta = {
   version: number;
   indexes: Record<string, IndexMeta[]>;
-  schemaVersion: string;
+  schemaVersion: string; // DB-level schema (not collection schema)
 };
 
 const META_FILE = "__db_meta.json";
@@ -40,7 +41,7 @@ class DBTransactionContext {
   constructor(
     private db: LioranDB,
     public readonly txId: number
-  ) { }
+  ) {}
 
   collection(name: string) {
     return new Proxy({}, {
@@ -79,7 +80,6 @@ export class LioranDB {
   private meta!: DBMeta;
 
   private migrator: MigrationEngine;
-
   private static TX_SEQ = 0;
 
   constructor(basePath: string, dbName: string, manager: LioranManager) {
@@ -133,7 +133,7 @@ export class LioranDB {
     this.saveMeta();
   }
 
-  /* ------------------------- MIGRATION API ------------------------- */
+  /* ------------------------- DB MIGRATIONS ------------------------- */
 
   migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>) {
     this.migrator.register(from, to, async db => {
@@ -158,7 +158,7 @@ export class LioranDB {
   }
 
   async clearWAL() {
-    try { await fs.promises.unlink(this.walPath); } catch { }
+    try { await fs.promises.unlink(this.walPath); } catch {}
   }
 
   private async recoverFromWAL() {
@@ -172,7 +172,6 @@ export class LioranDB {
 
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
-
       const entry: WALEntry = JSON.parse(line);
 
       if ("commit" in entry) committed.add(entry.tx);
@@ -201,17 +200,27 @@ export class LioranDB {
 
   /* ------------------------- COLLECTION ------------------------- */
 
-  collection<T = any>(name: string, schema?: ZodSchema<T>): Collection<T> {
+  collection<T = any>(
+    name: string,
+    schema?: ZodSchema<T>,
+    schemaVersion?: number
+  ): Collection<T> {
     if (this.collections.has(name)) {
       const col = this.collections.get(name)!;
-      if (schema) col.setSchema(schema);
+      if (schema && schemaVersion !== undefined) {
+        col.setSchema(schema, schemaVersion);
+      }
       return col as Collection<T>;
     }
 
     const colPath = path.join(this.basePath, name);
     fs.mkdirSync(colPath, { recursive: true });
 
-    const col = new Collection<T>(colPath, schema);
+    const col = new Collection<T>(
+      colPath,
+      schema,
+      schemaVersion ?? 1
+    );
 
     const metas = this.meta.indexes[name] ?? [];
     for (const m of metas) {
@@ -236,25 +245,14 @@ export class LioranDB {
 
     const index = new Index(col.dir, field, options);
 
-    // for await (const [, enc] of col.db.iterator()) {
-    //   // const doc = JSON.parse(
-    //   //   Buffer.from(enc, "base64").subarray(32).toString("utf8")
-    //   // );
-    //   const payload = Buffer.from(enc, "utf8").subarray(32);
-    //   const doc = JSON.parse(payload.toString("utf8"));
-    //   await index.insert(doc);
-    // }
-
     for await (const [key, enc] of col.db.iterator()) {
       if (!enc) continue;
-
       try {
-        const doc = decryptData(enc);           // ← this does base64 → AES-GCM → JSON
+        const doc = decryptData(enc);
         await index.insert(doc);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.warn(`Could not decrypt document ${key} during index build: ${errorMessage}`);
-        // You can continue, or collect bad keys for later inspection
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Index build skipped doc ${key}: ${msg}`);
       }
     }
 
@@ -297,12 +295,8 @@ export class LioranDB {
 
   async close(): Promise<void> {
     for (const col of this.collections.values()) {
-      try { await col.close(); } catch { }
+      try { await col.close(); } catch {}
     }
     this.collections.clear();
   }
-}
-
-function decryptData(enc: string) {
-  throw new Error("Function not implemented.");
 }
