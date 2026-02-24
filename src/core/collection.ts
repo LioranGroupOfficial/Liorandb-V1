@@ -1,5 +1,9 @@
 import { ClassicLevel } from "classic-level";
-import { matchDocument, applyUpdate, extractIndexQuery } from "./query.js";
+import {
+  matchDocument,
+  applyUpdate,
+  runIndexedQuery
+} from "./query.js";
 import { v4 as uuid } from "uuid";
 import { encryptData, decryptData } from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
@@ -70,54 +74,6 @@ export class Collection<T = any> {
     }
   }
 
-  /* --------------------- PUBLIC API --------------------- */
-
-  insertOne(doc: T & { _id?: string }) {
-    return this._enqueue(() => this._exec("insertOne", [doc]));
-  }
-
-  insertMany(docs: (T & { _id?: string })[] = []) {
-    return this._enqueue(() => this._exec("insertMany", [docs]));
-  }
-
-  find(query: any = {}) {
-    return this._enqueue(() => this._exec("find", [query]));
-  }
-
-  findOne(query: any = {}) {
-    return this._enqueue(() => this._exec("findOne", [query]));
-  }
-
-  updateOne(filter: any, update: any, options: UpdateOptions = {}) {
-    return this._enqueue(() =>
-      this._exec("updateOne", [filter, update, options])
-    );
-  }
-
-  updateMany(filter: any, update: any) {
-    return this._enqueue(() =>
-      this._exec("updateMany", [filter, update])
-    );
-  }
-
-  deleteOne(filter: any) {
-    return this._enqueue(() =>
-      this._exec("deleteOne", [filter])
-    );
-  }
-
-  deleteMany(filter: any) {
-    return this._enqueue(() =>
-      this._exec("deleteMany", [filter])
-    );
-  }
-
-  countDocuments(filter: any = {}) {
-    return this._enqueue(() =>
-      this._exec("countDocuments", [filter])
-    );
-  }
-
   /* ------------------ INDEX HOOK ------------------ */
 
   private async _updateIndexes(oldDoc: any, newDoc: any) {
@@ -164,6 +120,49 @@ export class Collection<T = any> {
     return out;
   }
 
+  /* ---------------- QUERY ENGINE (INDEXED) ---------------- */
+
+  private async _getCandidateIds(query: any): Promise<Set<string>> {
+    const indexedFields = new Set(this.indexes.keys());
+
+    return runIndexedQuery(
+      query,
+      {
+        indexes: indexedFields,
+
+        findByIndex: async (field, value) => {
+          const idx = this.indexes.get(field);
+          if (!idx) return null;
+          return new Set(await idx.find(value));
+        }
+      },
+      async () => {
+        const ids: string[] = [];
+        for await (const [key] of this.db.iterator()) {
+          ids.push(key);
+        }
+        return ids;
+      }
+    );
+  }
+
+  private async _find(query: any) {
+    const ids = await this._getCandidateIds(query);
+    const out = [];
+
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
+
+        const doc = decryptData(enc);
+        if (matchDocument(doc, query)) out.push(doc);
+      } catch {}
+    }
+
+    return out;
+  }
+
   private async _findOne(query: any) {
     if (query?._id) {
       try {
@@ -172,40 +171,59 @@ export class Collection<T = any> {
       } catch { return null; }
     }
 
-    const iq = extractIndexQuery(query);
-    if (iq && this.indexes.has(iq.field)) {
-      const ids = await this.indexes.get(iq.field)!.find(iq.value);
-      if (!ids.length) return null;
+    const ids = await this._getCandidateIds(query);
 
+    for (const id of ids) {
       try {
-        const enc = await this.db.get(ids[0]);
-        return enc ? decryptData(enc) : null;
-      } catch {
-        return null;
-      }
-    }
+        const enc = await this.db.get(id);
+        if (!enc) continue;
 
-    for await (const [, enc] of this.db.iterator()) {
-      const v = decryptData(enc);
-      if (matchDocument(v, query)) return v;
+        const doc = decryptData(enc);
+        if (matchDocument(doc, query)) return doc;
+      } catch {}
     }
 
     return null;
   }
 
+  private async _countDocuments(filter: any) {
+    const ids = await this._getCandidateIds(filter);
+    let count = 0;
+
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
+
+        if (matchDocument(decryptData(enc), filter)) count++;
+      } catch {}
+    }
+
+    return count;
+  }
+
+  /* ---------------- UPDATE ---------------- */
+
   private async _updateOne(filter: any, update: any, options: UpdateOptions) {
-    for await (const [key, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
+    const ids = await this._getCandidateIds(filter);
 
-      if (matchDocument(value, filter)) {
-        const updated = this.validate(applyUpdate(value, update)) as any;
-        updated._id = value._id;
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
 
-        await this.db.put(key, encryptData(updated));
-        await this._updateIndexes(value, updated);
+        const value = decryptData(enc);
 
-        return updated;
-      }
+        if (matchDocument(value, filter)) {
+          const updated = this.validate(applyUpdate(value, update)) as any;
+          updated._id = value._id;
+
+          await this.db.put(id, encryptData(updated));
+          await this._updateIndexes(value, updated);
+
+          return updated;
+        }
+      } catch {}
     }
 
     if (options?.upsert) {
@@ -224,92 +242,121 @@ export class Collection<T = any> {
   }
 
   private async _updateMany(filter: any, update: any) {
+    const ids = await this._getCandidateIds(filter);
     const out = [];
 
-    for await (const [key, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
 
-      if (matchDocument(value, filter)) {
-        const updated = this.validate(applyUpdate(value, update)) as any;
-        updated._id = value._id;
+        const value = decryptData(enc);
 
-        await this.db.put(key, encryptData(updated));
-        await this._updateIndexes(value, updated);
+        if (matchDocument(value, filter)) {
+          const updated = this.validate(applyUpdate(value, update)) as any;
+          updated._id = value._id;
 
-        out.push(updated);
-      }
+          await this.db.put(id, encryptData(updated));
+          await this._updateIndexes(value, updated);
+
+          out.push(updated);
+        }
+      } catch {}
     }
 
     return out;
   }
 
-  private async _find(query: any) {
-    const iq = extractIndexQuery(query);
-
-    if (iq && this.indexes.has(iq.field)) {
-      const ids = await this.indexes.get(iq.field)!.find(iq.value);
-      const out = [];
-
-      for (const id of ids) {
-        try {
-          const enc = await this.db.get(id);
-          if (enc) out.push(decryptData(enc));
-        } catch {}
-      }
-
-      return out;
-    }
-
-    const out = [];
-    for await (const [, enc] of this.db.iterator()) {
-      const v = decryptData(enc);
-      if (matchDocument(v, query)) out.push(v);
-    }
-
-    return out;
-  }
+  /* ---------------- DELETE ---------------- */
 
   private async _deleteOne(filter: any) {
-    for await (const [key, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
+    const ids = await this._getCandidateIds(filter);
 
-      if (matchDocument(value, filter)) {
-        await this.db.del(key);
-        await this._updateIndexes(value, null);
-        return true;
-      }
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
+
+        const value = decryptData(enc);
+
+        if (matchDocument(value, filter)) {
+          await this.db.del(id);
+          await this._updateIndexes(value, null);
+          return true;
+        }
+      } catch {}
     }
+
     return false;
   }
 
   private async _deleteMany(filter: any) {
+    const ids = await this._getCandidateIds(filter);
     let count = 0;
 
-    for await (const [key, enc] of this.db.iterator()) {
-      const value = decryptData(enc);
+    for (const id of ids) {
+      try {
+        const enc = await this.db.get(id);
+        if (!enc) continue;
 
-      if (matchDocument(value, filter)) {
-        await this.db.del(key);
-        await this._updateIndexes(value, null);
-        count++;
-      }
+        const value = decryptData(enc);
+
+        if (matchDocument(value, filter)) {
+          await this.db.del(id);
+          await this._updateIndexes(value, null);
+          count++;
+        }
+      } catch {}
     }
 
     return count;
   }
 
-  private async _countDocuments(filter: any) {
-    let c = 0;
+    /* ---------------- PUBLIC API (Mongo-style) ---------------- */
 
-    const iq = extractIndexQuery(filter);
-    if (iq && this.indexes.has(iq.field)) {
-      return (await this.indexes.get(iq.field)!.find(iq.value)).length;
-    }
+  insertOne(doc: any) {
+    return this._enqueue(() => this._exec("insertOne", [doc]));
+  }
 
-    for await (const [, enc] of this.db.iterator()) {
-      if (matchDocument(decryptData(enc), filter)) c++;
-    }
+  insertMany(docs: any[]) {
+    return this._enqueue(() => this._exec("insertMany", [docs]));
+  }
 
-    return c;
+  find(query: any = {}) {
+    return this._enqueue(() => this._exec("find", [query]));
+  }
+
+  findOne(query: any = {}) {
+    return this._enqueue(() => this._exec("findOne", [query]));
+  }
+
+  updateOne(filter: any, update: any, options?: UpdateOptions) {
+    return this._enqueue(() =>
+      this._exec("updateOne", [filter, update, options])
+    );
+  }
+
+  updateMany(filter: any, update: any) {
+    return this._enqueue(() =>
+      this._exec("updateMany", [filter, update])
+    );
+  }
+
+  deleteOne(filter: any) {
+    return this._enqueue(() =>
+      this._exec("deleteOne", [filter])
+    );
+  }
+
+  deleteMany(filter: any) {
+    return this._enqueue(() =>
+      this._exec("deleteMany", [filter])
+    );
+  }
+
+  countDocuments(filter: any = {}) {
+    return this._enqueue(() =>
+      this._exec("countDocuments", [filter])
+    );
   }
 }

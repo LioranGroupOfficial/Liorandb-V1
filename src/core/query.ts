@@ -89,6 +89,8 @@ export function extractIndexQuery(query: any): { field: string; value: any } | n
 }
 
 export interface IndexProvider {
+  indexes: Set<string>;
+
   findByIndex(
     field: string,
     value: any
