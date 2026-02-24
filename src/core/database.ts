@@ -177,7 +177,7 @@ export class LioranDB {
 
     const col = new Collection<T>(colPath, schema);
 
-    // 🔥 Auto-load indexes for this collection
+    // Auto-load indexes
     const metas = this.meta.indexes[name] ?? [];
     for (const m of metas) {
       col.registerIndex(new Index(colPath, m.field, m.options));
@@ -201,7 +201,6 @@ export class LioranDB {
 
     const index = new Index(col.dir, field, options);
 
-    // 🔁 Build index from existing documents
     for await (const [, enc] of col.db.iterator()) {
       const doc = JSON.parse(Buffer.from(enc, "base64").subarray(32).toString("utf8"));
       await index.insert(doc);
@@ -215,6 +214,32 @@ export class LioranDB {
 
     this.meta.indexes[collection].push({ field, options });
     this.saveMeta();
+  }
+
+  /* ---------------------- COMPACTION ORCHESTRATOR ---------------------- */
+
+  /**
+   * Compact single collection safely (WAL + TX safe)
+   */
+  async compactCollection(name: string) {
+    const col = this.collection(name);
+
+    // Ensure WAL is fully flushed
+    await this.clearWAL();
+
+    // Perform compaction inside write barrier
+    await col.compact();
+  }
+
+  /**
+   * Compact entire database safely
+   */
+  async compactAll() {
+    await this.clearWAL();
+
+    for (const name of this.collections.keys()) {
+      await this.compactCollection(name);
+    }
   }
 
   /* ------------------------- TX API ------------------------- */

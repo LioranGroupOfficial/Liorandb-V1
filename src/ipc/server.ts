@@ -29,8 +29,16 @@ export class IPCServer {
           const raw = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 1);
 
-          const msg = JSON.parse(raw);
-          this.handleMessage(socket, msg).catch(console.error);
+          try {
+            const msg = JSON.parse(raw);
+            await this.handleMessage(socket, msg);
+          } catch (err) {
+            socket.write(JSON.stringify({
+              id: null,
+              ok: false,
+              error: "Invalid JSON"
+            }) + "\n");
+          }
         }
       });
     });
@@ -44,13 +52,18 @@ export class IPCServer {
     const { id, action, args } = msg;
 
     try {
-      let result;
+      let result: any;
 
       switch (action) {
-        case "db":
+        /* ---------------- DB ---------------- */
+
+        case "db": {
           await this.manager.db(args.db);
           result = true;
           break;
+        }
+
+        /* ---------------- OPS ---------------- */
 
         case "op": {
           const { db, col, method, params } = args;
@@ -59,18 +72,50 @@ export class IPCServer {
           break;
         }
 
-        case "shutdown":
+        /* ---------------- COMPACTION ---------------- */
+
+        case "compact:collection": {
+          const { db, col } = args;
+          const collection = (await this.manager.db(db)).collection(col);
+          await (collection as any).compact();
+          result = true;
+          break;
+        }
+
+        case "compact:db": {
+          const { db } = args;
+          const database = await this.manager.db(db);
+          await (database as any).compact();
+          result = true;
+          break;
+        }
+
+        case "compact:all": {
+          await (this.manager as any).compactAll();
+          result = true;
+          break;
+        }
+
+        /* ---------------- CONTROL ---------------- */
+
+        case "shutdown": {
           await this.manager.closeAll();
           result = true;
           break;
+        }
 
         default:
-          throw new Error("Unknown IPC action");
+          throw new Error(`Unknown IPC action: ${action}`);
       }
 
       socket.write(JSON.stringify({ id, ok: true, result }) + "\n");
+
     } catch (err: any) {
-      socket.write(JSON.stringify({ id, ok: false, error: err.message }) + "\n");
+      socket.write(JSON.stringify({
+        id,
+        ok: false,
+        error: err?.message || "IPC error"
+      }) + "\n");
     }
   }
 

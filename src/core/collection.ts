@@ -9,6 +9,7 @@ import { encryptData, decryptData } from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
 import { Index } from "./index.js";
+import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 
 export interface UpdateOptions {
   upsert?: boolean;
@@ -57,6 +58,24 @@ export class Collection<T = any> {
       try { await idx.close(); } catch {}
     }
     try { await this.db.close(); } catch {}
+  }
+
+  /* -------------------- COMPACTION ENGINE -------------------- */
+
+  async compact(): Promise<void> {
+    return this._enqueue(async () => {
+      // Close active DB handles
+      try { await this.db.close(); } catch {}
+
+      // Run compaction engine
+      await compactCollectionEngine(this);
+
+      // Reopen fresh DB
+      this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
+
+      // Rebuild indexes
+      await rebuildIndexes(this);
+    });
   }
 
   async _exec(op: string, args: any[]) {
@@ -312,7 +331,7 @@ export class Collection<T = any> {
     return count;
   }
 
-    /* ---------------- PUBLIC API (Mongo-style) ---------------- */
+  /* ---------------- PUBLIC API (Mongo-style) ---------------- */
 
   insertOne(doc: any) {
     return this._enqueue(() => this._exec("insertOne", [doc]));

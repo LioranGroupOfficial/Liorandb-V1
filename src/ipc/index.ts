@@ -26,6 +26,13 @@ class CollectionProxy {
     });
   }
 
+  private callCompact(): Promise<any> {
+    return dbQueue.exec("compact:collection", {
+      db: this.dbName,
+      col: this.collectionName
+    });
+  }
+
   /* ------------------------------ CRUD ------------------------------ */
 
   insertOne = (doc: any) => this.call("insertOne", [doc]);
@@ -47,6 +54,10 @@ class CollectionProxy {
   dropIndex = (field: string) => this.callIndex("dropIndex", [field]);
   listIndexes = () => this.callIndex("listIndexes", []);
   rebuildIndexes = () => this.callIndex("rebuildIndexes", []);
+
+  /* --------------------------- COMPACTION --------------------------- */
+
+  compact = () => this.callCompact();
 }
 
 /* -------------------------------- DATABASE PROXY -------------------------------- */
@@ -57,6 +68,10 @@ class DBProxy {
   collection(name: string) {
     return new CollectionProxy(this.dbName, name);
   }
+
+  compact() {
+    return dbQueue.exec("compact:db", { db: this.dbName });
+  }
 }
 
 /* -------------------------------- MANAGER PROXY -------------------------------- */
@@ -65,6 +80,10 @@ class LioranManagerIPC {
   async db(name: string) {
     await dbQueue.exec("db", { db: name });
     return new DBProxy(name);
+  }
+
+  compactAll() {
+    return dbQueue.exec("compact:all", {});
   }
 }
 
