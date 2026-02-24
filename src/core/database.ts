@@ -6,7 +6,8 @@ import type { ZodSchema } from "zod";
 
 type TXOp = { tx: number; col: string; op: string; args: any[] };
 type TXCommit = { tx: number; commit: true };
-type WALEntry = TXOp | TXCommit;
+type TXApplied = { tx: number; applied: true };
+type WALEntry = TXOp | TXCommit | TXApplied;
 
 class DBTransactionContext {
   private ops: TXOp[] = [];
@@ -35,6 +36,7 @@ class DBTransactionContext {
     await this.db.writeWAL(this.ops);
     await this.db.writeWAL([{ tx: this.txId, commit: true }]);
     await this.db.applyTransaction(this.ops);
+    await this.db.writeWAL([{ tx: this.txId, applied: true }]);
     await this.db.clearWAL();
   }
 }
@@ -76,25 +78,33 @@ export class LioranDB {
   private async recoverFromWAL() {
     if (!fs.existsSync(this.walPath)) return;
 
-    const lines = (await fs.promises.readFile(this.walPath, "utf8"))
-      .split("\n")
-      .filter(Boolean);
+    const raw = await fs.promises.readFile(this.walPath, "utf8");
 
     const committed = new Set<number>();
+    const applied = new Set<number>();
     const ops = new Map<number, TXOp[]>();
 
-    for (const line of lines) {
-      const entry: WALEntry = JSON.parse(line);
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
 
-      if ("commit" in entry) {
-        committed.add(entry.tx);
-      } else {
-        if (!ops.has(entry.tx)) ops.set(entry.tx, []);
-        ops.get(entry.tx)!.push(entry);
+      try {
+        const entry: WALEntry = JSON.parse(line);
+
+        if ("commit" in entry) committed.add(entry.tx);
+        else if ("applied" in entry) applied.add(entry.tx);
+        else {
+          if (!ops.has(entry.tx)) ops.set(entry.tx, []);
+          ops.get(entry.tx)!.push(entry);
+        }
+      } catch {
+        // Ignore corrupted WAL tail
+        break;
       }
     }
 
     for (const tx of committed) {
+      if (applied.has(tx)) continue;
+
       const txOps = ops.get(tx);
       if (txOps) await this.applyTransaction(txOps);
     }
