@@ -1,7 +1,5 @@
 import { dbQueue } from "./queue.js";
 
-type AnyFn = (...args: any[]) => Promise<any>;
-
 /* -------------------------------- COLLECTION PROXY -------------------------------- */
 
 class CollectionProxy {
@@ -19,6 +17,17 @@ class CollectionProxy {
     });
   }
 
+  private callIndex(method: string, params: any[]): Promise<any> {
+    return dbQueue.exec("index", {
+      db: this.dbName,
+      col: this.collectionName,
+      method,
+      params
+    });
+  }
+
+  /* ------------------------------ CRUD ------------------------------ */
+
   insertOne = (doc: any) => this.call("insertOne", [doc]);
   insertMany = (docs: any[]) => this.call("insertMany", [docs]);
   find = (query?: any) => this.call("find", [query]);
@@ -31,6 +40,13 @@ class CollectionProxy {
   deleteMany = (filter: any) => this.call("deleteMany", [filter]);
   countDocuments = (filter?: any) =>
     this.call("countDocuments", [filter]);
+
+  /* ------------------------------ INDEX ----------------------------- */
+
+  createIndex = (def: any) => this.callIndex("createIndex", [def]);
+  dropIndex = (field: string) => this.callIndex("dropIndex", [field]);
+  listIndexes = () => this.callIndex("listIndexes", []);
+  rebuildIndexes = () => this.callIndex("rebuildIndexes", []);
 }
 
 /* -------------------------------- DATABASE PROXY -------------------------------- */

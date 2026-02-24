@@ -2,6 +2,8 @@ function getByPath(obj: any, path: string): any {
   return path.split(".").reduce((o, p) => (o ? o[p] : undefined), obj);
 }
 
+/* ----------------------------- MATCH ENGINE ----------------------------- */
+
 export function matchDocument(doc: any, query: any): boolean {
   for (const key of Object.keys(query)) {
     const cond = query[key];
@@ -16,8 +18,7 @@ export function matchDocument(doc: any, query: any): boolean {
         if (op === "$lte" && !(val <= v)) return false;
         if (op === "$ne" && val === v) return false;
         if (op === "$eq" && val !== v) return false;
-        if (op === "$in" && (!Array.isArray(v) || !v.includes(val)))
-          return false;
+        if (op === "$in" && (!Array.isArray(v) || !v.includes(val))) return false;
       }
     } else {
       if (val !== cond) return false;
@@ -25,6 +26,8 @@ export function matchDocument(doc: any, query: any): boolean {
   }
   return true;
 }
+
+/* ------------------------------ UPDATE ENGINE ------------------------------ */
 
 export function applyUpdate(oldDoc: any, update: any): any {
   const doc = structuredClone(oldDoc);
@@ -60,4 +63,104 @@ export function applyUpdate(oldDoc: any, update: any): any {
   }
 
   return doc;
+}
+
+/* ------------------------------ INDEX ROUTER ------------------------------ */
+
+export function extractIndexQuery(query: any): { field: string; value: any } | null {
+  for (const key of Object.keys(query)) {
+    const cond = query[key];
+
+    // Skip _id as it's handled separately
+    if (key === "_id") continue;
+
+    // Simple equality: { field: value }
+    if (!cond || typeof cond !== "object" || Array.isArray(cond)) {
+      return { field: key, value: cond };
+    }
+
+    // $eq operator: { field: { $eq: value } }
+    if ("$eq" in cond) {
+      return { field: key, value: cond.$eq };
+    }
+  }
+
+  return null;
+}
+
+export interface IndexProvider {
+  findByIndex(
+    field: string,
+    value: any
+  ): Promise<Set<string> | null>;
+
+  rangeByIndex?(
+    field: string,
+    cond: any
+  ): Promise<Set<string> | null>;
+}
+
+/**
+ * Selects best possible index from query.
+ */
+export function selectIndex(query: any, indexes: Set<string>) {
+  for (const key of Object.keys(query)) {
+    if (!indexes.has(key)) continue;
+
+    const cond = query[key];
+
+    if (cond && typeof cond === "object" && !Array.isArray(cond)) {
+      return { field: key, cond };
+    }
+
+    return { field: key, cond: { $eq: cond } };
+  }
+
+  return null;
+}
+
+/**
+ * Executes indexed query or fallback full scan.
+ */
+export async function runIndexedQuery(
+  query: any,
+  indexProvider: IndexProvider,
+  allDocIds: () => Promise<string[]>
+): Promise<Set<string>> {
+  const indexes = (indexProvider as any).indexes as Set<string>;
+
+  if (!indexes?.size) {
+    return new Set(await allDocIds());
+  }
+
+  const sel = selectIndex(query, indexes);
+  if (!sel) {
+    return new Set(await allDocIds());
+  }
+
+  const { field, cond } = sel;
+
+  if ("$eq" in cond) {
+    return (await indexProvider.findByIndex(field, cond.$eq)) ??
+      new Set(await allDocIds());
+  }
+
+  if ("$in" in cond) {
+    const out = new Set<string>();
+    for (const v of cond.$in) {
+      const r = await indexProvider.findByIndex(field, v);
+      if (r) for (const id of r) out.add(id);
+    }
+    return out;
+  }
+
+  if (
+    indexProvider.rangeByIndex &&
+    ("$gt" in cond || "$gte" in cond || "$lt" in cond || "$lte" in cond)
+  ) {
+    return (await indexProvider.rangeByIndex(field, cond)) ??
+      new Set(await allDocIds());
+  }
+
+  return new Set(await allDocIds());
 }

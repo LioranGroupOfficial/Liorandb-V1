@@ -1,9 +1,10 @@
 import { ClassicLevel } from "classic-level";
-import { matchDocument, applyUpdate } from "./query.js";
+import { matchDocument, applyUpdate, extractIndexQuery } from "./query.js";
 import { v4 as uuid } from "uuid";
 import { encryptData, decryptData } from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
+import { Index } from "./index.js";
 
 export interface UpdateOptions {
   upsert?: boolean;
@@ -14,12 +15,25 @@ export class Collection<T = any> {
   db: ClassicLevel<string, string>;
   private queue: Promise<any> = Promise.resolve();
   private schema?: ZodSchema<T>;
+  private indexes = new Map<string, Index>();
 
   constructor(dir: string, schema?: ZodSchema<T>) {
     this.dir = dir;
     this.db = new ClassicLevel(dir, { valueEncoding: "utf8" });
     this.schema = schema;
   }
+
+  /* ---------------------- INDEX MANAGEMENT ---------------------- */
+
+  registerIndex(index: Index) {
+    this.indexes.set(index.field, index);
+  }
+
+  getIndex(field: string) {
+    return this.indexes.get(field);
+  }
+
+  /* -------------------------- CORE -------------------------- */
 
   setSchema(schema: ZodSchema<T>) {
     this.schema = schema;
@@ -35,6 +49,9 @@ export class Collection<T = any> {
   }
 
   async close(): Promise<void> {
+    for (const idx of this.indexes.values()) {
+      try { await idx.close(); } catch {}
+    }
     try { await this.db.close(); } catch {}
   }
 
@@ -52,6 +69,8 @@ export class Collection<T = any> {
       default: throw new Error(`Unknown operation: ${op}`);
     }
   }
+
+  /* --------------------- PUBLIC API --------------------- */
 
   insertOne(doc: T & { _id?: string }) {
     return this._enqueue(() => this._exec("insertOne", [doc]));
@@ -99,12 +118,23 @@ export class Collection<T = any> {
     );
   }
 
+  /* ------------------ INDEX HOOK ------------------ */
+
+  private async _updateIndexes(oldDoc: any, newDoc: any) {
+    for (const index of this.indexes.values()) {
+      await index.update(oldDoc, newDoc);
+    }
+  }
+
   /* ---------------- Storage ---------------- */
 
   private async _insertOne(doc: any) {
     const _id = doc._id ?? uuid();
     const final = this.validate({ _id, ...doc });
+
     await this.db.put(String(_id), encryptData(final));
+    await this._updateIndexes(null, final);
+
     return final;
   }
 
@@ -115,11 +145,22 @@ export class Collection<T = any> {
     for (const d of docs) {
       const _id = d._id ?? uuid();
       const final = this.validate({ _id, ...d });
-      batch.push({ type: "put", key: String(_id), value: encryptData(final) });
+
+      batch.push({
+        type: "put",
+        key: String(_id),
+        value: encryptData(final)
+      });
+
       out.push(final);
     }
 
     await this.db.batch(batch);
+
+    for (const doc of out) {
+      await this._updateIndexes(null, doc);
+    }
+
     return out;
   }
 
@@ -129,6 +170,19 @@ export class Collection<T = any> {
         const enc = await this.db.get(String(query._id));
         return enc ? decryptData(enc) : null;
       } catch { return null; }
+    }
+
+    const iq = extractIndexQuery(query);
+    if (iq && this.indexes.has(iq.field)) {
+      const ids = await this.indexes.get(iq.field)!.find(iq.value);
+      if (!ids.length) return null;
+
+      try {
+        const enc = await this.db.get(ids[0]);
+        return enc ? decryptData(enc) : null;
+      } catch {
+        return null;
+      }
     }
 
     for await (const [, enc] of this.db.iterator()) {
@@ -142,17 +196,27 @@ export class Collection<T = any> {
   private async _updateOne(filter: any, update: any, options: UpdateOptions) {
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         const updated = this.validate(applyUpdate(value, update)) as any;
         updated._id = value._id;
+
         await this.db.put(key, encryptData(updated));
+        await this._updateIndexes(value, updated);
+
         return updated;
       }
     }
 
     if (options?.upsert) {
-      const doc = this.validate({ _id: uuid(), ...applyUpdate({}, update) }) as any;
+      const doc = this.validate({
+        _id: uuid(),
+        ...applyUpdate({}, update)
+      }) as any;
+
       await this.db.put(String(doc._id), encryptData(doc));
+      await this._updateIndexes(null, doc);
+
       return doc;
     }
 
@@ -164,10 +228,14 @@ export class Collection<T = any> {
 
     for await (const [key, enc] of this.db.iterator()) {
       const value = decryptData(enc);
+
       if (matchDocument(value, filter)) {
         const updated = this.validate(applyUpdate(value, update)) as any;
         updated._id = value._id;
+
         await this.db.put(key, encryptData(updated));
+        await this._updateIndexes(value, updated);
+
         out.push(updated);
       }
     }
@@ -176,18 +244,38 @@ export class Collection<T = any> {
   }
 
   private async _find(query: any) {
+    const iq = extractIndexQuery(query);
+
+    if (iq && this.indexes.has(iq.field)) {
+      const ids = await this.indexes.get(iq.field)!.find(iq.value);
+      const out = [];
+
+      for (const id of ids) {
+        try {
+          const enc = await this.db.get(id);
+          if (enc) out.push(decryptData(enc));
+        } catch {}
+      }
+
+      return out;
+    }
+
     const out = [];
     for await (const [, enc] of this.db.iterator()) {
       const v = decryptData(enc);
       if (matchDocument(v, query)) out.push(v);
     }
+
     return out;
   }
 
   private async _deleteOne(filter: any) {
     for await (const [key, enc] of this.db.iterator()) {
-      if (matchDocument(decryptData(enc), filter)) {
+      const value = decryptData(enc);
+
+      if (matchDocument(value, filter)) {
         await this.db.del(key);
+        await this._updateIndexes(value, null);
         return true;
       }
     }
@@ -196,20 +284,32 @@ export class Collection<T = any> {
 
   private async _deleteMany(filter: any) {
     let count = 0;
+
     for await (const [key, enc] of this.db.iterator()) {
-      if (matchDocument(decryptData(enc), filter)) {
+      const value = decryptData(enc);
+
+      if (matchDocument(value, filter)) {
         await this.db.del(key);
+        await this._updateIndexes(value, null);
         count++;
       }
     }
+
     return count;
   }
 
   private async _countDocuments(filter: any) {
     let c = 0;
+
+    const iq = extractIndexQuery(filter);
+    if (iq && this.indexes.has(iq.field)) {
+      return (await this.indexes.get(iq.field)!.find(iq.value)).length;
+    }
+
     for await (const [, enc] of this.db.iterator()) {
       if (matchDocument(decryptData(enc), filter)) c++;
     }
+
     return c;
   }
 }

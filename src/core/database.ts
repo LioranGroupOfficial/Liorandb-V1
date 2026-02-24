@@ -1,13 +1,31 @@
 import path from "path";
 import fs from "fs";
 import { Collection } from "./collection.js";
+import { Index, IndexOptions } from "./index.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
+
+/* ----------------------------- TYPES ----------------------------- */
 
 type TXOp = { tx: number; col: string; op: string; args: any[] };
 type TXCommit = { tx: number; commit: true };
 type TXApplied = { tx: number; applied: true };
 type WALEntry = TXOp | TXCommit | TXApplied;
+
+type IndexMeta = {
+  field: string;
+  options: IndexOptions;
+};
+
+type DBMeta = {
+  version: number;
+  indexes: Record<string, IndexMeta[]>;
+};
+
+const META_FILE = "__db_meta.json";
+const META_VERSION = 1;
+
+/* ---------------------- TRANSACTION CONTEXT ---------------------- */
 
 class DBTransactionContext {
   private ops: TXOp[] = [];
@@ -41,12 +59,16 @@ class DBTransactionContext {
   }
 }
 
+/* ----------------------------- DATABASE ----------------------------- */
+
 export class LioranDB {
   basePath: string;
   dbName: string;
   manager: LioranManager;
   collections: Map<string, Collection>;
   private walPath: string;
+  private metaPath: string;
+  private meta!: DBMeta;
 
   private static TX_SEQ = 0;
 
@@ -56,11 +78,35 @@ export class LioranDB {
     this.manager = manager;
     this.collections = new Map();
     this.walPath = path.join(basePath, "__tx_wal.log");
+    this.metaPath = path.join(basePath, META_FILE);
 
     fs.mkdirSync(basePath, { recursive: true });
 
+    this.loadMeta();
     this.recoverFromWAL().catch(console.error);
   }
+
+  /* ------------------------- META ------------------------- */
+
+  private loadMeta() {
+    if (!fs.existsSync(this.metaPath)) {
+      this.meta = { version: META_VERSION, indexes: {} };
+      this.saveMeta();
+      return;
+    }
+
+    try {
+      this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf8"));
+    } catch {
+      throw new Error("Database metadata corrupted");
+    }
+  }
+
+  private saveMeta() {
+    fs.writeFileSync(this.metaPath, JSON.stringify(this.meta, null, 2));
+  }
+
+  /* ------------------------- WAL ------------------------- */
 
   async writeWAL(entries: WALEntry[]) {
     const fd = await fs.promises.open(this.walPath, "a");
@@ -97,14 +143,12 @@ export class LioranDB {
           ops.get(entry.tx)!.push(entry);
         }
       } catch {
-        // Ignore corrupted WAL tail
         break;
       }
     }
 
     for (const tx of committed) {
       if (applied.has(tx)) continue;
-
       const txOps = ops.get(tx);
       if (txOps) await this.applyTransaction(txOps);
     }
@@ -119,6 +163,8 @@ export class LioranDB {
     }
   }
 
+  /* ------------------------- COLLECTION ------------------------- */
+
   collection<T = any>(name: string, schema?: ZodSchema<T>): Collection<T> {
     if (this.collections.has(name)) {
       const col = this.collections.get(name)!;
@@ -130,9 +176,48 @@ export class LioranDB {
     fs.mkdirSync(colPath, { recursive: true });
 
     const col = new Collection<T>(colPath, schema);
+
+    // 🔥 Auto-load indexes for this collection
+    const metas = this.meta.indexes[name] ?? [];
+    for (const m of metas) {
+      col.registerIndex(new Index(colPath, m.field, m.options));
+    }
+
     this.collections.set(name, col);
     return col;
   }
+
+  /* ------------------------- INDEX API ------------------------- */
+
+  async createIndex(
+    collection: string,
+    field: string,
+    options: IndexOptions = {}
+  ) {
+    const col = this.collection(collection);
+
+    const existing = this.meta.indexes[collection]?.find(i => i.field === field);
+    if (existing) return;
+
+    const index = new Index(col.dir, field, options);
+
+    // 🔁 Build index from existing documents
+    for await (const [, enc] of col.db.iterator()) {
+      const doc = JSON.parse(Buffer.from(enc, "base64").subarray(32).toString("utf8"));
+      await index.insert(doc);
+    }
+
+    col.registerIndex(index);
+
+    if (!this.meta.indexes[collection]) {
+      this.meta.indexes[collection] = [];
+    }
+
+    this.meta.indexes[collection].push({ field, options });
+    this.saveMeta();
+  }
+
+  /* ------------------------- TX API ------------------------- */
 
   async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
     const txId = ++LioranDB.TX_SEQ;
@@ -143,6 +228,8 @@ export class LioranDB {
 
     return result;
   }
+
+  /* ------------------------- SHUTDOWN ------------------------- */
 
   async close(): Promise<void> {
     for (const col of this.collections.values()) {
