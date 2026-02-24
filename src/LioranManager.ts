@@ -51,6 +51,8 @@ export class LioranManager {
     }
   }
 
+  /* ---------------- LOCK MANAGEMENT ---------------- */
+
   private isProcessAlive(pid: number): boolean {
     try {
       process.kill(pid, 0);
@@ -68,7 +70,6 @@ export class LioranManager {
       fs.writeSync(this.lockFd, String(process.pid));
       return true;
     } catch {
-      // Possible stale lock → validate PID
       try {
         const pid = Number(fs.readFileSync(lockPath, "utf8"));
         if (!this.isProcessAlive(pid)) {
@@ -77,18 +78,18 @@ export class LioranManager {
           fs.writeSync(this.lockFd, String(process.pid));
           return true;
         }
-      } catch {}
-
+      } catch { }
       return false;
     }
   }
+
+  /* ---------------- DB OPEN ---------------- */
 
   async db(name: string): Promise<LioranDB> {
     if (this.mode === ProcessMode.CLIENT) {
       await dbQueue.exec("db", { db: name });
       return new IPCDatabase(name) as any;
     }
-
     return this.openDatabase(name);
   }
 
@@ -107,6 +108,64 @@ export class LioranManager {
     return db;
   }
 
+  /* ---------------- SNAPSHOT ORCHESTRATION ---------------- */
+
+  /**
+   * Create TAR snapshot of full DB directory
+   */
+  async snapshot(snapshotPath: string) {
+    if (this.mode === ProcessMode.CLIENT) {
+      return dbQueue.exec("snapshot", { path: snapshotPath });
+    }
+
+    // Flush all DBs safely
+    for (const db of this.openDBs.values()) {
+      for (const col of db.collections.values()) {
+        try { await col.db.close(); } catch { }
+      }
+    }
+
+    // Ensure backup directory exists
+    fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+
+    const tar = await import("tar");
+
+    await tar.c({
+      gzip: true,
+      file: snapshotPath,
+      cwd: this.rootPath,
+      portable: true
+    }, ["./"]);
+
+    return true;
+  }
+
+  /**
+   * Restore TAR snapshot safely
+   */
+  async restore(snapshotPath: string) {
+    if (this.mode === ProcessMode.CLIENT) {
+      return dbQueue.exec("restore", { path: snapshotPath });
+    }
+
+    await this.closeAll();
+
+    fs.rmSync(this.rootPath, { recursive: true, force: true });
+    fs.mkdirSync(this.rootPath, { recursive: true });
+
+    const tar = await import("tar");
+
+    await tar.x({
+      file: snapshotPath,
+      cwd: this.rootPath
+    });
+
+    console.log("Restore completed. Restart required.");
+    process.exit(0);
+  }
+
+  /* ---------------- SHUTDOWN ---------------- */
+
   async closeAll(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -117,7 +176,7 @@ export class LioranManager {
     }
 
     for (const db of this.openDBs.values()) {
-      try { await db.close(); } catch {}
+      try { await db.close(); } catch { }
     }
 
     this.openDBs.clear();
@@ -125,7 +184,7 @@ export class LioranManager {
     try {
       if (this.lockFd) fs.closeSync(this.lockFd);
       fs.unlinkSync(path.join(this.rootPath, ".lioran.lock"));
-    } catch {}
+    } catch { }
 
     await this.ipcServer?.close();
   }
@@ -154,7 +213,7 @@ export class LioranManager {
 /* ---------------- IPC PROXY DB ---------------- */
 
 class IPCDatabase {
-  constructor(private name: string) {}
+  constructor(private name: string) { }
 
   collection(name: string) {
     return new IPCCollection(this.name, name);
@@ -165,7 +224,7 @@ class IPCCollection {
   constructor(
     private db: string,
     private col: string
-  ) {}
+  ) { }
 
   private call(method: string, params: any[]) {
     return dbQueue.exec("op", {

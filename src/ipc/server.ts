@@ -32,7 +32,7 @@ export class IPCServer {
           try {
             const msg = JSON.parse(raw);
             await this.handleMessage(socket, msg);
-          } catch (err) {
+          } catch {
             socket.write(JSON.stringify({
               id: null,
               ok: false,
@@ -85,13 +85,31 @@ export class IPCServer {
         case "compact:db": {
           const { db } = args;
           const database = await this.manager.db(db);
-          await (database as any).compact();
+          await (database as any).compactAll();
           result = true;
           break;
         }
 
         case "compact:all": {
-          await (this.manager as any).compactAll();
+          for (const db of this.manager.openDBs.values()) {
+            await db.compactAll();
+          }
+          result = true;
+          break;
+        }
+
+        /* ---------------- SNAPSHOT ---------------- */
+
+        case "snapshot": {
+          const { path: snapshotPath } = args;
+          await this.manager.snapshot(snapshotPath);
+          result = true;
+          break;
+        }
+
+        case "restore": {
+          const { path: snapshotPath } = args;
+          await this.manager.restore(snapshotPath);
           result = true;
           break;
         }

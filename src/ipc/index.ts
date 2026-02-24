@@ -72,6 +72,14 @@ class DBProxy {
   compact() {
     return dbQueue.exec("compact:db", { db: this.dbName });
   }
+
+  snapshot(path: string) {
+    return dbQueue.exec("snapshot", { path });
+  }
+
+  restore(path: string) {
+    return dbQueue.exec("restore", { path });
+  }
 }
 
 /* -------------------------------- MANAGER PROXY -------------------------------- */
@@ -84,6 +92,18 @@ class LioranManagerIPC {
 
   compactAll() {
     return dbQueue.exec("compact:all", {});
+  }
+
+  snapshot(path: string) {
+    return dbQueue.exec("snapshot", { path });
+  }
+
+  restore(path: string) {
+    return dbQueue.exec("restore", { path });
+  }
+
+  shutdown() {
+    return dbQueue.shutdown();
   }
 }
 

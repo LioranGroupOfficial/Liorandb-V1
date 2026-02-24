@@ -1,9 +1,13 @@
 import path from "path";
 import fs from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { Collection } from "./collection.js";
 import { Index, IndexOptions } from "./index.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
+
+const exec = promisify(execFile);
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -95,11 +99,7 @@ export class LioranDB {
       return;
     }
 
-    try {
-      this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf8"));
-    } catch {
-      throw new Error("Database metadata corrupted");
-    }
+    this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf8"));
   }
 
   private saveMeta() {
@@ -133,17 +133,13 @@ export class LioranDB {
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
 
-      try {
-        const entry: WALEntry = JSON.parse(line);
+      const entry: WALEntry = JSON.parse(line);
 
-        if ("commit" in entry) committed.add(entry.tx);
-        else if ("applied" in entry) applied.add(entry.tx);
-        else {
-          if (!ops.has(entry.tx)) ops.set(entry.tx, []);
-          ops.get(entry.tx)!.push(entry);
-        }
-      } catch {
-        break;
+      if ("commit" in entry) committed.add(entry.tx);
+      else if ("applied" in entry) applied.add(entry.tx);
+      else {
+        if (!ops.has(entry.tx)) ops.set(entry.tx, []);
+        ops.get(entry.tx)!.push(entry);
       }
     }
 
@@ -177,7 +173,6 @@ export class LioranDB {
 
     const col = new Collection<T>(colPath, schema);
 
-    // Auto-load indexes
     const metas = this.meta.indexes[name] ?? [];
     for (const m of metas) {
       col.registerIndex(new Index(colPath, m.field, m.options));
@@ -216,27 +211,63 @@ export class LioranDB {
     this.saveMeta();
   }
 
-  /* ---------------------- COMPACTION ORCHESTRATOR ---------------------- */
+  /* ------------------------- SNAPSHOT ENGINE ------------------------- */
 
-  /**
-   * Compact single collection safely (WAL + TX safe)
-   */
+  // async snapshot(snapshotPath: string) {
+  //   await this.clearWAL();
+
+  //   for (const col of this.collections.values()) {
+  //     await col.close();
+  //   }
+
+  //   fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+
+  //   await exec("tar", [
+  //     "-czf",
+  //     snapshotPath,
+  //     "-C",
+  //     this.basePath,
+  //     "."
+  //   ]);
+  // }
+
+  // async restore(snapshotPath: string) {
+  //   if (!fs.existsSync(snapshotPath)) {
+  //     throw new Error("Snapshot file does not exist");
+  //   }
+
+  //   await this.close();
+
+  //   const tmp = this.basePath + ".restore";
+
+  //   await fs.promises.rm(tmp, { recursive: true, force: true });
+  //   await fs.promises.mkdir(tmp, { recursive: true });
+
+  //   await exec("tar", [
+  //     "-xzf",
+  //     snapshotPath,
+  //     "-C",
+  //     tmp
+  //   ]);
+
+  //   await fs.promises.rm(this.basePath, { recursive: true, force: true });
+  //   await fs.promises.rename(tmp, this.basePath);
+
+  //   this.collections.clear();
+  //   this.loadMeta();
+  //   await this.recoverFromWAL();
+  // }
+
+  /* ------------------------- COMPACTION ------------------------- */
+
   async compactCollection(name: string) {
-    const col = this.collection(name);
-
-    // Ensure WAL is fully flushed
     await this.clearWAL();
-
-    // Perform compaction inside write barrier
+    const col = this.collection(name);
     await col.compact();
   }
 
-  /**
-   * Compact entire database safely
-   */
   async compactAll() {
     await this.clearWAL();
-
     for (const name of this.collections.keys()) {
       await this.compactCollection(name);
     }
@@ -247,10 +278,8 @@ export class LioranDB {
   async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
     const txId = ++LioranDB.TX_SEQ;
     const tx = new DBTransactionContext(this, txId);
-
     const result = await fn(tx);
     await tx.commit();
-
     return result;
   }
 

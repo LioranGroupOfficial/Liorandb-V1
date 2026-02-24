@@ -10,7 +10,13 @@ export type IPCAction =
   | "compact:collection"
   | "compact:db"
   | "compact:all"
-  | "shutdown";
+  | "shutdown"
+  | "open"
+  | "close"
+  | "minimize"
+  | "maximize"
+  | "restore"
+  | "snapshot";
 
 /* -------------------------------- DB QUEUE -------------------------------- */
 
@@ -37,6 +43,16 @@ export class DBQueue {
 
   compactAll() {
     return this.exec("compact:all", {});
+  }
+
+  /* ----------------------------- SNAPSHOT API ----------------------------- */
+
+  snapshot(path: string) {
+    return this.exec("snapshot", { path });
+  }
+
+  restore(path: string) {
+    return this.exec("restore", { path });
   }
 
   /* ------------------------------ SHUTDOWN ------------------------------ */
