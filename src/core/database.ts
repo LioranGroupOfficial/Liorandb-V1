@@ -4,6 +4,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { Collection } from "./collection.js";
 import { Index, IndexOptions } from "./index.js";
+import { MigrationEngine } from "./migration.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
 
@@ -24,10 +25,12 @@ type IndexMeta = {
 type DBMeta = {
   version: number;
   indexes: Record<string, IndexMeta[]>;
+  schemaVersion: string;
 };
 
 const META_FILE = "__db_meta.json";
 const META_VERSION = 1;
+const DEFAULT_SCHEMA_VERSION = "v1";
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
 
@@ -37,7 +40,7 @@ class DBTransactionContext {
   constructor(
     private db: LioranDB,
     public readonly txId: number
-  ) {}
+  ) { }
 
   collection(name: string) {
     return new Proxy({}, {
@@ -70,9 +73,12 @@ export class LioranDB {
   dbName: string;
   manager: LioranManager;
   collections: Map<string, Collection>;
+
   private walPath: string;
   private metaPath: string;
   private meta!: DBMeta;
+
+  private migrator: MigrationEngine;
 
   private static TX_SEQ = 0;
 
@@ -81,12 +87,15 @@ export class LioranDB {
     this.dbName = dbName;
     this.manager = manager;
     this.collections = new Map();
+
     this.walPath = path.join(basePath, "__tx_wal.log");
     this.metaPath = path.join(basePath, META_FILE);
 
     fs.mkdirSync(basePath, { recursive: true });
 
     this.loadMeta();
+    this.migrator = new MigrationEngine(this);
+
     this.recoverFromWAL().catch(console.error);
   }
 
@@ -94,16 +103,47 @@ export class LioranDB {
 
   private loadMeta() {
     if (!fs.existsSync(this.metaPath)) {
-      this.meta = { version: META_VERSION, indexes: {} };
+      this.meta = {
+        version: META_VERSION,
+        indexes: {},
+        schemaVersion: DEFAULT_SCHEMA_VERSION
+      };
       this.saveMeta();
       return;
     }
 
     this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf8"));
+
+    if (!this.meta.schemaVersion) {
+      this.meta.schemaVersion = DEFAULT_SCHEMA_VERSION;
+      this.saveMeta();
+    }
   }
 
   private saveMeta() {
     fs.writeFileSync(this.metaPath, JSON.stringify(this.meta, null, 2));
+  }
+
+  getSchemaVersion(): string {
+    return this.meta.schemaVersion;
+  }
+
+  setSchemaVersion(v: string) {
+    this.meta.schemaVersion = v;
+    this.saveMeta();
+  }
+
+  /* ------------------------- MIGRATION API ------------------------- */
+
+  migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>) {
+    this.migrator.register(from, to, async db => {
+      await fn(db);
+      db.setSchemaVersion(to);
+    });
+  }
+
+  async applyMigrations(targetVersion: string) {
+    await this.migrator.upgradeToLatest();
   }
 
   /* ------------------------- WAL ------------------------- */
@@ -118,7 +158,7 @@ export class LioranDB {
   }
 
   async clearWAL() {
-    try { await fs.promises.unlink(this.walPath); } catch {}
+    try { await fs.promises.unlink(this.walPath); } catch { }
   }
 
   private async recoverFromWAL() {
@@ -196,9 +236,26 @@ export class LioranDB {
 
     const index = new Index(col.dir, field, options);
 
-    for await (const [, enc] of col.db.iterator()) {
-      const doc = JSON.parse(Buffer.from(enc, "base64").subarray(32).toString("utf8"));
-      await index.insert(doc);
+    // for await (const [, enc] of col.db.iterator()) {
+    //   // const doc = JSON.parse(
+    //   //   Buffer.from(enc, "base64").subarray(32).toString("utf8")
+    //   // );
+    //   const payload = Buffer.from(enc, "utf8").subarray(32);
+    //   const doc = JSON.parse(payload.toString("utf8"));
+    //   await index.insert(doc);
+    // }
+
+    for await (const [key, enc] of col.db.iterator()) {
+      if (!enc) continue;
+
+      try {
+        const doc = decryptData(enc);           // ← this does base64 → AES-GCM → JSON
+        await index.insert(doc);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.warn(`Could not decrypt document ${key} during index build: ${errorMessage}`);
+        // You can continue, or collect bad keys for later inspection
+      }
     }
 
     col.registerIndex(index);
@@ -210,53 +267,6 @@ export class LioranDB {
     this.meta.indexes[collection].push({ field, options });
     this.saveMeta();
   }
-
-  /* ------------------------- SNAPSHOT ENGINE ------------------------- */
-
-  // async snapshot(snapshotPath: string) {
-  //   await this.clearWAL();
-
-  //   for (const col of this.collections.values()) {
-  //     await col.close();
-  //   }
-
-  //   fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
-
-  //   await exec("tar", [
-  //     "-czf",
-  //     snapshotPath,
-  //     "-C",
-  //     this.basePath,
-  //     "."
-  //   ]);
-  // }
-
-  // async restore(snapshotPath: string) {
-  //   if (!fs.existsSync(snapshotPath)) {
-  //     throw new Error("Snapshot file does not exist");
-  //   }
-
-  //   await this.close();
-
-  //   const tmp = this.basePath + ".restore";
-
-  //   await fs.promises.rm(tmp, { recursive: true, force: true });
-  //   await fs.promises.mkdir(tmp, { recursive: true });
-
-  //   await exec("tar", [
-  //     "-xzf",
-  //     snapshotPath,
-  //     "-C",
-  //     tmp
-  //   ]);
-
-  //   await fs.promises.rm(this.basePath, { recursive: true, force: true });
-  //   await fs.promises.rename(tmp, this.basePath);
-
-  //   this.collections.clear();
-  //   this.loadMeta();
-  //   await this.recoverFromWAL();
-  // }
 
   /* ------------------------- COMPACTION ------------------------- */
 
@@ -287,8 +297,12 @@ export class LioranDB {
 
   async close(): Promise<void> {
     for (const col of this.collections.values()) {
-      try { await col.close(); } catch {}
+      try { await col.close(); } catch { }
     }
     this.collections.clear();
   }
+}
+
+function decryptData(enc: string) {
+  throw new Error("Function not implemented.");
 }
