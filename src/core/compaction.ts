@@ -5,117 +5,164 @@ import { Collection } from "./collection.js";
 import { Index } from "./index.js";
 import { decryptData } from "../utils/encryption.js";
 
+/* ---------------------------------------------------------
+   CONSTANTS
+--------------------------------------------------------- */
+
 const TMP_SUFFIX = "__compact_tmp";
-const OLD_SUFFIX = "__old";
+const OLD_SUFFIX = "__compact_old";
+const INDEX_DIR = "__indexes";
+
+/* ---------------------------------------------------------
+   PUBLIC ENTRY
+--------------------------------------------------------- */
 
 /**
- * Entry point: safe compaction wrapper
+ * Full safe compaction pipeline:
+ * 1. Crash recovery
+ * 2. Snapshot rebuild
+ * 3. Atomic directory swap
+ * 4. Index rebuild
  */
 export async function compactCollectionEngine(col: Collection) {
-  await crashRecovery(col.dir);
-
   const baseDir = col.dir;
   const tmpDir = baseDir + TMP_SUFFIX;
   const oldDir = baseDir + OLD_SUFFIX;
 
-  // Cleanup stale dirs
+  // Recover from any previous crash mid-compaction
+  await crashRecovery(baseDir);
+
+  // Clean leftovers (paranoia safety)
   safeRemove(tmpDir);
   safeRemove(oldDir);
 
-  // Snapshot rebuild
+  // Step 1: rebuild snapshot
   await snapshotRebuild(col, tmpDir);
 
-  // Atomic swap
+  // Step 2: atomic swap
   atomicSwap(baseDir, tmpDir, oldDir);
 
-  // Cleanup old data
+  // Cleanup
   safeRemove(oldDir);
 }
 
+/* ---------------------------------------------------------
+   SNAPSHOT REBUILD
+--------------------------------------------------------- */
+
 /**
- * Copies only live keys into fresh DB
+ * Rebuilds DB by copying only live keys
+ * WAL is assumed already checkpointed
  */
 async function snapshotRebuild(col: Collection, tmpDir: string) {
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const tmpDB = new ClassicLevel(tmpDir, { valueEncoding: "utf8" });
+  const tmpDB = new ClassicLevel(tmpDir, {
+    valueEncoding: "utf8"
+  });
 
   for await (const [key, val] of col.db.iterator()) {
-    await tmpDB.put(key, val);
+    if (val !== undefined) {
+      await tmpDB.put(key, val);
+    }
   }
 
   await tmpDB.close();
   await col.db.close();
 }
 
+/* ---------------------------------------------------------
+   ATOMIC SWAP
+--------------------------------------------------------- */
+
 /**
- * Atomic directory replace
+ * Atomic directory replacement (POSIX safe)
  */
 function atomicSwap(base: string, tmp: string, old: string) {
   fs.renameSync(base, old);
   fs.renameSync(tmp, base);
 }
 
+/* ---------------------------------------------------------
+   CRASH RECOVERY
+--------------------------------------------------------- */
+
 /**
- * Crash recovery handler
+ * Handles all partial-compaction states
  */
 export async function crashRecovery(baseDir: string) {
   const tmp = baseDir + TMP_SUFFIX;
   const old = baseDir + OLD_SUFFIX;
 
-  // If both exist → compaction mid-swap
-  if (fs.existsSync(tmp) && fs.existsSync(old)) {
+  const baseExists = fs.existsSync(baseDir);
+  const tmpExists = fs.existsSync(tmp);
+  const oldExists = fs.existsSync(old);
+
+  // Case 1: swap interrupted → tmp is valid snapshot
+  if (tmpExists && oldExists) {
     safeRemove(baseDir);
     fs.renameSync(tmp, baseDir);
     safeRemove(old);
+    return;
   }
 
-  // If only old exists → swap incomplete
-  if (fs.existsSync(old) && !fs.existsSync(baseDir)) {
+  // Case 2: rename(base → old) happened, but tmp missing
+  if (!baseExists && oldExists) {
     fs.renameSync(old, baseDir);
+    return;
   }
 
-  // If only tmp exists → rebuild incomplete
-  if (fs.existsSync(tmp) && !fs.existsSync(old)) {
+  // Case 3: rebuild interrupted
+  if (tmpExists && !oldExists) {
     safeRemove(tmp);
   }
 }
 
+/* ---------------------------------------------------------
+   INDEX REBUILD
+--------------------------------------------------------- */
+
 /**
- * Index rebuild engine
+ * Rebuilds all indexes from compacted DB
+ * Guarantees index consistency
  */
 export async function rebuildIndexes(col: Collection) {
-  const indexRoot = path.join(col.dir, "__indexes");
+  const indexRoot = path.join(col.dir, INDEX_DIR);
 
-  // Destroy existing indexes
+  // Close existing index handles
+  for (const idx of col["indexes"].values()) {
+    try {
+      await idx.close();
+    } catch {}
+  }
+
+  // Destroy index directory
   safeRemove(indexRoot);
   fs.mkdirSync(indexRoot, { recursive: true });
-
-  for (const idx of col["indexes"].values()) {
-    try { await idx.close(); } catch {}
-  }
 
   const newIndexes = new Map<string, Index>();
 
   for (const idx of col["indexes"].values()) {
-    const fresh = new Index(col.dir, idx.field, {
+    const rebuilt = new Index(col.dir, idx.field, {
       unique: idx.unique
     });
 
     for await (const [, enc] of col.db.iterator()) {
+      if (!enc) continue;
       const doc = decryptData(enc);
-      await fresh.insert(doc);
+      await rebuilt.insert(doc);
     }
 
-    newIndexes.set(idx.field, fresh);
+    newIndexes.set(idx.field, rebuilt);
   }
 
   col["indexes"] = newIndexes;
 }
 
-/**
- * Safe recursive remove
- */
+/* ---------------------------------------------------------
+   UTIL
+--------------------------------------------------------- */
+
 function safeRemove(p: string) {
   if (fs.existsSync(p)) {
     fs.rmSync(p, { recursive: true, force: true });

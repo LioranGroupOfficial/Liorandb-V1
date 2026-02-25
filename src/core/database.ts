@@ -1,7 +1,5 @@
 import path from "path";
 import fs from "fs";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { Collection } from "./collection.js";
 import { Index, IndexOptions } from "./index.js";
 import { MigrationEngine } from "./migration.js";
@@ -9,7 +7,8 @@ import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
 import { decryptData } from "../utils/encryption.js";
 
-const exec = promisify(execFile);
+import { WALManager } from "./wal.js";
+import { CheckpointManager } from "./checkpoint.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -26,11 +25,11 @@ type IndexMeta = {
 type DBMeta = {
   version: number;
   indexes: Record<string, IndexMeta[]>;
-  schemaVersion: string; // DB-level schema (not collection schema)
+  schemaVersion: string;
 };
 
 const META_FILE = "__db_meta.json";
-const META_VERSION = 1;
+const META_VERSION = 2;
 const DEFAULT_SCHEMA_VERSION = "v1";
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
@@ -59,11 +58,30 @@ class DBTransactionContext {
   }
 
   async commit() {
-    await this.db.writeWAL(this.ops);
-    await this.db.writeWAL([{ tx: this.txId, commit: true }]);
+    for (const op of this.ops) {
+      const recordOp: any = {
+        tx: this.txId,
+        type: "op",
+        payload: op
+      };
+      await this.db.wal.append(recordOp);
+    }
+
+    const commitRecord: any = {
+      tx: this.txId,
+      type: "commit"
+    };
+    await this.db.wal.append(commitRecord);
+
     await this.db.applyTransaction(this.ops);
-    await this.db.writeWAL([{ tx: this.txId, applied: true }]);
-    await this.db.clearWAL();
+
+    const appliedRecord: any = {
+      tx: this.txId,
+      type: "applied"
+    };
+    await this.db.wal.append(appliedRecord);
+
+    await this.db.postCommitMaintenance();
   }
 }
 
@@ -75,12 +93,14 @@ export class LioranDB {
   manager: LioranManager;
   collections: Map<string, Collection>;
 
-  private walPath: string;
   private metaPath: string;
   private meta!: DBMeta;
 
   private migrator: MigrationEngine;
   private static TX_SEQ = 0;
+
+  public wal: WALManager;
+  private checkpoint: CheckpointManager;
 
   constructor(basePath: string, dbName: string, manager: LioranManager) {
     this.basePath = basePath;
@@ -88,15 +108,53 @@ export class LioranDB {
     this.manager = manager;
     this.collections = new Map();
 
-    this.walPath = path.join(basePath, "__tx_wal.log");
     this.metaPath = path.join(basePath, META_FILE);
 
     fs.mkdirSync(basePath, { recursive: true });
 
     this.loadMeta();
+
+    this.wal = new WALManager(basePath);
+    this.checkpoint = new CheckpointManager(basePath);
+
     this.migrator = new MigrationEngine(this);
 
-    this.recoverFromWAL().catch(console.error);
+    this.initialize().catch(console.error);
+  }
+
+  /* ------------------------- INIT & RECOVERY ------------------------- */
+
+  private async initialize() {
+    await this.recoverFromWAL();
+  }
+
+  private async recoverFromWAL() {
+    const checkpointData = this.checkpoint.get();
+    const fromLSN = checkpointData.lsn;
+
+    const committed = new Set<number>();
+    const applied = new Set<number>();
+    const ops = new Map<number, TXOp[]>();
+
+    await this.wal.replay(fromLSN, async (record) => {
+      if (record.type === "commit") {
+        committed.add(record.tx);
+      } else if (record.type === "applied") {
+        applied.add(record.tx);
+      } else if (record.type === "op") {
+        if (!ops.has(record.tx)) ops.set(record.tx, []);
+        ops.get(record.tx)!.push(record.payload);
+      }
+    });
+
+    for (const tx of committed) {
+      if (applied.has(tx)) continue;
+
+      const txOps = ops.get(tx);
+      if (txOps) {
+        await this.applyTransaction(txOps);
+      }
+    }
   }
 
   /* ------------------------- META ------------------------- */
@@ -146,50 +204,7 @@ export class LioranDB {
     await this.migrator.upgradeToLatest();
   }
 
-  /* ------------------------- WAL ------------------------- */
-
-  async writeWAL(entries: WALEntry[]) {
-    const fd = await fs.promises.open(this.walPath, "a");
-    for (const e of entries) {
-      await fd.write(JSON.stringify(e) + "\n");
-    }
-    await fd.sync();
-    await fd.close();
-  }
-
-  async clearWAL() {
-    try { await fs.promises.unlink(this.walPath); } catch {}
-  }
-
-  private async recoverFromWAL() {
-    if (!fs.existsSync(this.walPath)) return;
-
-    const raw = await fs.promises.readFile(this.walPath, "utf8");
-
-    const committed = new Set<number>();
-    const applied = new Set<number>();
-    const ops = new Map<number, TXOp[]>();
-
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      const entry: WALEntry = JSON.parse(line);
-
-      if ("commit" in entry) committed.add(entry.tx);
-      else if ("applied" in entry) applied.add(entry.tx);
-      else {
-        if (!ops.has(entry.tx)) ops.set(entry.tx, []);
-        ops.get(entry.tx)!.push(entry);
-      }
-    }
-
-    for (const tx of committed) {
-      if (applied.has(tx)) continue;
-      const txOps = ops.get(tx);
-      if (txOps) await this.applyTransaction(txOps);
-    }
-
-    await this.clearWAL();
-  }
+  /* ------------------------- TX APPLY ------------------------- */
 
   async applyTransaction(ops: TXOp[]) {
     for (const { col, op, args } of ops) {
@@ -269,13 +284,11 @@ export class LioranDB {
   /* ------------------------- COMPACTION ------------------------- */
 
   async compactCollection(name: string) {
-    await this.clearWAL();
     const col = this.collection(name);
     await col.compact();
   }
 
   async compactAll() {
-    await this.clearWAL();
     for (const name of this.collections.keys()) {
       await this.compactCollection(name);
     }
@@ -291,12 +304,19 @@ export class LioranDB {
     return result;
   }
 
+  /* ------------------------- POST COMMIT ------------------------- */
+
+  public async postCommitMaintenance() {
+    // Custom maintenance can be added here
+  }
+
   /* ------------------------- SHUTDOWN ------------------------- */
 
   async close(): Promise<void> {
     for (const col of this.collections.values()) {
       try { await col.close(); } catch {}
     }
+
     this.collections.clear();
   }
 }

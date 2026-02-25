@@ -8,6 +8,13 @@ server
 save_src_tree.py
 log.txt
 test.ts
+path.txt
+scan_src.py
+extract_logs.py
+config.json
+prompt.txt
+prompt_new.txt
+build_prompt.py
 
 # Logs
 logs
