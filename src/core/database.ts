@@ -13,9 +13,6 @@ import { CheckpointManager } from "./checkpoint.js";
 /* ----------------------------- TYPES ----------------------------- */
 
 type TXOp = { tx: number; col: string; op: string; args: any[] };
-type TXCommit = { tx: number; commit: true };
-type TXApplied = { tx: number; applied: true };
-type WALEntry = TXOp | TXCommit | TXApplied;
 
 type IndexMeta = {
   field: string;
@@ -58,28 +55,32 @@ class DBTransactionContext {
   }
 
   async commit() {
+    // 1️⃣ Write all operations
     for (const op of this.ops) {
-      const recordOp: any = {
+      await this.db.wal.append({
         tx: this.txId,
         type: "op",
         payload: op
-      };
-      await this.db.wal.append(recordOp);
+      } as any);
     }
 
-    const commitRecord: any = {
+    // 2️⃣ Commit marker
+    const commitLSN = await this.db.wal.append({
       tx: this.txId,
       type: "commit"
-    };
-    await this.db.wal.append(commitRecord);
+    } as any);
 
+    // 3️⃣ Apply to storage
     await this.db.applyTransaction(this.ops);
 
-    const appliedRecord: any = {
+    // 4️⃣ Applied marker
+    const appliedLSN = await this.db.wal.append({
       tx: this.txId,
       type: "applied"
-    };
-    await this.db.wal.append(appliedRecord);
+    } as any);
+
+    // 5️⃣ Advance checkpoint to durable applied LSN
+    this.db.advanceCheckpoint(appliedLSN);
 
     await this.db.postCommitMaintenance();
   }
@@ -143,9 +144,11 @@ export class LioranDB {
         applied.add(record.tx);
       } else if (record.type === "op") {
         if (!ops.has(record.tx)) ops.set(record.tx, []);
-        ops.get(record.tx)!.push(record.payload);
+        ops.get(record.tx)!.push(record.payload as TXOp);
       }
     });
+
+    let highestAppliedLSN = fromLSN;
 
     for (const tx of committed) {
       if (applied.has(tx)) continue;
@@ -153,7 +156,24 @@ export class LioranDB {
       const txOps = ops.get(tx);
       if (txOps) {
         await this.applyTransaction(txOps);
+        highestAppliedLSN = this.wal.getCurrentLSN();
       }
+    }
+
+    // Advance checkpoint after recovery
+    this.advanceCheckpoint(highestAppliedLSN);
+  }
+
+  /* ------------------------- CHECKPOINT ADVANCE ------------------------- */
+
+  public advanceCheckpoint(lsn: number) {
+    const current = this.checkpoint.get();
+
+    if (lsn > current.lsn) {
+      this.checkpoint.save(lsn, this.wal.getCurrentGen());
+
+      // Optional WAL cleanup (safe because checkpoint advanced)
+      this.wal.cleanup(this.wal.getCurrentGen() - 1).catch(() => {});
     }
   }
 
@@ -307,7 +327,7 @@ export class LioranDB {
   /* ------------------------- POST COMMIT ------------------------- */
 
   public async postCommitMaintenance() {
-    // Custom maintenance can be added here
+    // Hook for background compaction, stats, etc.
   }
 
   /* ------------------------- SHUTDOWN ------------------------- */

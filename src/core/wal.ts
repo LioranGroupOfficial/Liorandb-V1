@@ -16,12 +16,11 @@ type StoredRecord = WALRecord & { crc: number };
    CONSTANTS
 ========================= */
 
-const MAX_WAL_SIZE = 16 * 1024 * 1024; // 16 MB
+const MAX_WAL_SIZE = 16 * 1024 * 1024; // 16MB
 const WAL_DIR = "__wal";
 
 /* =========================
-   CRC32 IMPLEMENTATION
-   (no dependencies)
+   CRC32 (no deps)
 ========================= */
 
 const CRC32_TABLE = (() => {
@@ -37,12 +36,11 @@ const CRC32_TABLE = (() => {
 })();
 
 function crc32(input: string): number {
-  let crc = 0xFFFFFFFF;
+  let crc = 0xffffffff;
   for (let i = 0; i < input.length; i++) {
-    const byte = input.charCodeAt(i);
-    crc = CRC32_TABLE[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+    crc = CRC32_TABLE[(crc ^ input.charCodeAt(i)) & 0xff] ^ (crc >>> 8);
   }
-  return (crc ^ 0xFFFFFFFF) >>> 0;
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 /* =========================
@@ -58,7 +56,9 @@ export class WALManager {
   constructor(baseDir: string) {
     this.walDir = path.join(baseDir, WAL_DIR);
     fs.mkdirSync(this.walDir, { recursive: true });
+
     this.currentGen = this.detectLastGeneration();
+    this.recoverLSNFromExistingLogs();
   }
 
   /* -------------------------
@@ -80,10 +80,50 @@ export class WALManager {
 
     for (const f of files) {
       const m = f.match(/^wal-(\d+)\.log$/);
-      if (m) max = Math.max(max, Number(m[1]));
+      if (m) {
+        const gen = Number(m[1]);
+        if (!Number.isNaN(gen)) {
+          max = Math.max(max, gen);
+        }
+      }
     }
 
     return max || 1;
+  }
+
+  private recoverLSNFromExistingLogs() {
+    const files = this.getSortedWalFiles();
+
+    for (const file of files) {
+      const filePath = path.join(this.walDir, file);
+      const lines = fs.readFileSync(filePath, "utf8").split("\n");
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const parsed: StoredRecord = JSON.parse(line);
+          const { crc, ...record } = parsed;
+
+          if (crc32(JSON.stringify(record)) !== crc) break;
+
+          this.lsn = Math.max(this.lsn, record.lsn);
+        } catch {
+          break; // stop on corruption
+        }
+      }
+    }
+  }
+
+  private getSortedWalFiles(): string[] {
+    return fs
+      .readdirSync(this.walDir)
+      .filter(f => /^wal-\d+\.log$/.test(f))
+      .sort((a, b) => {
+        const ga = Number(a.match(/^wal-(\d+)\.log$/)![1]);
+        const gb = Number(b.match(/^wal-(\d+)\.log$/)![1]);
+        return ga - gb;
+      });
   }
 
   private async open() {
@@ -94,6 +134,7 @@ export class WALManager {
 
   private async rotate() {
     if (this.fd) {
+      await this.fd.sync();
       await this.fd.close();
       this.fd = null;
     }
@@ -101,7 +142,7 @@ export class WALManager {
   }
 
   /* -------------------------
-     APPEND
+     APPEND (Crash-safe)
   ------------------------- */
 
   async append(record: Omit<WALRecord, "lsn">): Promise<number> {
@@ -113,12 +154,15 @@ export class WALManager {
     };
 
     const body = JSON.stringify(full);
+
     const stored: StoredRecord = {
       ...full,
       crc: crc32(body)
     };
 
-    await this.fd!.write(JSON.stringify(stored) + "\n");
+    const line = JSON.stringify(stored) + "\n";
+
+    await this.fd!.write(line);
     await this.fd!.sync();
 
     const stat = await this.fd!.stat();
@@ -130,7 +174,7 @@ export class WALManager {
   }
 
   /* -------------------------
-     REPLAY
+     REPLAY (Auto-heal tail)
   ------------------------- */
 
   async replay(
@@ -139,44 +183,54 @@ export class WALManager {
   ): Promise<void> {
     if (!fs.existsSync(this.walDir)) return;
 
-    const files = fs
-      .readdirSync(this.walDir)
-      .filter(f => f.startsWith("wal-"))
-      .sort();
+    const files = this.getSortedWalFiles();
 
     for (const file of files) {
       const filePath = path.join(this.walDir, file);
-      const data = fs.readFileSync(filePath, "utf8");
-      const lines = data.split("\n");
+
+      const fd = fs.openSync(filePath, "r+");
+      const content = fs.readFileSync(filePath, "utf8");
+      const lines = content.split("\n");
+
+      let validOffset = 0;
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (!line.trim()) continue;
+        if (!line.trim()) {
+          validOffset += line.length + 1;
+          continue;
+        }
 
         let parsed: StoredRecord;
+
         try {
           parsed = JSON.parse(line);
         } catch {
-          console.error("WAL parse error, stopping replay");
-          return;
+          break;
         }
 
         const { crc, ...record } = parsed;
         const expected = crc32(JSON.stringify(record));
 
         if (expected !== crc) {
-          console.error(
-            "WAL checksum mismatch, stopping replay",
-            { file, line: i + 1 }
-          );
-          return;
+          break;
         }
+
+        validOffset += line.length + 1;
 
         if (record.lsn <= fromLSN) continue;
 
         this.lsn = Math.max(this.lsn, record.lsn);
         await apply(record);
       }
+
+      // Truncate corrupted tail (auto-heal)
+      const stat = fs.fstatSync(fd);
+      if (validOffset < stat.size) {
+        fs.ftruncateSync(fd, validOffset);
+      }
+
+      fs.closeSync(fd);
     }
   }
 
@@ -188,6 +242,7 @@ export class WALManager {
     if (!fs.existsSync(this.walDir)) return;
 
     const files = fs.readdirSync(this.walDir);
+
     for (const f of files) {
       const m = f.match(/^wal-(\d+)\.log$/);
       if (!m) continue;
