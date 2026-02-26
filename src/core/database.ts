@@ -40,22 +40,28 @@ class DBTransactionContext {
   ) {}
 
   collection(name: string) {
-    return new Proxy({}, {
-      get: (_, prop: string) => {
-        return (...args: any[]) => {
-          this.ops.push({
-            tx: this.txId,
-            col: name,
-            op: prop,
-            args
-          });
-        };
+    return new Proxy(
+      {},
+      {
+        get: (_, prop: string) => {
+          return (...args: any[]) => {
+            this.ops.push({
+              tx: this.txId,
+              col: name,
+              op: prop,
+              args
+            });
+          };
+        }
       }
-    });
+    );
   }
 
   async commit() {
-    // 1️⃣ Write all operations
+    if (this.db.isReadonly()) {
+      throw new Error("Cannot commit transaction in readonly mode");
+    }
+
     for (const op of this.ops) {
       await this.db.wal.append({
         tx: this.txId,
@@ -64,22 +70,18 @@ class DBTransactionContext {
       } as any);
     }
 
-    // 2️⃣ Commit marker
     const commitLSN = await this.db.wal.append({
       tx: this.txId,
       type: "commit"
     } as any);
 
-    // 3️⃣ Apply to storage
     await this.db.applyTransaction(this.ops);
 
-    // 4️⃣ Applied marker
     const appliedLSN = await this.db.wal.append({
       tx: this.txId,
       type: "applied"
     } as any);
 
-    // 5️⃣ Advance checkpoint to durable applied LSN
     this.db.advanceCheckpoint(appliedLSN);
 
     await this.db.postCommitMaintenance();
@@ -100,8 +102,10 @@ export class LioranDB {
   private migrator: MigrationEngine;
   private static TX_SEQ = 0;
 
-  public wal: WALManager;
-  private checkpoint: CheckpointManager;
+  public wal!: WALManager;
+  private checkpoint!: CheckpointManager;
+
+  private readonly readonlyMode: boolean;
 
   constructor(basePath: string, dbName: string, manager: LioranManager) {
     this.basePath = basePath;
@@ -109,24 +113,42 @@ export class LioranDB {
     this.manager = manager;
     this.collections = new Map();
 
+    this.readonlyMode = (manager as any)?.isReadonly?.() ?? false;
+
     this.metaPath = path.join(basePath, META_FILE);
 
     fs.mkdirSync(basePath, { recursive: true });
 
     this.loadMeta();
 
-    this.wal = new WALManager(basePath);
-    this.checkpoint = new CheckpointManager(basePath);
+    if (!this.readonlyMode) {
+      this.wal = new WALManager(basePath);
+      this.checkpoint = new CheckpointManager(basePath);
+    }
 
     this.migrator = new MigrationEngine(this);
 
     this.initialize().catch(console.error);
   }
 
+  /* ------------------------- MODE ------------------------- */
+
+  public isReadonly(): boolean {
+    return this.readonlyMode;
+  }
+
+  private assertWritable() {
+    if (this.readonlyMode) {
+      throw new Error("Database is in readonly replica mode");
+    }
+  }
+
   /* ------------------------- INIT & RECOVERY ------------------------- */
 
   private async initialize() {
-    await this.recoverFromWAL();
+    if (!this.readonlyMode) {
+      await this.recoverFromWAL();
+    }
   }
 
   private async recoverFromWAL() {
@@ -160,19 +182,18 @@ export class LioranDB {
       }
     }
 
-    // Advance checkpoint after recovery
     this.advanceCheckpoint(highestAppliedLSN);
   }
 
   /* ------------------------- CHECKPOINT ADVANCE ------------------------- */
 
   public advanceCheckpoint(lsn: number) {
+    if (this.readonlyMode) return;
+
     const current = this.checkpoint.get();
 
     if (lsn > current.lsn) {
       this.checkpoint.save(lsn, this.wal.getCurrentGen());
-
-      // Optional WAL cleanup (safe because checkpoint advanced)
       this.wal.cleanup(this.wal.getCurrentGen() - 1).catch(() => {});
     }
   }
@@ -199,6 +220,7 @@ export class LioranDB {
   }
 
   private saveMeta() {
+    if (this.readonlyMode) return;
     fs.writeFileSync(this.metaPath, JSON.stringify(this.meta, null, 2));
   }
 
@@ -207,6 +229,7 @@ export class LioranDB {
   }
 
   setSchemaVersion(v: string) {
+    this.assertWritable();
     this.meta.schemaVersion = v;
     this.saveMeta();
   }
@@ -214,6 +237,7 @@ export class LioranDB {
   /* ------------------------- DB MIGRATIONS ------------------------- */
 
   migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>) {
+    this.assertWritable();
     this.migrator.register(from, to, async db => {
       await fn(db);
       db.setSchemaVersion(to);
@@ -221,6 +245,7 @@ export class LioranDB {
   }
 
   async applyMigrations(targetVersion: string) {
+    this.assertWritable();
     await this.migrator.upgradeToLatest();
   }
 
@@ -254,7 +279,8 @@ export class LioranDB {
     const col = new Collection<T>(
       colPath,
       schema,
-      schemaVersion ?? 1
+      schemaVersion ?? 1,
+      { readonly: this.readonlyMode }
     );
 
     const metas = this.meta.indexes[name] ?? [];
@@ -273,6 +299,8 @@ export class LioranDB {
     field: string,
     options: IndexOptions = {}
   ) {
+    this.assertWritable();
+
     const col = this.collection(collection);
 
     const existing = this.meta.indexes[collection]?.find(i => i.field === field);
@@ -285,10 +313,7 @@ export class LioranDB {
       try {
         const doc = decryptData(enc);
         await index.insert(doc);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`Index build skipped doc ${key}: ${msg}`);
-      }
+      } catch {}
     }
 
     col.registerIndex(index);
@@ -304,11 +329,13 @@ export class LioranDB {
   /* ------------------------- COMPACTION ------------------------- */
 
   async compactCollection(name: string) {
+    this.assertWritable();
     const col = this.collection(name);
     await col.compact();
   }
 
   async compactAll() {
+    this.assertWritable();
     for (const name of this.collections.keys()) {
       await this.compactCollection(name);
     }
@@ -317,6 +344,7 @@ export class LioranDB {
   /* ------------------------- TX API ------------------------- */
 
   async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
+    this.assertWritable();
     const txId = ++LioranDB.TX_SEQ;
     const tx = new DBTransactionContext(this, txId);
     const result = await fn(tx);
@@ -326,9 +354,7 @@ export class LioranDB {
 
   /* ------------------------- POST COMMIT ------------------------- */
 
-  public async postCommitMaintenance() {
-    // Hook for background compaction, stats, etc.
-  }
+  public async postCommitMaintenance() {}
 
   /* ------------------------- SHUTDOWN ------------------------- */
 
@@ -336,7 +362,6 @@ export class LioranDB {
     for (const col of this.collections.values()) {
       try { await col.close(); } catch {}
     }
-
     this.collections.clear();
   }
 }

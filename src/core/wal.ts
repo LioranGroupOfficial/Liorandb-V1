@@ -52,13 +52,20 @@ export class WALManager {
   private currentGen = 1;
   private lsn = 0;
   private fd: fs.promises.FileHandle | null = null;
+  private readonlyMode: boolean;
 
-  constructor(baseDir: string) {
+  constructor(baseDir: string, options?: { readonly?: boolean }) {
     this.walDir = path.join(baseDir, WAL_DIR);
-    fs.mkdirSync(this.walDir, { recursive: true });
+    this.readonlyMode = options?.readonly ?? false;
 
-    this.currentGen = this.detectLastGeneration();
-    this.recoverLSNFromExistingLogs();
+    if (!this.readonlyMode) {
+      fs.mkdirSync(this.walDir, { recursive: true });
+    }
+
+    if (fs.existsSync(this.walDir)) {
+      this.currentGen = this.detectLastGeneration();
+      this.recoverLSNFromExistingLogs();
+    }
   }
 
   /* -------------------------
@@ -109,13 +116,15 @@ export class WALManager {
 
           this.lsn = Math.max(this.lsn, record.lsn);
         } catch {
-          break; // stop on corruption
+          break;
         }
       }
     }
   }
 
   private getSortedWalFiles(): string[] {
+    if (!fs.existsSync(this.walDir)) return [];
+
     return fs
       .readdirSync(this.walDir)
       .filter(f => /^wal-\d+\.log$/.test(f))
@@ -127,12 +136,18 @@ export class WALManager {
   }
 
   private async open() {
+    if (this.readonlyMode) {
+      throw new Error("WAL is in readonly replica mode");
+    }
+
     if (!this.fd) {
       this.fd = await fs.promises.open(this.walPath(), "a");
     }
   }
 
   private async rotate() {
+    if (this.readonlyMode) return;
+
     if (this.fd) {
       await this.fd.sync();
       await this.fd.close();
@@ -142,10 +157,14 @@ export class WALManager {
   }
 
   /* -------------------------
-     APPEND (Crash-safe)
+     APPEND (Primary only)
   ------------------------- */
 
   async append(record: Omit<WALRecord, "lsn">): Promise<number> {
+    if (this.readonlyMode) {
+      throw new Error("Cannot append WAL in readonly replica mode");
+    }
+
     await this.open();
 
     const full: WALRecord = {
@@ -174,7 +193,7 @@ export class WALManager {
   }
 
   /* -------------------------
-     REPLAY (Auto-heal tail)
+     REPLAY (Replica allowed)
   ------------------------- */
 
   async replay(
@@ -188,7 +207,11 @@ export class WALManager {
     for (const file of files) {
       const filePath = path.join(this.walDir, file);
 
-      const fd = fs.openSync(filePath, "r+");
+      const fd = fs.openSync(
+        filePath,
+        this.readonlyMode ? "r" : "r+"
+      );
+
       const content = fs.readFileSync(filePath, "utf8");
       const lines = content.split("\n");
 
@@ -224,10 +247,11 @@ export class WALManager {
         await apply(record);
       }
 
-      // Truncate corrupted tail (auto-heal)
-      const stat = fs.fstatSync(fd);
-      if (validOffset < stat.size) {
-        fs.ftruncateSync(fd, validOffset);
+      if (!this.readonlyMode) {
+        const stat = fs.fstatSync(fd);
+        if (validOffset < stat.size) {
+          fs.ftruncateSync(fd, validOffset);
+        }
       }
 
       fs.closeSync(fd);
@@ -235,10 +259,11 @@ export class WALManager {
   }
 
   /* -------------------------
-     CLEANUP
+     CLEANUP (Primary only)
   ------------------------- */
 
   async cleanup(beforeGen: number) {
+    if (this.readonlyMode) return;
     if (!fs.existsSync(this.walDir)) return;
 
     const files = fs.readdirSync(this.walDir);
@@ -264,5 +289,9 @@ export class WALManager {
 
   getCurrentGen() {
     return this.currentGen;
+  }
+
+  isReadonly() {
+    return this.readonlyMode;
   }
 }

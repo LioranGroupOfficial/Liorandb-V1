@@ -23,6 +23,10 @@ export interface UpdateOptions {
   upsert?: boolean;
 }
 
+export interface CollectionOptions {
+  readonly?: boolean;
+}
+
 export class Collection<T = any> {
   dir: string;
   db: ClassicLevel<string, string>;
@@ -33,16 +37,31 @@ export class Collection<T = any> {
   private migrations: Migration<T>[] = [];
 
   private indexes = new Map<string, Index>();
+  private readonlyMode: boolean;
 
   constructor(
     dir: string,
     schema?: ZodSchema<T>,
-    schemaVersion: number = 1
+    schemaVersion: number = 1,
+    options?: CollectionOptions
   ) {
     this.dir = dir;
-    this.db = new ClassicLevel(dir, { valueEncoding: "utf8" });
     this.schema = schema;
     this.schemaVersion = schemaVersion;
+    this.readonlyMode = options?.readonly ?? false;
+
+    this.db = new ClassicLevel(dir, {
+      valueEncoding: "utf8",
+      readOnly: this.readonlyMode
+    } as any);
+  }
+
+  /* ===================== INTERNAL ===================== */
+
+  private assertWritable() {
+    if (this.readonlyMode) {
+      throw new Error("Collection is in readonly replica mode");
+    }
   }
 
   /* ===================== SCHEMA ===================== */
@@ -106,6 +125,7 @@ export class Collection<T = any> {
   }
 
   private async _updateIndexes(oldDoc: any, newDoc: any) {
+    if (this.readonlyMode) return;
     for (const index of this.indexes.values()) {
       await index.update(oldDoc, newDoc);
     }
@@ -114,6 +134,8 @@ export class Collection<T = any> {
   /* ===================== COMPACTION ===================== */
 
   async compact(): Promise<void> {
+    this.assertWritable();
+
     return this._enqueue(async () => {
       try { await this.db.close(); } catch {}
 
@@ -145,6 +167,8 @@ export class Collection<T = any> {
   /* ===================== STORAGE ===================== */
 
   private async _insertOne(doc: any) {
+    this.assertWritable();
+
     const _id = doc._id ?? uuid();
     const final = this.validate({
       _id,
@@ -159,6 +183,8 @@ export class Collection<T = any> {
   }
 
   private async _insertMany(docs: any[]) {
+    this.assertWritable();
+
     const batch: any[] = [];
     const out = [];
 
@@ -214,14 +240,13 @@ export class Collection<T = any> {
   }
 
   private async _readAndMigrate(id: string) {
-    const enc = await this.db.get(id);
+    const enc = await this.db.get(id).catch(() => null);
     if (!enc) return null;
 
     const raw = decryptData(enc);
     const migrated = this.migrateIfNeeded(raw);
 
-    // Lazy write-back if migrated
-    if (raw.__v !== this.schemaVersion) {
+    if (!this.readonlyMode && raw.__v !== this.schemaVersion) {
       await this.db.put(id, encryptData(migrated));
       await this._updateIndexes(raw, migrated);
     }
@@ -247,9 +272,7 @@ export class Collection<T = any> {
 
   private async _findOne(query: any) {
     if (query?._id) {
-      try {
-        return await this._readAndMigrate(String(query._id));
-      } catch { return null; }
+      return this._readAndMigrate(String(query._id));
     }
 
     const ids = await this._getCandidateIds(query);
@@ -285,6 +308,8 @@ export class Collection<T = any> {
   /* ===================== UPDATE ===================== */
 
   private async _updateOne(filter: any, update: any, options: UpdateOptions) {
+    this.assertWritable();
+
     const ids = await this._getCandidateIds(filter);
 
     for (const id of ids) {
@@ -313,6 +338,8 @@ export class Collection<T = any> {
   }
 
   private async _updateMany(filter: any, update: any) {
+    this.assertWritable();
+
     const ids = await this._getCandidateIds(filter);
     const out = [];
 
@@ -340,6 +367,8 @@ export class Collection<T = any> {
   /* ===================== DELETE ===================== */
 
   private async _deleteOne(filter: any) {
+    this.assertWritable();
+
     const ids = await this._getCandidateIds(filter);
 
     for (const id of ids) {
@@ -357,6 +386,8 @@ export class Collection<T = any> {
   }
 
   private async _deleteMany(filter: any) {
+    this.assertWritable();
+
     const ids = await this._getCandidateIds(filter);
     let count = 0;
 

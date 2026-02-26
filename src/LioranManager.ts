@@ -7,15 +7,23 @@ import { getDefaultRootPath } from "./utils/rootpath.js";
 import { dbQueue } from "./ipc/queue.js";
 import { IPCServer } from "./ipc/server.js";
 
+/* ---------------- PROCESS MODE ---------------- */
+
 enum ProcessMode {
   PRIMARY = "primary",
-  CLIENT = "client"
+  CLIENT = "client",
+  READONLY = "readonly"
 }
+
+/* ---------------- OPTIONS ---------------- */
 
 export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
+  ipc?: "primary" | "client" | "readonly";
 }
+
+/* ---------------- MANAGER ---------------- */
 
 export class LioranManager {
   rootPath: string;
@@ -26,7 +34,7 @@ export class LioranManager {
   private ipcServer?: IPCServer;
 
   constructor(options: LioranManagerOptions = {}) {
-    const { rootPath, encryptionKey } = options;
+    const { rootPath, encryptionKey, ipc } = options;
 
     this.rootPath = rootPath || getDefaultRootPath();
 
@@ -40,15 +48,40 @@ export class LioranManager {
 
     this.openDBs = new Map();
 
-    this.mode = this.tryAcquireLock()
-      ? ProcessMode.PRIMARY
-      : ProcessMode.CLIENT;
+    /* ---------------- MODE RESOLUTION ---------------- */
+
+    if (ipc === "readonly") {
+      this.mode = ProcessMode.READONLY;
+    } else if (ipc === "client") {
+      this.mode = ProcessMode.CLIENT;
+    } else if (ipc === "primary") {
+      this.mode = ProcessMode.PRIMARY;
+    } else {
+      // default auto-detect (backward compatible)
+      this.mode = this.tryAcquireLock()
+        ? ProcessMode.PRIMARY
+        : ProcessMode.CLIENT;
+    }
 
     if (this.mode === ProcessMode.PRIMARY) {
       this.ipcServer = new IPCServer(this, this.rootPath);
       this.ipcServer.start();
       this._registerShutdownHooks();
     }
+  }
+
+  /* ---------------- MODE HELPERS ---------------- */
+
+  isPrimary() {
+    return this.mode === ProcessMode.PRIMARY;
+  }
+
+  isClient() {
+    return this.mode === ProcessMode.CLIENT;
+  }
+
+  isReadOnly() {
+    return this.mode === ProcessMode.READONLY;
   }
 
   /* ---------------- LOCK MANAGEMENT ---------------- */
@@ -78,7 +111,7 @@ export class LioranManager {
           fs.writeSync(this.lockFd, String(process.pid));
           return true;
         }
-      } catch { }
+      } catch {}
       return false;
     }
   }
@@ -90,6 +123,7 @@ export class LioranManager {
       await dbQueue.exec("db", { db: name });
       return new IPCDatabase(name) as any;
     }
+
     return this.openDatabase(name);
   }
 
@@ -108,24 +142,23 @@ export class LioranManager {
     return db;
   }
 
-  /* ---------------- SNAPSHOT ORCHESTRATION ---------------- */
+  /* ---------------- SNAPSHOT ---------------- */
 
-  /**
-   * Create TAR snapshot of full DB directory
-   */
   async snapshot(snapshotPath: string) {
     if (this.mode === ProcessMode.CLIENT) {
       return dbQueue.exec("snapshot", { path: snapshotPath });
     }
 
-    // Flush all DBs safely
+    if (this.mode === ProcessMode.READONLY) {
+      throw new Error("Snapshot not allowed in readonly mode");
+    }
+
     for (const db of this.openDBs.values()) {
       for (const col of db.collections.values()) {
-        try { await col.db.close(); } catch { }
+        try { await col.db.close(); } catch {}
       }
     }
 
-    // Ensure backup directory exists
     fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
 
     const tar = await import("tar");
@@ -140,12 +173,15 @@ export class LioranManager {
     return true;
   }
 
-  /**
-   * Restore TAR snapshot safely
-   */
+  /* ---------------- RESTORE ---------------- */
+
   async restore(snapshotPath: string) {
     if (this.mode === ProcessMode.CLIENT) {
       return dbQueue.exec("restore", { path: snapshotPath });
+    }
+
+    if (this.mode === ProcessMode.READONLY) {
+      throw new Error("Restore not allowed in readonly mode");
     }
 
     await this.closeAll();
@@ -176,17 +212,20 @@ export class LioranManager {
     }
 
     for (const db of this.openDBs.values()) {
-      try { await db.close(); } catch { }
+      try { await db.close(); } catch {}
     }
 
     this.openDBs.clear();
 
-    try {
-      if (this.lockFd) fs.closeSync(this.lockFd);
-      fs.unlinkSync(path.join(this.rootPath, ".lioran.lock"));
-    } catch { }
+    // Only primary owns lock + IPC
+    if (this.mode === ProcessMode.PRIMARY) {
+      try {
+        if (this.lockFd) fs.closeSync(this.lockFd);
+        fs.unlinkSync(path.join(this.rootPath, ".lioran.lock"));
+      } catch {}
 
-    await this.ipcServer?.close();
+      await this.ipcServer?.close();
+    }
   }
 
   async close(): Promise<void> {
@@ -213,7 +252,7 @@ export class LioranManager {
 /* ---------------- IPC PROXY DB ---------------- */
 
 class IPCDatabase {
-  constructor(private name: string) { }
+  constructor(private name: string) {}
 
   collection(name: string) {
     return new IPCCollection(this.name, name);
@@ -224,7 +263,7 @@ class IPCCollection {
   constructor(
     private db: string,
     private col: string
-  ) { }
+  ) {}
 
   private call(method: string, params: any[]) {
     return dbQueue.exec("op", {
