@@ -1,24 +1,25 @@
-import { fork, ChildProcess } from "child_process";
+import { Worker } from "worker_threads";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 
 /**
- * IPC Worker Pool
+ * Worker Thread Pool
  *
- * - Spawns multiple worker processes (based on CPU cores)
+ * - Spawns multiple worker threads (based on CPU cores)
  * - Auto-restarts crashed workers
  * - Supports graceful shutdown
- * - Production-safe respawn protection
+ * - Round-robin task scheduling
  */
 
 export class IPCWorkerPool {
-  private workers: Map<number, ChildProcess> = new Map();
+  private workers: Worker[] = [];
   private workerCount: number;
   private shuttingDown = false;
+  private rrIndex = 0;
 
-  constructor(private rootPath: string) {
-    // Minimum 2 workers, scale with CPU
+  constructor() {
+    // Minimum 2 workers, scale with CPU cores
     this.workerCount = Math.max(2, os.cpus().length);
   }
 
@@ -28,49 +29,81 @@ export class IPCWorkerPool {
 
   start() {
     for (let i = 0; i < this.workerCount; i++) {
-      this.spawnWorker(i);
+      this.spawnWorker();
     }
 
-    console.log(`[IPC] Worker pool started with ${this.workerCount} workers`);
+    console.log(
+      `[WorkerPool] Started ${this.workerCount} worker threads`
+    );
   }
 
   /* -------------------------------------------------- */
   /* SPAWN WORKER                                       */
   /* -------------------------------------------------- */
 
-  private spawnWorker(id: number) {
+  private spawnWorker() {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
 
     // Worker compiled output must exist in dist
     const workerFile = path.join(__dirname, "worker.js");
 
-    const worker = fork(workerFile, [], {
-      env: {
-        ...process.env,
-        LIORAN_ROOT: this.rootPath,
-        LIORAN_WORKER_ID: String(id)
-      }
-    });
+    const worker = new Worker(workerFile);
 
-    worker.on("exit", (code, signal) => {
+    worker.on("exit", code => {
       if (this.shuttingDown) return;
 
       console.error(
-        `[IPC] Worker ${id} exited (code=${code}, signal=${signal}). Restarting...`
+        `[WorkerPool] Worker exited (code=${code}). Restarting...`
       );
 
-      // Restart worker
+      // Remove dead worker
+      this.workers = this.workers.filter(w => w !== worker);
+
+      // Restart after short delay
       setTimeout(() => {
-        this.spawnWorker(id);
+        this.spawnWorker();
       }, 500);
     });
 
     worker.on("error", err => {
-      console.error(`[IPC] Worker ${id} error:`, err);
+      console.error("[WorkerPool] Worker error:", err);
     });
 
-    this.workers.set(id, worker);
+    this.workers.push(worker);
+  }
+
+  /* -------------------------------------------------- */
+  /* EXECUTE TASK                                       */
+  /* -------------------------------------------------- */
+
+  exec(task: any): Promise<any> {
+    if (this.workers.length === 0) {
+      throw new Error("No workers available");
+    }
+
+    const worker = this.workers[this.rrIndex];
+    this.rrIndex = (this.rrIndex + 1) % this.workers.length;
+
+    return new Promise((resolve, reject) => {
+      const id = Date.now() + Math.random();
+
+      const messageHandler = (msg: any) => {
+        if (msg.id !== id) return;
+
+        worker.off("message", messageHandler);
+
+        if (msg.ok) resolve(msg.result);
+        else reject(new Error(msg.error));
+      };
+
+      worker.on("message", messageHandler);
+
+      worker.postMessage({
+        id,
+        task
+      });
+    });
   }
 
   /* -------------------------------------------------- */
@@ -80,17 +113,17 @@ export class IPCWorkerPool {
   async shutdown() {
     this.shuttingDown = true;
 
-    console.log("[IPC] Shutting down worker pool...");
+    console.log("[WorkerPool] Shutting down worker threads...");
 
-    for (const [, worker] of this.workers) {
+    for (const worker of this.workers) {
       try {
-        worker.kill("SIGTERM");
+        await worker.terminate();
       } catch (err) {
-        console.error("[IPC] Worker kill error:", err);
+        console.error("[WorkerPool] Worker terminate error:", err);
       }
     }
 
-    this.workers.clear();
+    this.workers = [];
   }
 
   /* -------------------------------------------------- */

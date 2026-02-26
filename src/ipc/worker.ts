@@ -1,75 +1,72 @@
-import { IPCServer } from "./server.js";
-import { LioranManager } from "../LioranManager.js";
+import { parentPort } from "worker_threads";
 
 /**
- * Worker Process Entry
- * Each worker:
- *  - Owns its own LioranManager instance
- *  - Listens on its own IPC socket
- *  - Handles requests independently
+ * Worker Thread Entry
+ *
+ * - Does NOT own LioranManager
+ * - Does NOT open sockets
+ * - Pure compute worker
+ * - Communicates via postMessage
  */
 
-const rootPath = process.env.LIORAN_ROOT as string;
-const workerIdRaw = process.env.LIORAN_WORKER_ID;
-
-if (!rootPath) {
-  console.error("[IPC Worker] Missing LIORAN_ROOT");
-  process.exit(1);
+if (!parentPort) {
+  throw new Error("worker.ts must be run as a worker thread");
 }
 
-if (workerIdRaw === undefined) {
-  console.error("[IPC Worker] Missing LIORAN_WORKER_ID");
-  process.exit(1);
-}
+/* -------------------------------------------------- */
+/* TASK HANDLER                                       */
+/* -------------------------------------------------- */
 
-const workerId = Number(workerIdRaw);
+parentPort.on("message", async (msg: any) => {
+  const { id, task } = msg;
 
-if (isNaN(workerId)) {
-  console.error("[IPC Worker] Invalid worker id");
-  process.exit(1);
-}
-
-async function bootstrap() {
   try {
-    const manager = new LioranManager({ rootPath });
+    // Extend this section with real compute-heavy logic if needed
+    const result = await executeTask(task);
 
-    const server = new IPCServer(manager, rootPath, workerId);
-
-    server.start();
-
-    console.log(`[IPC Worker ${workerId}] Started`);
-
-    /* ---------------- Graceful Shutdown ---------------- */
-
-    const shutdown = async () => {
-      console.log(`[IPC Worker ${workerId}] Shutting down...`);
-
-      try {
-        await server.close();
-      } catch (err) {
-        console.error(`[IPC Worker ${workerId}] Close error:`, err);
-      }
-
-      process.exit(0);
-    };
-
-    process.on("SIGTERM", shutdown);
-    process.on("SIGINT", shutdown);
-
-    process.on("uncaughtException", err => {
-      console.error(`[IPC Worker ${workerId}] Uncaught Exception:`, err);
-      process.exit(1);
+    parentPort!.postMessage({
+      id,
+      ok: true,
+      result
     });
 
-    process.on("unhandledRejection", err => {
-      console.error(`[IPC Worker ${workerId}] Unhandled Rejection:`, err);
-      process.exit(1);
+  } catch (err: any) {
+    parentPort!.postMessage({
+      id,
+      ok: false,
+      error: err?.message || "Worker execution error"
     });
-
-  } catch (err) {
-    console.error(`[IPC Worker ${workerId}] Boot failed:`, err);
-    process.exit(1);
   }
+});
+
+/* -------------------------------------------------- */
+/* TASK EXECUTION                                     */
+/* -------------------------------------------------- */
+
+async function executeTask(task: any): Promise<any> {
+  /**
+   * Currently passthrough.
+   * You can extend this to support:
+   * - Aggregations
+   * - Sorting large datasets
+   * - Map/reduce
+   * - Index rebuild compute
+   * - Heavy JSON transforms
+   */
+
+  return task;
 }
 
-bootstrap();
+/* -------------------------------------------------- */
+/* ERROR HANDLING                                     */
+/* -------------------------------------------------- */
+
+process.on("uncaughtException", err => {
+  console.error("[Worker] Uncaught Exception:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", err => {
+  console.error("[Worker] Unhandled Rejection:", err);
+  process.exit(1);
+});

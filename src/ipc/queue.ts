@@ -1,4 +1,4 @@
-import { IPCClient } from "./client.js";
+import { LioranManager } from "../LioranManager.js";
 import { getDefaultRootPath } from "../utils/rootpath.js";
 import { IPCWorkerPool } from "./pool.js";
 
@@ -15,95 +15,94 @@ export type IPCAction =
   | "restore"
   | "snapshot";
 
-/* -------------------------------- WRITE DETECTION -------------------------------- */
-
-/**
- * Determines whether a request is a write operation.
- * Writes are pinned to worker 0 for consistency.
- */
-function isWriteOperation(action: IPCAction, args: any): boolean {
-  if (action !== "op") {
-    // All non-read operations treated as write/control
-    return true;
-  }
-
-  const writeMethods = new Set([
-    "insertOne",
-    "insertMany",
-    "updateOne",
-    "updateMany",
-    "deleteOne",
-    "deleteMany"
-  ]);
-
-  return writeMethods.has(args?.method);
-}
-
 /* -------------------------------- DB QUEUE -------------------------------- */
 
 export class DBQueue {
-  private clients: IPCClient[] = [];
-  private rrIndex = 0;
+  private manager: LioranManager;
   private pool: IPCWorkerPool;
   private destroyed = false;
 
   constructor(private rootPath = getDefaultRootPath()) {
-    // Start worker pool
-    this.pool = new IPCWorkerPool(this.rootPath);
+    // Single shared DB instance
+    this.manager = new LioranManager({ rootPath });
+
+    // Worker threads (for future compute-heavy tasks)
+    this.pool = new IPCWorkerPool();
     this.pool.start();
-
-    // Create IPC clients for each worker
-    for (let i = 0; i < this.pool.size; i++) {
-      this.clients.push(new IPCClient(this.rootPath, i));
-    }
-  }
-
-  /* -------------------------------- LOAD BALANCING -------------------------------- */
-
-  private nextReadClient(): IPCClient {
-    const client = this.clients[this.rrIndex];
-    this.rrIndex = (this.rrIndex + 1) % this.clients.length;
-    return client;
   }
 
   /* -------------------------------- EXEC -------------------------------- */
 
-  exec(action: IPCAction, args: any) {
+  async exec(action: IPCAction, args: any) {
     if (this.destroyed) {
       throw new Error("DBQueue already shutdown");
     }
 
-    // Writes pinned to primary worker (0)
-    if (isWriteOperation(action, args)) {
-      return this.clients[0].exec(action, args);
+    switch (action) {
+      /* ---------------- DB ---------------- */
+
+      case "db":
+        await this.manager.db(args.db);
+        return true;
+
+      /* ---------------- CRUD OPS ---------------- */
+
+      case "op": {
+        const { db, col, method, params } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        return await (collection as any)[method](...params);
+      }
+
+      /* ---------------- INDEX OPS ---------------- */
+
+      case "index": {
+        const { db, col, method, params } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        return await (collection as any)[method](...params);
+      }
+
+      /* ---------------- COMPACTION ---------------- */
+
+      case "compact:collection": {
+        const { db, col } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        await collection.compact();
+        return true;
+      }
+
+      case "compact:db": {
+        const { db } = args;
+        const database = await this.manager.db(db);
+        await database.compactAll();
+        return true;
+      }
+
+      case "compact:all": {
+        for (const db of this.manager.openDBs.values()) {
+          await db.compactAll();
+        }
+        return true;
+      }
+
+      /* ---------------- SNAPSHOT ---------------- */
+
+      case "snapshot":
+        await this.manager.snapshot(args.path);
+        return true;
+
+      case "restore":
+        await this.manager.restore(args.path);
+        return true;
+
+      /* ---------------- CONTROL ---------------- */
+
+      case "shutdown":
+        await this.shutdown();
+        return true;
+
+      default:
+        throw new Error(`Unknown action: ${action}`);
     }
-
-    // Reads load-balanced
-    return this.nextReadClient().exec(action, args);
-  }
-
-  /* ----------------------------- COMPACTION API ----------------------------- */
-
-  compactCollection(db: string, col: string) {
-    return this.exec("compact:collection", { db, col });
-  }
-
-  compactDB(db: string) {
-    return this.exec("compact:db", { db });
-  }
-
-  compactAll() {
-    return this.exec("compact:all", {});
-  }
-
-  /* ----------------------------- SNAPSHOT API ----------------------------- */
-
-  snapshot(path: string) {
-    return this.exec("snapshot", { path });
-  }
-
-  restore(path: string) {
-    return this.exec("restore", { path });
   }
 
   /* ------------------------------ SHUTDOWN ------------------------------ */
@@ -112,23 +111,10 @@ export class DBQueue {
     if (this.destroyed) return;
     this.destroyed = true;
 
-    try {
-      // Shutdown primary worker gracefully
-      await this.clients[0].exec("shutdown", {});
-    } catch {
-      // ignore
-    }
+    // Close DBs
+    await this.manager.closeAll();
 
-    // Close all IPC clients
-    for (const client of this.clients) {
-      try {
-        client.close();
-      } catch {
-        // ignore
-      }
-    }
-
-    // Shutdown worker pool
+    // Shutdown worker threads
     await this.pool.shutdown();
   }
 }

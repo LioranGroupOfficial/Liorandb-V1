@@ -4,8 +4,6 @@ import process from "process";
 import { LioranDB } from "./core/database.js";
 import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
-import { dbQueue } from "./ipc/queue.js";
-import { IPCServer } from "./ipc/server.js";
 
 /* ---------------- PROCESS MODE ---------------- */
 
@@ -31,7 +29,6 @@ export class LioranManager {
   private closed = false;
   private mode: ProcessMode;
   private lockFd?: number;
-  private ipcServer?: IPCServer;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
@@ -56,16 +53,15 @@ export class LioranManager {
       this.mode = ProcessMode.CLIENT;
     } else if (ipc === "primary") {
       this.mode = ProcessMode.PRIMARY;
+      this.tryAcquireLock();
     } else {
-      // default auto-detect (backward compatible)
+      // auto-detect (default behavior)
       this.mode = this.tryAcquireLock()
         ? ProcessMode.PRIMARY
         : ProcessMode.CLIENT;
     }
 
     if (this.mode === ProcessMode.PRIMARY) {
-      this.ipcServer = new IPCServer(this, this.rootPath, process.pid);
-      this.ipcServer.start();
       this._registerShutdownHooks();
     }
   }
@@ -82,6 +78,13 @@ export class LioranManager {
 
   isReadOnly() {
     return this.mode === ProcessMode.READONLY;
+  }
+
+  /* ---------------- QUEUE HELPER ---------------- */
+
+  private async getQueue() {
+    const { dbQueue } = await import("./ipc/queue.js");
+    return dbQueue;
   }
 
   /* ---------------- LOCK MANAGEMENT ---------------- */
@@ -120,7 +123,8 @@ export class LioranManager {
 
   async db(name: string): Promise<LioranDB> {
     if (this.mode === ProcessMode.CLIENT) {
-      await dbQueue.exec("db", { db: name });
+      const queue = await this.getQueue();
+      await queue.exec("db", { db: name });
       return new IPCDatabase(name) as any;
     }
 
@@ -146,7 +150,8 @@ export class LioranManager {
 
   async snapshot(snapshotPath: string) {
     if (this.mode === ProcessMode.CLIENT) {
-      return dbQueue.exec("snapshot", { path: snapshotPath });
+      const queue = await this.getQueue();
+      return queue.exec("snapshot", { path: snapshotPath });
     }
 
     if (this.mode === ProcessMode.READONLY) {
@@ -154,21 +159,24 @@ export class LioranManager {
     }
 
     for (const db of this.openDBs.values()) {
-      for (const col of db.collections.values()) {
-        try { await col.db.close(); } catch {}
-      }
+      try {
+        await db.close();
+      } catch {}
     }
 
     fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
 
     const tar = await import("tar");
 
-    await tar.c({
-      gzip: true,
-      file: snapshotPath,
-      cwd: this.rootPath,
-      portable: true
-    }, ["./"]);
+    await tar.c(
+      {
+        gzip: true,
+        file: snapshotPath,
+        cwd: this.rootPath,
+        portable: true
+      },
+      ["./"]
+    );
 
     return true;
   }
@@ -177,7 +185,8 @@ export class LioranManager {
 
   async restore(snapshotPath: string) {
     if (this.mode === ProcessMode.CLIENT) {
-      return dbQueue.exec("restore", { path: snapshotPath });
+      const queue = await this.getQueue();
+      return queue.exec("restore", { path: snapshotPath });
     }
 
     if (this.mode === ProcessMode.READONLY) {
@@ -207,24 +216,25 @@ export class LioranManager {
     this.closed = true;
 
     if (this.mode === ProcessMode.CLIENT) {
-      await dbQueue.shutdown();
+      const queue = await this.getQueue();
+      await queue.shutdown();
       return;
     }
 
     for (const db of this.openDBs.values()) {
-      try { await db.close(); } catch {}
+      try {
+        await db.close();
+      } catch {}
     }
 
     this.openDBs.clear();
 
-    // Only primary owns lock + IPC
+    // Only primary owns lock
     if (this.mode === ProcessMode.PRIMARY) {
       try {
         if (this.lockFd) fs.closeSync(this.lockFd);
         fs.unlinkSync(path.join(this.rootPath, ".lioran.lock"));
       } catch {}
-
-      await this.ipcServer?.close();
     }
   }
 
@@ -265,8 +275,14 @@ class IPCCollection {
     private col: string
   ) {}
 
-  private call(method: string, params: any[]) {
-    return dbQueue.exec("op", {
+  private async getQueue() {
+    const { dbQueue } = await import("./ipc/queue.js");
+    return dbQueue;
+  }
+
+  private async call(method: string, params: any[]) {
+    const queue = await this.getQueue();
+    return queue.exec("op", {
       db: this.db,
       col: this.col,
       method,

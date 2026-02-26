@@ -8,6 +8,8 @@ class CollectionProxy {
     private collectionName: string
   ) {}
 
+  /* ------------------------------ INTERNAL CALLERS ------------------------------ */
+
   private call(method: string, params: any[]): Promise<any> {
     return dbQueue.exec("op", {
       db: this.dbName,
@@ -26,38 +28,56 @@ class CollectionProxy {
     });
   }
 
-  private callCompact(): Promise<any> {
-    return dbQueue.exec("compact:collection", {
-      db: this.dbName,
-      col: this.collectionName
-    });
-  }
-
   /* ------------------------------ CRUD ------------------------------ */
 
-  insertOne = (doc: any) => this.call("insertOne", [doc]);
-  insertMany = (docs: any[]) => this.call("insertMany", [docs]);
-  find = (query?: any) => this.call("find", [query]);
-  findOne = (query?: any) => this.call("findOne", [query]);
+  insertOne = (doc: any) =>
+    this.call("insertOne", [doc]);
+
+  insertMany = (docs: any[]) =>
+    this.call("insertMany", [docs]);
+
+  find = (query?: any) =>
+    this.call("find", [query]);
+
+  findOne = (query?: any) =>
+    this.call("findOne", [query]);
+
   updateOne = (filter: any, update: any, options?: any) =>
     this.call("updateOne", [filter, update, options]);
+
   updateMany = (filter: any, update: any) =>
     this.call("updateMany", [filter, update]);
-  deleteOne = (filter: any) => this.call("deleteOne", [filter]);
-  deleteMany = (filter: any) => this.call("deleteMany", [filter]);
+
+  deleteOne = (filter: any) =>
+    this.call("deleteOne", [filter]);
+
+  deleteMany = (filter: any) =>
+    this.call("deleteMany", [filter]);
+
   countDocuments = (filter?: any) =>
     this.call("countDocuments", [filter]);
 
   /* ------------------------------ INDEX ----------------------------- */
 
-  createIndex = (def: any) => this.callIndex("createIndex", [def]);
-  dropIndex = (field: string) => this.callIndex("dropIndex", [field]);
-  listIndexes = () => this.callIndex("listIndexes", []);
-  rebuildIndexes = () => this.callIndex("rebuildIndexes", []);
+  createIndex = (def: any) =>
+    this.callIndex("createIndex", [def]);
+
+  dropIndex = (field: string) =>
+    this.callIndex("dropIndex", [field]);
+
+  listIndexes = () =>
+    this.callIndex("listIndexes", []);
+
+  rebuildIndexes = () =>
+    this.callIndex("rebuildIndexes", []);
 
   /* --------------------------- COMPACTION --------------------------- */
 
-  compact = () => this.callCompact();
+  compact = () =>
+    dbQueue.exec("compact:collection", {
+      db: this.dbName,
+      col: this.collectionName
+    });
 }
 
 /* -------------------------------- DATABASE PROXY -------------------------------- */
@@ -103,9 +123,11 @@ class LioranManagerIPC {
   }
 
   shutdown() {
-    return dbQueue.shutdown();
+    return dbQueue.exec("shutdown", {});
   }
 }
+
+/* -------------------------------- EXPORTS -------------------------------- */
 
 export const manager = new LioranManagerIPC();
 export type { CollectionProxy, DBProxy };
