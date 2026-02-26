@@ -1,23 +1,33 @@
 import net from "net";
 import { getIPCSocketPath } from "./socketPath.js";
 
+/**
+ * Small retry helper
+ */
 function delay(ms: number) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Connect with retry (worker might still be booting)
+ */
 async function connectWithRetry(path: string): Promise<net.Socket> {
   let attempt = 0;
 
   while (true) {
     try {
       return await new Promise((resolve, reject) => {
-        const socket = net.connect(path, () => resolve(socket));
+        const socket = net.connect(path, () => {
+          socket.removeListener("error", reject);
+          resolve(socket);
+        });
+
         socket.once("error", reject);
       });
     } catch (err: any) {
-      if (err.code === "ENOENT" || err.code === "ECONNREFUSED") {
-        if (attempt++ > 80) {
-          throw new Error("IPC server not reachable");
+      if (err?.code === "ENOENT" || err?.code === "ECONNREFUSED") {
+        if (attempt++ > 120) {
+          throw new Error(`IPC worker not reachable: ${path}`);
         }
         await delay(50);
         continue;
@@ -33,11 +43,16 @@ export class IPCClient {
   private seq = 0;
   private pending = new Map<number, (v: any) => void>();
   private ready: Promise<void>;
+  private destroyed = false;
 
-  constructor(rootPath: string) {
-    const socketPath = getIPCSocketPath(rootPath);
+  constructor(rootPath: string, workerId: number) {
+    const socketPath = getIPCSocketPath(rootPath, workerId);
     this.ready = this.init(socketPath);
   }
+
+  /* -------------------------------------------------- */
+  /* INITIALIZE CONNECTION                              */
+  /* -------------------------------------------------- */
 
   private async init(socketPath: string) {
     this.socket = await connectWithRetry(socketPath);
@@ -50,23 +65,43 @@ export class IPCClient {
         const raw = this.buffer.slice(0, idx);
         this.buffer = this.buffer.slice(idx + 1);
 
-        const msg = JSON.parse(raw);
-        const cb = this.pending.get(msg.id);
+        if (!raw.trim()) continue;
 
-        if (cb) {
-          this.pending.delete(msg.id);
-          cb(msg);
+        try {
+          const msg = JSON.parse(raw);
+          const cb = this.pending.get(msg.id);
+
+          if (cb) {
+            this.pending.delete(msg.id);
+            cb(msg);
+          }
+        } catch (err) {
+          console.error("[IPCClient] Invalid JSON:", err);
         }
       }
     });
 
     this.socket.on("error", err => {
-      console.error("IPC socket error:", err);
+      console.error("[IPCClient] Socket error:", err);
+    });
+
+    this.socket.on("close", () => {
+      if (!this.destroyed) {
+        console.error("[IPCClient] Socket closed unexpectedly");
+      }
     });
   }
 
+  /* -------------------------------------------------- */
+  /* EXECUTE REQUEST                                    */
+  /* -------------------------------------------------- */
+
   async exec(action: string, args: any) {
-    await this.ready;   // 🔥 HARD BARRIER — guarantees socket exists
+    if (this.destroyed) {
+      throw new Error("IPC client already closed");
+    }
+
+    await this.ready; // ensure socket connected
 
     return new Promise((resolve, reject) => {
       const id = ++this.seq;
@@ -75,11 +110,31 @@ export class IPCClient {
         msg.ok ? resolve(msg.result) : reject(new Error(msg.error));
       });
 
-      this.socket.write(JSON.stringify({ id, action, args }) + "\n");
+      const payload = JSON.stringify({ id, action, args }) + "\n";
+
+      try {
+        this.socket.write(payload);
+      } catch (err) {
+        this.pending.delete(id);
+        reject(err);
+      }
     });
   }
 
+  /* -------------------------------------------------- */
+  /* CLOSE                                              */
+  /* -------------------------------------------------- */
+
   close() {
-    try { this.socket.end(); } catch {}
+    this.destroyed = true;
+
+    try {
+      this.socket.end();
+      this.socket.destroy();
+    } catch {
+      // ignore
+    }
+
+    this.pending.clear();
   }
 }

@@ -7,10 +7,12 @@ export class IPCServer {
   private server!: net.Server;
   private manager: LioranManager;
   private socketPath: string;
+  private workerId: number;
 
-  constructor(manager: LioranManager, rootPath: string) {
+  constructor(manager: LioranManager, rootPath: string, workerId: number) {
     this.manager = manager;
-    this.socketPath = getIPCSocketPath(rootPath);
+    this.workerId = workerId;
+    this.socketPath = getIPCSocketPath(rootPath, workerId);
   }
 
   start() {

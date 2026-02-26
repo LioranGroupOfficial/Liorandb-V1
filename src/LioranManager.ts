@@ -64,7 +64,7 @@ export class LioranManager {
     }
 
     if (this.mode === ProcessMode.PRIMARY) {
-      this.ipcServer = new IPCServer(this, this.rootPath);
+      this.ipcServer = new IPCServer(this, this.rootPath, process.pid);
       this.ipcServer.start();
       this._registerShutdownHooks();
     }
