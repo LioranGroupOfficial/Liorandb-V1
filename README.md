@@ -1,247 +1,134 @@
 # @liorandb/core
 
-**LioranDB Core** is a lightweight, encrypted, TypeScript-first embedded database engine for Node.js.
+LioranDB Core is an encrypted, local-first embedded database for Node.js with a Mongo-like collection API, secondary indexes, schema migration hooks, WAL-backed transactions, and TypeScript-friendly ergonomics.
 
-Think of it as:
-
-* ⚡ **LevelDB speed** (powered by `classic-level`)
-* 🔐 **Built-in encryption** (transparent at rest)
-* 🧠 **Mongo-like API** (collections, queries, updates)
-* 📦 **Zero external services** (no server, no daemon)
-* 🧩 **Type-safe by design** (written 100% in TypeScript)
-
-Perfect for:
-
-* Local-first apps
-* Desktop / CLI tools
-* Edge & serverless experiments
-* P2P & offline-sync systems
-
----
-
-## Features
-
-* 📂 Multiple databases under one manager
-* 📁 Multiple collections per database
-* 🔑 Optional encryption (AES-based, transparent)
-* 🧵 Write-queue for consistency (no race conditions)
-* 🧠 Simple query matching
-* 🧩 Strong TypeScript inference
-* 🚫 No native bindings
-* 🚀 Fast startup & low memory
-
----
-
-## Installation
+## Install
 
 ```bash
 npm install @liorandb/core
 ```
 
----
-
-## Quick Start (30 seconds)
+## Quick Start
 
 ```ts
-import { LioranManager } from "@liorandb/core"
+import { LioranManager } from "@liorandb/core";
 
 const manager = new LioranManager({
-  encryptionKey: "my-secret-key"
-})
+  rootPath: "./data",
+  encryptionKey: "my-secret"
+});
 
-const db = await manager.db("app")
+const db = await manager.db("app");
+const users = db.collection<{ name: string; email: string; age: number }>("users");
 
-const users = db.collection<{ name: string; age: number }>("users")
+await users.insertOne({
+  name: "Ava",
+  email: "ava@example.com",
+  age: 25
+});
 
-await users.insertOne({ name: "Swaraj", age: 17 })
+await db.createIndex("users", "email", { unique: true });
 
-const result = await users.find({ name: "Swaraj" })
-console.log(result)
+const result = await users.find(
+  { age: 25 },
+  {
+    projection: ["name", "email"],
+    limit: 10,
+    offset: 0
+  }
+);
+
+console.log(result);
 ```
 
-No config. No server. Just code.
+## Highlights
 
----
+- Encrypted document storage with AES-256-GCM.
+- Secondary indexes for equality and range-style query routing.
+- `collection.count()` in O(1) time.
+- `find()` pagination and projection support.
+- `aggregate()` pipeline support with `$match`, `$group`, `$project`, `$skip`, and `$limit`.
+- Query explain plans through `collection.explain()` and `db.explain(...)`.
+- WAL-backed transaction recovery.
+- Encryption key rotation for stored documents and WAL files.
 
-## Core Concepts
+## Main API
 
-### 1️⃣ LioranManager
-
-The **root controller**. Manages databases, encryption and lifecycle.
-
-```ts
-const manager = new LioranManager({
-  rootPath: "./data",        // optional
-  encryptionKey: "secret"   // optional
-})
-```
-
-Responsibilities:
-
-* Creates databases
-* Opens databases
-* Tracks open instances
-* Applies encryption globally
-
----
-
-### 2️⃣ Database
-
-Each database is a **folder on disk**.
-
-```ts
-const db = await manager.db("mydb")
-```
-
-* Databases are created automatically if missing
-* Re-opening returns the same instance
-
----
-
-### 3️⃣ Collections
-
-Collections are **LevelDB instances** stored inside the database.
-
-```ts
-const posts = db.collection<{ title: string; views: number }>("posts")
-```
-
-* One folder per collection
-* Fully typed
-* JSON documents only
-
----
-
-## Collection API
-
-### insertOne
-
-```ts
-await users.insertOne({ name: "Alex", age: 22 })
-```
-
-* Auto-generates `_id`
-* `_id` can be provided manually
-
----
-
-### find
-
-```ts
-const all = await users.find()
-const adults = await users.find({ age: 18 })
-```
-
-* Partial object matching
-* Returns an array
-
----
-
-### updateOne
-
-```ts
-await users.updateOne(
-  { name: "Alex" },
-  { $set: { age: 23 } }
-)
-```
-
-Supported operators:
-
-* `$set`
-* `$unset`
-* `$inc`
-
----
-
-## Encryption
-
-Encryption is **transparent and automatic**.
+### Manager
 
 ```ts
 const manager = new LioranManager({
-  encryptionKey: process.env.DB_KEY
-})
+  rootPath: "./data",
+  encryptionKey: "secret",
+  ipc: "primary" // optional: "primary" | "client" | "readonly"
+});
 ```
 
-* Data is encrypted before writing to disk
-* Decrypted automatically on read
-* Wrong key = unreadable data
-
-> Encryption is global per manager instance.
-
----
-
-## File Structure on Disk
-
-```
-rootPath/
-└─ app/
-   ├─ users/
-   ├─ posts/
-   └─ comments/
-```
-
-* Human-readable folders
-* Binary LevelDB data inside
-
----
-
-## Type Safety
-
-LioranDB is **TypeScript-native**.
+### Database
 
 ```ts
-const users = db.collection<{ name: string; age: number }>("users")
+const db = await manager.db("app");
 
-users.insertOne({ name: "Sam" })      // ❌ age missing
-users.insertOne({ name: "Sam", age: 20 }) // ✅
+await db.createIndex("users", "email", { unique: true });
+await db.compactAll();
+await db.rotateEncryptionKey("new-secret");
+
+const explain = await db.explain("users", { email: "ava@example.com" });
 ```
 
-No `any`. No runtime guessing.
-
----
-
-## Closing Databases
+### Collection
 
 ```ts
-await manager.closeDatabase("app")
+const users = db.collection("users");
+
+await users.insertOne({ name: "Ava", age: 25 });
+await users.insertMany([{ name: "Ben", age: 30 }]);
+
+const docs = await users.find(
+  { age: { $gte: 18 } },
+  { projection: ["name"], limit: 20, offset: 0 }
+);
+
+const one = await users.findOne(
+  { name: "Ava" },
+  { projection: ["name", "age"] }
+);
+
+const total = await users.count();
+
+const grouped = await users.aggregate([
+  { $match: { age: { $gte: 18 } } },
+  { $group: { _id: "$age", count: { $sum: 1 } } }
+]);
 ```
 
-* Closes all collections
-* Flushes LevelDB handles
+## Transactions
 
----
+```ts
+await db.transaction(async (tx) => {
+  tx.collection("users").insertOne({
+    name: "Ava",
+    email: "ava@example.com"
+  });
+});
+```
 
-## Design Philosophy
+Transactional writes are recorded in the WAL and recovered on restart if needed.
 
-* **Simple > clever**
-* **Local-first**
-* **No magic network calls**
-* **Readable source > black box**
+## Docs
 
-LioranDB is intentionally small and hackable.
+- [Getting Started](docs/getting-started.md)
+- [Collections and Queries](docs/collections.md)
+- [Security and Reliability](docs/security-and-reliability.md)
+- [Source Map](docs/source-map.md)
 
----
+## Notes
 
-## Roadmap
-
-* 🔁 P2P sync layer
-* 🧠 Indexing
-* 🧾 Schema validation
-* ⚡ WAL (write-ahead log)
-* 🌐 Browser storage adapter
-
----
+- Document payloads are encrypted at rest.
+- WAL records are encrypted.
+- Index contents are stored separately from documents and are not currently encrypted.
+- Query projection reduces returned payload size and response serialization work, but documents are still stored as encrypted blobs, so matched documents are still fully read and decrypted before projection is applied.
 
 ## License
 
 LDEP
-
----
-
-## Author
-
-Built by **Swaraj Puppalwar** 🚀
-
-> If you are building local-first or offline-first systems — this DB is for you.
