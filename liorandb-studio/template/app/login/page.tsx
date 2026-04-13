@@ -1,233 +1,317 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ArrowRight, Database, KeyRound, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
-import { parseConnectionUri } from '@/lib/utils';
+import { formatConnectionUri, formatHttpUri, parseConnectionUri } from '@/lib/utils';
 import { useToast } from '@/components/Toast';
+
+type LoginMode = 'uri' | 'credentials' | 'token';
 
 export default function LoginPage() {
   const router = useRouter();
   const { addToast } = useToast();
   const { setLoggedIn } = useAppStore();
 
-  const [uri, setUri] = useState('');
+  const [mode, setMode] = useState<LoginMode>('credentials');
   const [isLoading, setIsLoading] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('');
+  const [uri, setUri] = useState('lioran://admin:password123@localhost:4000');
   const [host, setHost] = useState('localhost');
   const [port, setPort] = useState('4000');
+  const [protocol, setProtocol] = useState<'http' | 'https'>('http');
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+  const [tokenUri, setTokenUri] = useState('http://localhost:4000');
+  const [token, setToken] = useState('');
 
   useEffect(() => {
-    // Load saved URI from localStorage
     const savedUri = localStorage.getItem('liorandb_uri');
     const savedToken = localStorage.getItem('liorandb_token');
 
     if (savedUri && savedToken) {
-      // Try to auto-login
-      attemptAutoLogin(savedUri, savedToken);
+      void restoreSession(savedUri, savedToken);
     }
   }, []);
 
-  async function attemptAutoLogin(uri: string, token: string) {
+  async function restoreSession(savedUri: string, savedToken: string) {
     try {
       setIsLoading(true);
-      LioranDBService.initialize(uri);
+      const session = await LioranDBService.restore(savedUri, savedToken);
+      await LioranDBService.listDatabases();
 
-      // Test connection
-      const databases = await LioranDBService.listDatabases();
+      setLoggedIn({
+        loggedIn: true,
+        token: session.token,
+        uri: session.uri,
+        user: session.user,
+      });
 
-      setLoggedIn(true, token, uri);
-      useAppStore.setState({ databases });
-      addToast('Connected successfully', 'success');
-      router.push('/dashboard');
-    } catch (error) {
-      localStorage.removeItem('liorandb_token');
+      router.replace('/dashboard');
+    } catch {
       localStorage.removeItem('liorandb_uri');
-      addToast(`Connection failed: ${error}`, 'error');
+      localStorage.removeItem('liorandb_token');
+      localStorage.removeItem('liorandb_user');
     } finally {
       setIsLoading(false);
     }
   }
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-
-    const loginUri = showAdvanced
-      ? `lioran://${username}:${password}@${host}:${port}`
-      : uri;
-
-    if (!loginUri) {
-      addToast('Please enter a connection URI', 'warning');
-      return;
-    }
+  async function handleLogin(event: React.FormEvent) {
+    event.preventDefault();
 
     try {
       setIsLoading(true);
 
-      // Validate URI format
-      try {
-        parseConnectionUri(loginUri);
-      } catch (err) {
-        addToast(String(err), 'error');
-        return;
+      let session;
+
+      if (mode === 'uri') {
+        parseConnectionUri(uri);
+        session = await LioranDBService.initialize(uri, { mode: 'uri' });
+      } else if (mode === 'credentials') {
+        const baseUri = formatHttpUri(protocol, host, Number(port));
+        parseConnectionUri(baseUri);
+        session = await LioranDBService.initialize(baseUri, {
+          mode: 'credentials',
+          username,
+          password,
+        });
+        setUri(formatConnectionUri(username, password, host, Number(port)));
+      } else {
+        parseConnectionUri(tokenUri);
+        session = await LioranDBService.initialize(tokenUri, {
+          mode: 'token',
+          token,
+        });
       }
 
-      // Initialize client
-      await LioranDBService.initialize(loginUri);
-
-      // List databases to verify connection
       const databases = await LioranDBService.listDatabases();
 
-      // Store session (in a real app, you'd get a token from the server)
-      const token = `token_${Date.now()}`;
-
-      setLoggedIn(true, token, loginUri);
       useAppStore.setState({ databases });
+      setLoggedIn({
+        loggedIn: true,
+        token: session.token,
+        uri: session.uri,
+        user: session.user,
+      });
 
-      addToast('Connected successfully', 'success');
-      router.push('/dashboard');
+      addToast('Connected to LioranDB host', 'success');
+      router.replace('/dashboard');
     } catch (error) {
-      addToast(`Login failed: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Connection failed', 'error');
     } finally {
       setIsLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 flex items-center justify-center p-4">
-      {/* Background Effect */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl" />
-      </div>
-
-      {/* Login Card */}
-      <div className="relative w-full max-w-md">
-        <div className="bg-slate-900/80 backdrop-blur border border-slate-800 rounded-xl shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div className="px-8 pt-8 pb-6 border-b border-slate-800">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-cyan-400 rounded-lg flex items-center justify-center">
-                <span className="text-slate-900 font-bold text-lg">⚡</span>
-              </div>
-              <h1 className="text-2xl font-bold text-slate-100">LioranDB</h1>
+    <main className="relative min-h-screen overflow-auto p-4 md:p-8">
+      <div className="subtle-grid absolute inset-0 opacity-30" />
+      <div className="relative mx-auto grid min-h-[calc(100vh-2rem)] max-w-7xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="glass-panel animate-fade-up flex flex-col justify-between rounded-[32px] p-8 lg:p-12">
+          <div>
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
+              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+              LioranDB Studio Template
             </div>
-            <p className="text-slate-400 text-sm">Database Studio</p>
+            <h1 className="max-w-2xl text-4xl font-semibold leading-tight text-white md:text-6xl">
+              A sharper database cockpit for LioranDB.
+            </h1>
+            <p className="mt-5 max-w-xl text-base leading-7 text-[var(--muted)] md:text-lg">
+              Connect with the new <code className="rounded bg-white/5 px-2 py-1 font-mono text-sm">@liorandb/driver</code>,
+              authenticate cleanly, and browse collections from a workspace designed to feel closer to modern MongoDB tools.
+            </p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleLogin} className="px-8 py-8 space-y-6">
-            {!showAdvanced ? (
-              // Quick Connect
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Connection URI
-                </label>
-                <input
-                  type="text"
-                  value={uri}
-                  onChange={(e) => setUri(e.target.value)}
-                  placeholder="lioran://admin:password@localhost:4000"
-                  className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition"
-                  disabled={isLoading}
-                />
-              </div>
-            ) : (
-              // Advanced Connect
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition"
-                    disabled={isLoading}
-                  />
-                </div>
+          <div className="mt-10 grid gap-4 md:grid-cols-3">
+            <FeatureCard
+              icon={<KeyRound className="h-5 w-5 text-[var(--accent)]" />}
+              title="Real auth flow"
+              description="URI login, username/password, or existing JWT token reuse."
+            />
+            <FeatureCard
+              icon={<Database className="h-5 w-5 text-[var(--accent-secondary)]" />}
+              title="Explorer-first UX"
+              description="Browse databases, collections, document previews, and query results in one flow."
+            />
+            <FeatureCard
+              icon={<ShieldCheck className="h-5 w-5 text-[var(--warning)]" />}
+              title="Developer friendly"
+              description="Cleaner defaults, stronger validation, and faster onboarding to a running host."
+            />
+          </div>
+        </section>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition"
-                    disabled={isLoading}
-                  />
-                </div>
+        <section className="glass-panel-strong animate-fade-up rounded-[32px] p-6 md:p-8">
+          <div className="mb-6">
+            <h2 className="text-2xl font-semibold text-white">Connect to your host</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              Start with credentials for local development, use a <code className="font-mono">lioran://</code> URI for one-step login,
+              or attach an existing JWT for hosted sessions.
+            </p>
+          </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Host
-                    </label>
+          <div className="mb-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/8 bg-black/20 p-1">
+            {(['credentials', 'uri', 'token'] as LoginMode[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setMode(item)}
+                className={`rounded-xl px-3 py-2 text-sm transition ${
+                  mode === item
+                    ? 'bg-white text-slate-950'
+                    : 'text-[var(--muted)] hover:bg-white/6 hover:text-white'
+                }`}
+              >
+                {item === 'credentials' ? 'Credentials' : item === 'uri' ? 'URI' : 'Token'}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-5">
+            {mode === 'credentials' && (
+              <>
+                <div className="grid gap-4 sm:grid-cols-[120px_1fr_120px]">
+                  <Field label="Protocol">
+                    <select
+                      value={protocol}
+                      onChange={(event) => setProtocol(event.target.value as 'http' | 'https')}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-[var(--accent)]"
+                    >
+                      <option value="http">http</option>
+                      <option value="https">https</option>
+                    </select>
+                  </Field>
+                  <Field label="Host">
                     <input
-                      type="text"
                       value={host}
-                      onChange={(e) => setHost(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition"
-                      disabled={isLoading}
+                      onChange={(event) => setHost(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      placeholder="localhost"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Port
-                    </label>
+                  </Field>
+                  <Field label="Port">
                     <input
-                      type="text"
                       value={port}
-                      onChange={(e) => setPort(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition"
-                      disabled={isLoading}
+                      onChange={(event) => setPort(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      placeholder="4000"
                     />
-                  </div>
+                  </Field>
                 </div>
-              </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Username">
+                    <input
+                      value={username}
+                      onChange={(event) => setUsername(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      placeholder="admin"
+                    />
+                  </Field>
+                  <Field label="Password">
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      placeholder="password123"
+                    />
+                  </Field>
+                </div>
+              </>
             )}
 
-            {/* Toggle Advanced */}
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="text-sm text-emerald-400 hover:text-emerald-300 transition"
-              disabled={isLoading}
-            >
-              {showAdvanced ? '← Back to Quick Connect' : 'Advanced Options →'}
-            </button>
+            {mode === 'uri' && (
+              <Field label="Connection URI">
+                <input
+                  value={uri}
+                  onChange={(event) => setUri(event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                  placeholder="lioran://admin:password123@localhost:4000"
+                />
+              </Field>
+            )}
 
-            {/* Submit Button */}
+            {mode === 'token' && (
+              <>
+                <Field label="Base URL">
+                  <input
+                    value={tokenUri}
+                    onChange={(event) => setTokenUri(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                    placeholder="http://localhost:4000"
+                  />
+                </Field>
+                <Field label="JWT token">
+                  <textarea
+                    value={token}
+                    onChange={(event) => setToken(event.target.value)}
+                    className="min-h-32 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                    placeholder="eyJhbGciOi..."
+                  />
+                </Field>
+              </>
+            )}
+
             <button
               type="submit"
-              disabled={isLoading || (!showAdvanced && !uri) || (showAdvanced && !password)}
-              className="w-full bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-semibold py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={
+                isLoading ||
+                (mode === 'credentials' && (!host || !port || !username || !password)) ||
+                (mode === 'uri' && !uri) ||
+                (mode === 'token' && (!tokenUri || !token))
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,var(--accent),var(--accent-secondary))] px-4 py-3 font-medium text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isLoading ? 'Connecting...' : 'Connect to LioranDB'}
+              <span>{isLoading ? 'Connecting...' : 'Open Studio'}</span>
+              <ArrowRight className="h-4 w-4" />
             </button>
           </form>
 
-          {/* Footer */}
-          <div className="px-8 py-6 bg-slate-800/30 border-t border-slate-800">
-            <p className="text-xs text-slate-400 text-center">
-              Default: <code className="bg-slate-900 px-2 py-1 rounded">lioran://admin:password@localhost:4000</code>
-            </p>
+          <div className="mt-6 rounded-2xl border border-white/8 bg-black/20 p-4 text-sm text-[var(--muted)]">
+            First-time host setup:
+            <div className="mt-2 rounded-xl bg-black/30 p-3 font-mono text-xs text-slate-200">
+              ldb-cli 'admin.create("admin","password123")'
+            </div>
           </div>
-        </div>
-
-        {/* Beta Badge */}
-        <div className="absolute -top-3 right-4 bg-amber-500 text-slate-900 px-3 py-1 rounded-full text-xs font-semibold">
-          BETA
-        </div>
+        </section>
       </div>
+    </main>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function FeatureCard({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-white/8 bg-black/20 p-5">
+      <div className="mb-4 inline-flex rounded-2xl border border-white/10 bg-white/5 p-3">{icon}</div>
+      <h3 className="text-base font-semibold text-white">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{description}</p>
     </div>
   );
 }

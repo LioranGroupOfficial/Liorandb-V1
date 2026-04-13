@@ -1,62 +1,63 @@
 export interface ConnectionConfig {
   uri: string;
-  username: string;
+  username?: string;
   host: string;
   port: number;
+  protocol: 'http' | 'https' | 'lioran';
+}
+
+export interface LioranUser {
+  id: string;
+  username: string;
 }
 
 export interface AuthState {
   isLoggedIn: boolean;
   token: string | null;
   connectionUri: string | null;
+  user: LioranUser | null;
   error: string | null;
   isLoading: boolean;
 }
 
 export interface Database {
   name: string;
-  sizeOnDisk?: number;
-  empty?: boolean;
+  collections?: number;
+  documents?: number;
 }
 
 export interface Collection {
   name: string;
-  type?: string;
   count?: number;
 }
 
 export interface Document {
-  _id?: string | Record<string, any>;
-  [key: string]: any;
+  _id?: string | Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface StoredDocument extends Document {
-  _id: string | Record<string, any>;
+  _id: string | Record<string, unknown>;
 }
 
 export interface QueryResult {
   data: Document[];
   count: number;
   executionTime: number;
+  filter: Record<string, unknown>;
 }
 
 export interface StoreState {
-  // Auth
   isLoggedIn: boolean;
   token: string | null;
   connectionUri: string | null;
-  
-  // Navigation
+  user: LioranUser | null;
   currentDatabase: string | null;
   selectedCollection: string | null;
-  
-  // Data
   databases: Database[];
   collections: Record<string, Collection[]>;
   documents: Document[];
   queryResults: QueryResult | null;
-  
-  // UI State
   isLoading: boolean;
   error: string | null;
   successMessage: string | null;

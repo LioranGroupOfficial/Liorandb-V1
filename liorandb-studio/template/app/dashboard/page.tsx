@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { DatabaseZap, FolderPlus, Plus, TableProperties } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
 import { Sidebar } from '@/components/Sidebar';
@@ -15,7 +16,6 @@ import { Document } from '@/types';
 export default function DashboardPage() {
   const router = useRouter();
   const { addToast } = useToast();
-
   const {
     isLoggedIn,
     currentDatabase,
@@ -27,40 +27,39 @@ export default function DashboardPage() {
     setCollections,
   } = useAppStore();
 
-  // Modal states
   const [createDbModal, setCreateDbModal] = useState(false);
   const [createColModal, setCreateColModal] = useState(false);
   const [addDocModal, setAddDocModal] = useState(false);
   const [editDocModal, setEditDocModal] = useState(false);
   const [editingDoc, setEditingDoc] = useState<Document | null>(null);
 
-  // Check authentication
   useEffect(() => {
     if (!isLoggedIn) {
-      router.push('/login');
+      router.replace('/login');
     }
   }, [isLoggedIn, router]);
 
-  // Load databases on mount
   useEffect(() => {
     if (isLoggedIn) {
-      loadDatabases();
+      void loadDatabases();
     }
   }, [isLoggedIn]);
 
-  // Load collections when database changes
   useEffect(() => {
     if (currentDatabase) {
-      loadCollections(currentDatabase);
+      void loadCollections(currentDatabase);
     }
   }, [currentDatabase]);
 
   async function loadDatabases() {
     try {
+      useAppStore.getState().setLoading(true);
       const databases = await LioranDBService.listDatabases();
       setDatabases(databases);
     } catch (error) {
-      addToast(`Error loading databases: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Failed to load databases', 'error');
+    } finally {
+      useAppStore.getState().setLoading(false);
     }
   }
 
@@ -69,66 +68,62 @@ export default function DashboardPage() {
       const collections = await LioranDBService.listCollections(dbName);
       setCollections(dbName, collections);
     } catch (error) {
-      addToast(`Error loading collections: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Failed to load collections', 'error');
     }
   }
 
   async function handleCreateDatabase(name: string) {
-    try {
-      await LioranDBService.createDatabase(name);
-      await loadDatabases();
-      setCurrentDatabase(name);
-      addToast(`Database "${name}" created`, 'success');
-    } catch (error) {
-      addToast(`Error creating database: ${error}`, 'error');
-    }
+    await LioranDBService.createDatabase(name);
+    await loadDatabases();
+    setCurrentDatabase(name);
+    addToast(`Database "${name}" created`, 'success');
   }
 
   async function handleCreateCollection(name: string) {
     if (!currentDatabase) return;
-    try {
-      await LioranDBService.createCollection(currentDatabase, name);
-      await loadCollections(currentDatabase);
-      setSelectedCollection(name);
-      addToast(`Collection "${name}" created`, 'success');
-    } catch (error) {
-      addToast(`Error creating collection: ${error}`, 'error');
-    }
+
+    await LioranDBService.createCollection(currentDatabase, name);
+    await loadCollections(currentDatabase);
+    setSelectedCollection(name);
+    addToast(`Collection "${name}" created`, 'success');
   }
 
-  async function handleAddDocument(doc: Record<string, any>) {
+  async function handleAddDocument(doc: Record<string, unknown>) {
     if (!currentDatabase || !selectedCollection) return;
-    try {
-      await LioranDBService.insertOne(currentDatabase, selectedCollection, doc);
-      addToast('Document added', 'success');
-      setAddDocModal(false);
-      // Reload documents
-      const docViewer = document.querySelector('[data-reload-documents]');
-      if (docViewer) {
-        const event = new CustomEvent('reload');
-        docViewer.dispatchEvent(event);
-      }
-    } catch (error) {
-      addToast(`Error adding document: ${error}`, 'error');
-    }
+
+    await LioranDBService.insertOne(currentDatabase, selectedCollection, doc);
+    addToast('Document inserted', 'success');
+    setAddDocModal(false);
+    window.dispatchEvent(new CustomEvent('liorandb:reload-documents'));
   }
 
-  async function handleLogout() {
-    if (confirm('Are you sure you want to logout?')) {
-      logout();
-      LioranDBService.disconnect();
-      router.push('/login');
-    }
+  async function handleEditDocument(doc: Record<string, unknown>) {
+    if (!currentDatabase || !selectedCollection || !editingDoc) return;
+
+    await LioranDBService.updateMany(
+      currentDatabase,
+      selectedCollection,
+      { _id: editingDoc._id },
+      { $set: doc }
+    );
+
+    addToast('Document updated', 'success');
+    setEditDocModal(false);
+    setEditingDoc(null);
+    window.dispatchEvent(new CustomEvent('liorandb:reload-documents'));
+  }
+
+  function handleLogout() {
+    logout();
+    LioranDBService.disconnect();
+    router.replace('/login');
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-950">
-      {/* Navbar */}
+    <div className="flex h-screen flex-col overflow-hidden px-3 py-3 md:px-4">
       <Navbar onLogout={handleLogout} />
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
+      <div className="mt-3 flex min-h-0 flex-1 gap-3">
         <Sidebar
           onDatabaseSelect={setCurrentDatabase}
           onCollectionSelect={(db, col) => {
@@ -139,55 +134,44 @@ export default function DashboardPage() {
           onCreateCollection={() => setCreateColModal(true)}
         />
 
-        {/* Workspace */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <main className="min-h-0 flex-1">
           {!currentDatabase ? (
-            // Empty State
-            <div className="flex-1 flex items-center justify-center text-slate-400">
-              <div className="text-center">
-                <div className="text-4xl mb-4">📦</div>
-                <p className="text-lg">No database selected</p>
-                <p className="text-sm text-slate-500">Create or select a database to get started</p>
-              </div>
-            </div>
+            <EmptyState
+              icon={<DatabaseZap className="h-10 w-10 text-[var(--accent)]" />}
+              title="Start with a database"
+              description="Create a database on the left and the studio will build the rest of the workspace around it."
+              actionLabel="Create database"
+              onAction={() => setCreateDbModal(true)}
+            />
           ) : !selectedCollection ? (
-            // Collection Selection State
-            <div className="flex-1 flex items-center justify-center text-slate-400">
-              <div className="text-center">
-                <div className="text-4xl mb-4">📚</div>
-                <p className="text-lg">No collection selected</p>
-                <p className="text-sm text-slate-500">Select or create a collection to view documents</p>
-              </div>
-            </div>
+            <EmptyState
+              icon={<TableProperties className="h-10 w-10 text-[var(--accent-secondary)]" />}
+              title={`Inside ${currentDatabase}`}
+              description="Pick a collection from the explorer or create a new one to inspect documents and run filters."
+              actionLabel="Create collection"
+              onAction={() => setCreateColModal(true)}
+            />
           ) : (
-            // Two Panel Layout
-            <div className="flex-1 flex overflow-hidden gap-4 p-4 bg-slate-900">
-              {/* Left: Document Viewer */}
-              <div className="flex-1 bg-slate-950 rounded-lg border border-slate-800 overflow-hidden flex flex-col">
-                <DocumentViewer
-                  onAddDocument={() => setAddDocModal(true)}
-                  onEditDocument={(doc) => {
-                    setEditingDoc(doc);
-                    setEditDocModal(true);
-                  }}
-                />
-              </div>
-
-              {/* Right: Query Editor */}
-              <div className="w-96 bg-slate-950 rounded-lg border border-slate-800 overflow-hidden">
-                <QueryEditor />
-              </div>
+            <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_400px]">
+              <DocumentViewer
+                onAddDocument={() => setAddDocModal(true)}
+                onEditDocument={(doc) => {
+                  setEditingDoc(doc);
+                  setEditDocModal(true);
+                }}
+              />
+              <QueryEditor />
             </div>
           )}
-        </div>
+        </main>
       </div>
 
-      {/* Modals */}
       <InputModal
         isOpen={createDbModal}
         title="Create Database"
-        label="Database Name"
-        placeholder="mydb"
+        label="Database name"
+        placeholder="app"
+        confirmText="Create database"
         onClose={() => setCreateDbModal(false)}
         onConfirm={handleCreateDatabase}
       />
@@ -195,16 +179,18 @@ export default function DashboardPage() {
       <InputModal
         isOpen={createColModal}
         title="Create Collection"
-        label="Collection Name"
+        label="Collection name"
         placeholder="users"
+        confirmText="Create collection"
         onClose={() => setCreateColModal(false)}
         onConfirm={handleCreateCollection}
       />
 
       <JsonInputModal
         isOpen={addDocModal}
-        title="Add Document"
-        defaultValue='{}'
+        title="Insert Document"
+        defaultValue={'{\n  "name": "Ada Lovelace"\n}'}
+        confirmText="Insert document"
         onClose={() => setAddDocModal(false)}
         onConfirm={handleAddDocument}
       />
@@ -213,28 +199,46 @@ export default function DashboardPage() {
         isOpen={editDocModal}
         title="Edit Document"
         defaultValue={editingDoc ? JSON.stringify(editingDoc, null, 2) : '{}'}
+        confirmText="Save changes"
         onClose={() => {
           setEditDocModal(false);
           setEditingDoc(null);
         }}
-        onConfirm={async (doc) => {
-          if (!currentDatabase || !selectedCollection || !editingDoc) return;
-          try {
-            const _id = editingDoc._id;
-            await LioranDBService.updateMany(
-              currentDatabase,
-              selectedCollection,
-              { _id },
-              { $set: doc }
-            );
-            addToast('Document updated', 'success');
-            setEditDocModal(false);
-            setEditingDoc(null);
-          } catch (error) {
-            addToast(`Error updating document: ${error}`, 'error');
-          }
-        }}
+        onConfirm={handleEditDocument}
       />
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="glass-panel flex h-full items-center justify-center rounded-[28px] p-6">
+      <div className="max-w-xl text-center">
+        <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-[28px] border border-white/10 bg-white/5">
+          {icon}
+        </div>
+        <h2 className="text-3xl font-semibold text-white">{title}</h2>
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)] md:text-base">{description}</p>
+        <button
+          onClick={onAction}
+          className="mt-6 inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-medium text-white transition hover:border-white/20 hover:bg-white/10"
+        >
+          {actionLabel.includes('database') ? <FolderPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          {actionLabel}
+        </button>
+      </div>
     </div>
   );
 }

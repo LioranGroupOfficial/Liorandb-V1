@@ -1,169 +1,198 @@
 import { LioranClient } from '@liorandb/driver';
-import { Database, Collection, Document } from '@/types';
+import { Collection, Database, Document, LioranUser } from '@/types';
+import { parseConnectionUri } from '@/lib/utils';
 
-let clientInstance: LioranClient | null = null;
+type InitializeOptions =
+  | { mode: 'uri' }
+  | { mode: 'credentials'; username: string; password: string }
+  | { mode: 'token'; token: string };
+
+interface SessionSnapshot {
+  token: string | null;
+  user: LioranUser | null;
+  uri: string | null;
+}
 
 export class LioranDBService {
   private static client: LioranClient | null = null;
+  private static session: SessionSnapshot = {
+    token: null,
+    user: null,
+    uri: null,
+  };
 
-  static async initialize(uri: string): Promise<void> {
-    try {
-      this.client = new LioranClient(uri);
+  static async initialize(uri: string, options: InitializeOptions = { mode: 'uri' }): Promise<SessionSnapshot> {
+    const parsed = parseConnectionUri(uri);
+    const normalizedUri = parsed.uri;
+
+    this.client = new LioranClient(normalizedUri);
+
+    if (options.mode === 'credentials') {
+      await this.client.login(options.username, options.password);
+    } else if (options.mode === 'token') {
+      this.client.setToken(options.token);
+    } else if (parsed.protocol === 'lioran') {
       await this.client.connect();
-    } catch (error) {
-      throw new Error(`Failed to connect to LioranDB: ${error}`);
+    } else {
+      throw new Error(
+        'An http(s) URI needs either a username/password login or an existing token.'
+      );
     }
+
+    this.session = {
+      token: this.client.getToken(),
+      user: (this.client.getUser() as LioranUser | null) ?? null,
+      uri: normalizedUri,
+    };
+
+    return this.session;
+  }
+
+  static async restore(uri: string, token: string): Promise<SessionSnapshot> {
+    return this.initialize(uri, { mode: 'token', token });
   }
 
   static isConnected(): boolean {
-    return this.client !== null;
+    return Boolean(this.client?.isAuthenticated());
   }
 
   static getClient(): LioranClient | null {
     return this.client;
   }
 
-  static disconnect(): void {
-    this.client = null;
+  static getSession(): SessionSnapshot {
+    return this.session;
   }
 
-  // Database Operations
+  static disconnect(): void {
+    this.client?.logout();
+    this.client = null;
+    this.session = {
+      token: null,
+      user: null,
+      uri: null,
+    };
+  }
+
+  static async getHostInfo() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.info();
+  }
+
+  static async getHealth() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.health();
+  }
+
   static async listDatabases(): Promise<Database[]> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const dbs = await this.client.listDatabases();
-      return ((dbs as unknown) as string[]).map(name => ({ name }));
-    } catch (error) {
-      throw new Error(`Failed to list databases: ${error}`);
-    }
+
+    const dbs = await this.client.listDatabases();
+    const stats = await Promise.allSettled(
+      dbs.map(async (name) => this.client!.databaseStats(name))
+    );
+
+    return dbs.map((name, index) => {
+      const stat = stats[index];
+
+      if (stat.status === 'fulfilled') {
+        return {
+          name,
+          collections: stat.value.collections,
+          documents: stat.value.documents,
+        };
+      }
+
+      return { name };
+    });
   }
 
   static async createDatabase(name: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      await this.client.createDatabase(name);
-    } catch (error) {
-      throw new Error(`Failed to create database: ${error}`);
-    }
+    await this.client.createDatabase(name);
   }
 
   static async dropDatabase(name: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      await this.client.dropDatabase(name);
-    } catch (error) {
-      throw new Error(`Failed to drop database: ${error}`);
-    }
+    await this.client.dropDatabase(name);
   }
 
   static async renameDatabase(oldName: string, newName: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      await this.client.renameDatabase(oldName, newName);
-    } catch (error) {
-      throw new Error(`Failed to rename database: ${error}`);
-    }
+    await this.client.renameDatabase(oldName, newName);
   }
 
-  // Collection Operations
   static async listCollections(dbName: string): Promise<Collection[]> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collections = await db.listCollections();
-      return ((collections as unknown) as string[]).map(name => ({ name }));
-    } catch (error) {
-      throw new Error(`Failed to list collections: ${error}`);
-    }
+
+    const db = this.client.db(dbName);
+    const collections = await db.listCollections();
+    const stats = await Promise.allSettled(
+      collections.map(async (name) => db.collection(name).stats())
+    );
+
+    return collections.map((name, index) => {
+      const stat = stats[index];
+
+      if (stat.status === 'fulfilled') {
+        return { name, count: stat.value.documents };
+      }
+
+      return { name };
+    });
   }
 
   static async createCollection(dbName: string, name: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      await db.createCollection(name);
-    } catch (error) {
-      throw new Error(`Failed to create collection: ${error}`);
-    }
+    await this.client.db(dbName).createCollection(name);
   }
 
   static async dropCollection(dbName: string, name: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      await db.dropCollection(name);
-    } catch (error) {
-      throw new Error(`Failed to drop collection: ${error}`);
-    }
+    await this.client.db(dbName).dropCollection(name);
   }
 
-  static async renameCollection(
-    dbName: string,
-    oldName: string,
-    newName: string
-  ): Promise<void> {
+  static async renameCollection(dbName: string, oldName: string, newName: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      await db.renameCollection(oldName, newName);
-    } catch (error) {
-      throw new Error(`Failed to rename collection: ${error}`);
-    }
+    await this.client.db(dbName).renameCollection(oldName, newName);
   }
 
-  // Document Operations
   static async find(
     dbName: string,
     collectionName: string,
-    filter?: Record<string, any>,
-    limit: number = 100
+    filter: Record<string, unknown> = {},
+    limit = 100
   ): Promise<{ documents: Document[]; count: number }> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const documents = await collection.find(filter || {});
-      return {
-        documents: ((documents as unknown) as Document[]).slice(0, limit),
-        count: documents.length,
-      };
-    } catch (error) {
-      throw new Error(`Failed to find documents: ${error}`);
-    }
+
+    const collection = this.client.db(dbName).collection<Document>(collectionName);
+    const documents = await collection.find(filter);
+
+    return {
+      documents: documents.slice(0, limit),
+      count: documents.length,
+    };
   }
 
   static async findOne(
     dbName: string,
     collectionName: string,
-    filter: Record<string, any>
+    filter: Record<string, unknown>
   ): Promise<Document | null> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const doc = await collection.findOne(filter);
-      return ((doc as unknown) as Document) || null;
-    } catch (error) {
-      throw new Error(`Failed to find document: ${error}`);
-    }
+
+    return this.client.db(dbName).collection<Document>(collectionName).findOne(filter);
   }
 
   static async insertOne(
     dbName: string,
     collectionName: string,
     doc: Document
-  ): Promise<string> {
+  ): Promise<string | undefined> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const { _id, ...docData } = doc;
-      const docToInsert = { ...docData, ...(typeof _id === 'string' || _id === undefined ? { _id } : {}) };
-      const result = await collection.insertOne(docToInsert as any);
-      return result as unknown as string;
-    } catch (error) {
-      throw new Error(`Failed to insert document: ${error}`);
-    }
+
+    const inserted = await this.client.db(dbName).collection<Document>(collectionName).insertOne(doc);
+    return inserted._id as string | undefined;
   }
 
   static async insertMany(
@@ -172,81 +201,61 @@ export class LioranDBService {
     docs: Document[]
   ): Promise<string[]> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const cleanedDocs = docs.map(({ _id, ...docData }) => ({
-        ...docData,
-        ...(typeof _id === 'string' || _id === undefined ? { _id } : {})
-      }));
-      const result = await collection.insertMany(cleanedDocs as any);
-      return result as unknown as string[];
-    } catch (error) {
-      throw new Error(`Failed to insert documents: ${error}`);
-    }
+
+    const inserted = await this.client.db(dbName).collection<Document>(collectionName).insertMany(docs);
+    return inserted
+      .map((doc) => doc._id)
+      .filter((value): value is string => typeof value === 'string');
   }
 
   static async updateMany(
     dbName: string,
     collectionName: string,
-    filter: Record<string, any>,
-    update: Record<string, any>
+    filter: Record<string, unknown>,
+    update: Record<string, unknown>
   ): Promise<number> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const result = await collection.updateMany(filter, update);
-      return result as unknown as number;
-    } catch (error) {
-      throw new Error(`Failed to update documents: ${error}`);
-    }
+
+    const result = await this.client
+      .db(dbName)
+      .collection<Document>(collectionName)
+      .updateMany(filter, update);
+
+    return result.updated;
   }
 
   static async deleteMany(
     dbName: string,
     collectionName: string,
-    filter: Record<string, any>
+    filter: Record<string, unknown>
   ): Promise<number> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const result = await collection.deleteMany(filter);
-      return result as unknown as number;
-    } catch (error) {
-      throw new Error(`Failed to delete documents: ${error}`);
-    }
+
+    const result = await this.client
+      .db(dbName)
+      .collection<Document>(collectionName)
+      .deleteMany(filter);
+
+    return result.deleted;
   }
 
   static async count(
     dbName: string,
     collectionName: string,
-    filter?: Record<string, any>
+    filter: Record<string, unknown> = {}
   ): Promise<number> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const count = await collection.count(filter || {});
-      return count as unknown as number;
-    } catch (error) {
-      throw new Error(`Failed to count documents: ${error}`);
-    }
+
+    return this.client.db(dbName).collection<Document>(collectionName).count(filter);
   }
 
-  static async stats(
-    dbName: string,
-    collectionName: string
-  ): Promise<Record<string, any>> {
+  static async stats(dbName: string, collectionName: string): Promise<Record<string, unknown>> {
     if (!this.client) throw new Error('Client not connected');
-    try {
-      const db = this.client.db(dbName);
-      const collection = db.collection(collectionName);
-      const stats = await collection.stats();
-      return stats as Record<string, any>;
-    } catch (error) {
-      throw new Error(`Failed to get collection stats: ${error}`);
-    }
+    return this.client.db(dbName).collection(collectionName).stats();
+  }
+
+  static async databaseStats(dbName: string): Promise<Record<string, unknown>> {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.databaseStats(dbName);
   }
 }
