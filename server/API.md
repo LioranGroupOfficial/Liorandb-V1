@@ -1,35 +1,41 @@
-# LioranDB Host API Documentation
+# LioranDB Host API
 
 Base URL: `http://<host>:4000`
 
-All endpoints (except health and auth) require **JWT authentication** using:
+All endpoints except `/` and `/health` require JSON requests. All routes except `/health`, `/`, and `/auth/*` require a JWT bearer token:
 
-```
+```http
 Authorization: Bearer <token>
 ```
 
----
+## Startup Requirement
 
-## Health & Root
+The server will not start until at least one admin user exists in the auth database.
 
-### GET /health
+Create the first admin with the CLI before starting the host:
 
-Check server health.
+```bash
+ldb-cli 'admin.create("admin","password123")'
+```
 
-**Response**
+After that, start the server and use `/auth/login` to obtain a token. `POST /auth/register` is still available, but it cannot be used to create the very first user because the host refuses to boot without one.
+
+## Health
+
+### `GET /health`
+
+Response:
 
 ```json
 {
   "ok": true,
-  "time": "2026-02-07T10:20:30.000Z"
+  "time": "2026-04-13T12:00:00.000Z"
 }
 ```
 
-### GET /
+### `GET /`
 
-Host info.
-
-**Response**
+Response:
 
 ```json
 {
@@ -39,15 +45,45 @@ Host info.
 }
 ```
 
----
-
 ## Authentication
 
-### POST /auth/register
+### `POST /auth/register`
 
-Create a new user.
+Create another user account.
 
-**Body**
+Body:
+
+```json
+{
+  "username": "editor",
+  "password": "password123"
+}
+```
+
+Success response:
+
+```json
+{
+  "user": {
+    "id": "<user_id>",
+    "username": "editor"
+  },
+  "token": "<jwt_token>"
+}
+```
+
+Possible errors:
+
+```json
+{ "error": "username and password required" }
+{ "error": "invalid types" }
+{ "error": "password must be at least 6 characters" }
+{ "error": "username already exists" }
+```
+
+### `POST /auth/login`
+
+Body:
 
 ```json
 {
@@ -56,7 +92,7 @@ Create a new user.
 }
 ```
 
-**Response**
+Success response:
 
 ```json
 {
@@ -68,194 +104,185 @@ Create a new user.
 }
 ```
 
----
-
-### POST /auth/login
-
-Login existing user.
-
-**Body**
+Possible errors:
 
 ```json
-{
-  "username": "admin",
-  "password": "password123"
-}
+{ "error": "username and password required" }
+{ "error": "invalid credentials" }
 ```
-
-**Response**
-
-```json
-{
-  "user": {
-    "id": "<user_id>",
-    "username": "admin"
-  },
-  "token": "<jwt_token>"
-}
-```
-
----
 
 ## Databases
 
-All database routes require authentication.
+### `GET /databases`
 
-### GET /databases
+List database directories, excluding the internal auth database.
 
-List all databases.
-
-**Response**
+Response:
 
 ```json
 {
-  "databases": ["db1", "db2"]
+  "databases": ["app", "analytics"]
 }
 ```
 
----
+### `POST /databases`
 
-### POST /databases
-
-Create a database.
-
-**Body**
+Body:
 
 ```json
 {
-  "name": "mydb"
+  "name": "app"
 }
 ```
 
-**Response**
-
-```json
-{ "ok": true, "db": "mydb" }
-```
-
----
-
-### DELETE /databases/:db
-
-Delete database.
-
-**Response**
-
-```json
-{ "ok": true }
-```
-
----
-
-### PATCH /databases/:db/rename
-
-Rename database.
-
-**Body**
+Success response:
 
 ```json
 {
-  "newName": "newdb"
+  "ok": true,
+  "db": "app"
 }
 ```
 
-**Response**
+Validation errors return `400`, for example:
 
 ```json
-{ "ok": true, "old": "mydb", "new": "newdb" }
+{ "error": "database name required" }
+{ "error": "invalid database name" }
 ```
 
----
+### `DELETE /databases/:db`
 
-### GET /databases/:db/stats
-
-Get database statistics.
-
-**Response**
+Success response:
 
 ```json
 {
-  "name": "mydb",
-  "collections": 3,
+  "ok": true
+}
+```
+
+If the database does not exist:
+
+```json
+{
+  "ok": false
+}
+```
+
+### `PATCH /databases/:db/rename`
+
+Body:
+
+```json
+{
+  "newName": "app_v2"
+}
+```
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "old": "app",
+  "new": "app_v2"
+}
+```
+
+Possible `400` errors include:
+
+```json
+{ "error": "newName required" }
+{ "error": "database not found" }
+{ "error": "target database already exists" }
+```
+
+### `GET /databases/:db/stats`
+
+Response:
+
+```json
+{
+  "name": "app",
+  "collections": 2,
   "documents": 154
 }
 ```
 
----
-
 ## Collections
 
-Base Path:
+Base path: `/db/:db/collections`
 
-```
-/db/:db/collections
-```
+### `GET /db/:db/collections`
 
-### GET /
-
-List collections.
-
-**Response**
+Response:
 
 ```json
-{ "collections": ["users", "posts"] }
+{
+  "collections": ["users", "posts"]
+}
 ```
 
----
+### `POST /db/:db/collections`
 
-### POST /
-
-Create collection.
-
-**Body**
+Body:
 
 ```json
-{ "name": "users" }
+{
+  "name": "users"
+}
 ```
 
-**Response**
+Success response:
 
 ```json
-{ "ok": true }
+{
+  "ok": true,
+  "collection": "users"
+}
 ```
 
----
+### `DELETE /db/:db/collections/:col`
 
-### DELETE /:col
-
-Delete collection.
-
-**Response**
+Success response:
 
 ```json
-{ "ok": true }
+{
+  "ok": true
+}
 ```
 
----
-
-### PATCH /:col/rename
-
-Rename collection.
-
-**Body**
+If the collection does not exist:
 
 ```json
-{ "newName": "customers" }
+{
+  "ok": false
+}
 ```
 
-**Response**
+### `PATCH /db/:db/collections/:col/rename`
+
+Body:
 
 ```json
-{ "ok": true, "old": "users", "new": "customers" }
+{
+  "newName": "customers"
+}
 ```
 
----
+Success response:
 
-### GET /:col/stats
+```json
+{
+  "ok": true,
+  "old": "users",
+  "new": "customers"
+}
+```
 
-Collection statistics.
+### `GET /db/:db/collections/:col/stats`
 
-**Response**
+Response:
 
 ```json
 {
@@ -264,23 +291,15 @@ Collection statistics.
 }
 ```
 
----
-
 ## Documents
 
-Base Path:
+Base path: `/db/:db/collections/:col`
 
-```
-/db/:db/collections/:col
-```
+### `POST /db/:db/collections/:col`
 
----
+Insert one document.
 
-### POST /
-
-Insert single document.
-
-**Body**
+Body:
 
 ```json
 {
@@ -289,19 +308,24 @@ Insert single document.
 }
 ```
 
-**Response**
+Response:
 
 ```json
-{ "ok": true, "doc": { ... } }
+{
+  "ok": true,
+  "doc": {
+    "_id": "<generated_id>",
+    "name": "John",
+    "age": 20
+  }
+}
 ```
 
----
-
-### POST /bulk
+### `POST /db/:db/collections/:col/bulk`
 
 Insert multiple documents.
 
-**Body**
+Body:
 
 ```json
 {
@@ -312,37 +336,43 @@ Insert multiple documents.
 }
 ```
 
-**Response**
+Response:
 
 ```json
-{ "ok": true, "docs": [ ... ] }
+{
+  "ok": true,
+  "docs": [
+    { "_id": "<id1>", "name": "A" },
+    { "_id": "<id2>", "name": "B" }
+  ]
+}
 ```
 
----
+### `POST /db/:db/collections/:col/find`
 
-### POST /find
-
-Find documents.
-
-**Body**
+Body:
 
 ```json
-{ "query": { "age": { "$gt": 18 } } }
+{
+  "query": {
+    "age": { "$gt": 18 }
+  }
+}
 ```
 
-**Response**
+Response:
 
 ```json
-{ "results": [ ... ] }
+{
+  "results": [
+    { "_id": "<id>", "name": "John", "age": 20 }
+  ]
+}
 ```
 
----
+### `PATCH /db/:db/collections/:col/updateMany`
 
-### PATCH /updateMany
-
-Update documents.
-
-**Body**
+Body:
 
 ```json
 {
@@ -351,81 +381,63 @@ Update documents.
 }
 ```
 
-**Response**
+Response:
 
 ```json
-{ "updated": 3 }
+{
+  "updated": 3
+}
 ```
 
----
+### `POST /db/:db/collections/:col/deleteMany`
 
-### POST /deleteMany
-
-Delete documents.
-
-**Body**
+Body:
 
 ```json
-{ "filter": { "inactive": true } }
+{
+  "filter": { "inactive": true }
+}
 ```
 
-**Response**
+Response:
 
 ```json
-{ "deleted": 5 }
+{
+  "deleted": 5
+}
 ```
 
----
+### `POST /db/:db/collections/:col/count`
 
-### POST /count
-
-Count documents.
-
-**Body**
+Body:
 
 ```json
-{ "filter": { "active": true } }
+{
+  "filter": { "active": true }
+}
 ```
 
-**Response**
+Response:
 
 ```json
-{ "count": 100 }
+{
+  "count": 100
+}
 ```
 
----
+## Auth Flow
 
-## Authentication Flow
-
-1. Register or login to obtain JWT token
-2. Send token in headers for all protected routes
-
-```
-Authorization: Bearer <token>
-```
-
----
+1. Create the first admin with `ldb-cli`.
+2. Start the server.
+3. Call `POST /auth/login`.
+4. Send the returned token in the `Authorization` header for protected routes.
 
 ## Status Codes
 
-| Code | Meaning      |
-| ---- | ------------ |
-| 200  | Success      |
-| 400  | Bad request  |
-| 401  | Unauthorized |
-| 409  | Conflict     |
-| 500  | Server error |
-
----
-
-## Example CURL
-
-```bash
-curl -X POST http://localhost:4000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"123456"}'
-```
-
----
-
-**LioranDB Host – Lightweight Database Hosting API**
+| Code | Meaning |
+| --- | --- |
+| `200` | Success |
+| `400` | Bad request or validation failure |
+| `401` | Unauthorized |
+| `409` | Conflict |
+| `500` | Server error |

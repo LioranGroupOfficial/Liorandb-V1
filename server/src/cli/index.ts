@@ -107,6 +107,45 @@ function safeParse(obj: string) {
   }
 }
 
+function parseCall(action: string) {
+  const match = action.trim().match(/^([a-zA-Z][\w.]*)\(([\s\S]*)\)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    name: match[1],
+    rawArgs: match[2].trim()
+  };
+}
+
+function parseSingleArg(rawArgs: string) {
+  if (!rawArgs) {
+    return {};
+  }
+
+  return safeParse(rawArgs);
+}
+
+function parseTupleArgs(rawArgs: string) {
+  if (!rawArgs) {
+    return [];
+  }
+
+  const parsed = safeParse(`[${rawArgs}]`);
+  return Array.isArray(parsed) ? parsed : null;
+}
+
+function parseNameTuple(rawArgs: string) {
+  const values = rawArgs
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => value.replace(/^["']|["']$/g, ""));
+
+  return values;
+}
+
 async function handleUserCommand(cmd: string) {
   const users = await getAuthCollection();
 
@@ -165,51 +204,105 @@ async function handleUserCommand(cmd: string) {
 async function runCollectionCommand(colName: string, action: string) {
   const db = await manager.db(currentDB);
   const col = db.collection<any>(colName);
-
-  if (action.startsWith("insertMany")) {
-    const data = JSON.parse(action.match(/^insertMany\((.*)\)$/)![1]);
-    return console.log(util.inspect(await col.insertMany(data), false, 10, true));
+  const parsedCall = parseCall(action);
+  if (!parsedCall) {
+    return console.error("Invalid syntax");
   }
 
-  if (action.startsWith("insert")) {
-    const data = JSON.parse(action.match(/^insert\((.*)\)$/)![1]);
+  const { name, rawArgs } = parsedCall;
+
+  if (name === "insert" || name === "insertOne") {
+    const data = parseSingleArg(rawArgs);
+    if (data == null || Array.isArray(data)) {
+      return console.error("Invalid syntax");
+    }
     return console.log(util.inspect(await col.insertOne(data), false, 10, true));
   }
 
-  if (action.startsWith("findOne")) {
-    const query = safeParse(action.slice(8));
-    return console.log(util.inspect(await col.findOne(query || {}), false, 10, true));
+  if (name === "insertMany") {
+    const data = parseSingleArg(rawArgs);
+    if (!Array.isArray(data)) {
+      return console.error("insertMany expects an array");
+    }
+    return console.log(util.inspect(await col.insertMany(data), false, 10, true));
   }
 
-  if (action.startsWith("find")) {
-    const query = safeParse(action.slice(4));
-    return console.log(util.inspect(await col.find(query || {}), false, 10, true));
+  if (name === "find") {
+    const query = parseSingleArg(rawArgs);
+    if (query == null) {
+      return console.error("Invalid syntax");
+    }
+    return console.log(util.inspect(await col.find(query), false, 10, true));
   }
 
-  if (action.startsWith("updateMany")) {
-    const args = safeParse(`[${action.match(/^updateMany\((.*)\)$/)![1]}]`);
-    return console.log(util.inspect(await col.updateMany(args[0], args[1]), false, 10, true));
+  if (name === "findOne") {
+    const query = parseSingleArg(rawArgs);
+    if (query == null) {
+      return console.error("Invalid syntax");
+    }
+    return console.log(util.inspect(await col.findOne(query), false, 10, true));
   }
 
-  if (action.startsWith("update")) {
-    const args = safeParse(`[${action.slice(6)}]`);
+  if (name === "update" || name === "updateOne") {
+    const args = parseTupleArgs(rawArgs);
+    if (!args || args.length < 2) {
+      return console.error("updateOne expects filter and update");
+    }
     return console.log(util.inspect(await col.updateOne(args[0], args[1]), false, 10, true));
   }
 
-  if (action.startsWith("deleteMany")) {
-    const query = safeParse(action.slice(10));
-    return console.log(`Deleted: ${await col.deleteMany(query || {})}`);
+  if (name === "updateMany") {
+    const args = parseTupleArgs(rawArgs);
+    if (!args || args.length < 2) {
+      return console.error("updateMany expects filter and update");
+    }
+    return console.log(util.inspect(await col.updateMany(args[0], args[1]), false, 10, true));
   }
 
-  if (action.startsWith("delete")) {
-    const query = safeParse(action.slice(6));
-    return console.log(`Deleted: ${await col.deleteOne(query || {})}`);
+  if (name === "delete" || name === "deleteOne") {
+    const query = parseSingleArg(rawArgs);
+    if (query == null) {
+      return console.error("Invalid syntax");
+    }
+    return console.log(`Deleted: ${await col.deleteOne(query)}`);
   }
 
-  if (action.startsWith("count")) {
-    const query = safeParse(action.slice(5));
-    return console.log(`Count: ${await col.countDocuments(query || {})}`);
+  if (name === "deleteMany") {
+    const query = parseSingleArg(rawArgs);
+    if (query == null) {
+      return console.error("Invalid syntax");
+    }
+    return console.log(`Deleted: ${await col.deleteMany(query)}`);
   }
+
+  if (name === "count" || name === "countDocuments") {
+    const query = parseSingleArg(rawArgs);
+    if (query == null) {
+      return console.error("Invalid syntax");
+    }
+    return console.log(`Count: ${await col.countDocuments(query)}`);
+  }
+
+  if (name === "aggregate") {
+    const pipeline = parseSingleArg(rawArgs);
+    if (!Array.isArray(pipeline)) {
+      return console.error("aggregate expects an array pipeline");
+    }
+    return console.log(util.inspect(await col.aggregate(pipeline), false, 10, true));
+  }
+
+  if (name === "explain") {
+    const args = parseTupleArgs(rawArgs);
+    if (args === null) {
+      return console.error("Invalid syntax");
+    }
+
+    const query = args[0] ?? {};
+    const options = args[1];
+    return console.log(util.inspect(await col.explain(query, options), false, 10, true));
+  }
+
+  return console.log("Unknown collection command. Type: help");
 }
 
 async function handleCommand(input: string) {
@@ -250,8 +343,11 @@ async function handleCommand(input: string) {
     return console.table(await listCollectionNames(currentDB));
   }
 
-  if (cmd.startsWith('db.create("')) {
-    const name = cmd.match(/\("(.+)"\)/)?.[1];
+  if (cmd.startsWith("db.create(")) {
+    const parsedCall = parseCall(cmd);
+    const name = parsedCall?.name === "db.create"
+      ? parseNameTuple(parsedCall.rawArgs)[0]
+      : undefined;
     if (!name) {
       return console.error("Invalid syntax");
     }
@@ -260,8 +356,11 @@ async function handleCommand(input: string) {
     return console.log("Database created");
   }
 
-  if (cmd.startsWith('db.delete("')) {
-    const name = cmd.match(/\("(.+)"\)/)?.[1];
+  if (cmd.startsWith("db.delete(")) {
+    const parsedCall = parseCall(cmd);
+    const name = parsedCall?.name === "db.delete"
+      ? parseNameTuple(parsedCall.rawArgs)[0]
+      : undefined;
     if (!name) {
       return console.error("Invalid syntax");
     }
@@ -277,9 +376,12 @@ async function handleCommand(input: string) {
     return console.log("Database deleted");
   }
 
-  if (cmd.startsWith("db.rename")) {
-    const args = cmd.match(/\("(.+)",\s*"(.+)"\)/);
-    if (!args) {
+  if (cmd.startsWith("db.rename(")) {
+    const parsedCall = parseCall(cmd);
+    const args = parsedCall?.name === "db.rename"
+      ? parseNameTuple(parsedCall.rawArgs)
+      : [];
+    if (args.length < 2) {
       return console.error("Invalid syntax");
     }
 
@@ -295,7 +397,10 @@ async function handleCommand(input: string) {
   }
 
   if (cmd.startsWith("db.createCollection")) {
-    const name = cmd.match(/\("(.+)"\)/)?.[1];
+    const parsedCall = parseCall(cmd);
+    const name = parsedCall?.name === "db.createCollection"
+      ? parseNameTuple(parsedCall.rawArgs)[0]
+      : undefined;
     if (!name) {
       return console.error("Invalid syntax");
     }
@@ -305,7 +410,10 @@ async function handleCommand(input: string) {
   }
 
   if (cmd.startsWith("db.dropCollection")) {
-    const name = cmd.match(/\("(.+)"\)/)?.[1];
+    const parsedCall = parseCall(cmd);
+    const name = parsedCall?.name === "db.dropCollection"
+      ? parseNameTuple(parsedCall.rawArgs)[0]
+      : undefined;
     if (!name) {
       return console.error("Invalid syntax");
     }
@@ -321,8 +429,11 @@ async function handleCommand(input: string) {
   }
 
   if (cmd.startsWith("db.renameCollection")) {
-    const args = cmd.match(/\("(.+)",\s*"(.+)"\)/);
-    if (!args) {
+    const parsedCall = parseCall(cmd);
+    const args = parsedCall?.name === "db.renameCollection"
+      ? parseNameTuple(parsedCall.rawArgs)
+      : [];
+    if (args.length < 2) {
       return console.error("Invalid syntax");
     }
 
