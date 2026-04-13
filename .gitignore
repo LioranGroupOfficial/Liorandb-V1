@@ -15,7 +15,16 @@ lerna-debug.log*
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
+build_prompt.py
+config.json
+extract_logs.py
+path.txt
+prompt_new.txt
+prompt.txt
+scan_src.py
+dtest
+stest
+.vscode
 # Runtime data
 pids
 *.pid
