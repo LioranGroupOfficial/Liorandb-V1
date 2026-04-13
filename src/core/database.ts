@@ -28,6 +28,7 @@ type DBMeta = {
 const META_FILE = "__db_meta.json";
 const META_VERSION = 2;
 const DEFAULT_SCHEMA_VERSION = "v1";
+const COLLECTION_META_KEY_PREFIX = "\u0000__meta__:";
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
 
@@ -307,14 +308,25 @@ export class LioranDB {
     if (existing) return;
 
     const index = new Index(col.dir, field, options);
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await index.bulkInsert(docs);
+      docs.length = 0;
+    };
 
     for await (const [key, enc] of col.db.iterator()) {
-      if (!enc) continue;
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
       try {
         const doc = decryptData(enc);
-        await index.insert(doc);
+        docs.push(doc);
+        if (docs.length >= 5000) {
+          await flush();
+        }
       } catch {}
     }
+
+    await flush();
 
     col.registerIndex(index);
 

@@ -12,6 +12,7 @@ import { decryptData } from "../utils/encryption.js";
 const TMP_SUFFIX = "__compact_tmp";
 const OLD_SUFFIX = "__compact_old";
 const INDEX_DIR = "__indexes";
+const COLLECTION_META_KEY_PREFIX = "\u0000__meta__:";
 
 /* ---------------------------------------------------------
    PUBLIC ENTRY
@@ -60,6 +61,7 @@ async function snapshotRebuild(col: Collection, tmpDir: string) {
   });
 
   for await (const [key, val] of col.db.iterator()) {
+    if (key.startsWith(COLLECTION_META_KEY_PREFIX)) continue;
     if (val !== undefined) {
       await tmpDB.put(key, val);
     }
@@ -156,17 +158,28 @@ export async function rebuildIndexes(col: Collection) {
     const rebuilt = new Index(col.dir, idx.field, {
       unique: idx.unique
     });
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await rebuilt.bulkInsert(docs);
+      docs.length = 0;
+    };
 
-    for await (const [, enc] of col.db.iterator()) {
-      if (!enc) continue;
+    for await (const [key, enc] of col.db.iterator()) {
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
 
       try {
         const doc = decryptData(enc);
-        await rebuilt.insert(doc);
+        docs.push(doc);
+        if (docs.length >= 5000) {
+          await flush();
+        }
       } catch {
         // Skip corrupted doc safely
       }
     }
+
+    await flush();
 
     rebuiltIndexes.set(idx.field, rebuilt);
   }

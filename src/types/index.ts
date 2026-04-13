@@ -112,6 +112,11 @@ export interface CollectionIndexAPI<T = any> {
   rebuildIndexes(): Promise<void>;
 }
 
+export interface CollectionQueryAPI<T = any> {
+  count(): Promise<number>;
+  countDocuments(filter?: Query<T>): Promise<number>;
+}
+
 /* =============================== DATABASE ================================= */
 
 export interface DatabaseIndexAPI {

@@ -302,4 +302,5 @@ class IPCCollection {
   deleteMany = (filter: any) => this.call("deleteMany", [filter]);
   countDocuments = (filter?: any) =>
     this.call("countDocuments", [filter]);
+  count = () => this.call("count", []);
 }

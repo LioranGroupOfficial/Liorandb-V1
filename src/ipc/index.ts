@@ -57,6 +57,9 @@ class CollectionProxy {
   countDocuments = (filter?: any) =>
     this.call("countDocuments", [filter]);
 
+  count = () =>
+    this.call("count", []);
+
   /* ------------------------------ INDEX ----------------------------- */
 
   createIndex = (def: any) =>

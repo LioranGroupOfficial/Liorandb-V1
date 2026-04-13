@@ -27,6 +27,9 @@ export interface CollectionOptions {
   readonly?: boolean;
 }
 
+const META_KEY_PREFIX = "\u0000__meta__:";
+const COUNT_META_KEY = META_KEY_PREFIX + "count";
+
 export class Collection<T = any> {
   dir: string;
   db: ClassicLevel<string, string>;
@@ -38,6 +41,9 @@ export class Collection<T = any> {
 
   private indexes = new Map<string, Index>();
   private readonlyMode: boolean;
+  private docCount = 0;
+  private metaLoaded = false;
+  private metaLoadPromise: Promise<void> | null = null;
 
   constructor(
     dir: string,
@@ -62,6 +68,44 @@ export class Collection<T = any> {
     if (this.readonlyMode) {
       throw new Error("Collection is in readonly replica mode");
     }
+  }
+
+  private async ensureMetaLoaded() {
+    if (this.metaLoaded) return;
+    if (this.metaLoadPromise) return this.metaLoadPromise;
+
+    this.metaLoadPromise = (async () => {
+      const rawCount = await this.db.get(COUNT_META_KEY).catch(() => null);
+      if (rawCount !== null) {
+        const parsed = Number(rawCount);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          this.docCount = parsed;
+          this.metaLoaded = true;
+          return;
+        }
+      }
+
+      let count = 0;
+      for await (const [key] of this.db.iterator()) {
+        if (key.startsWith(META_KEY_PREFIX)) continue;
+        count++;
+      }
+
+      this.docCount = count;
+      this.metaLoaded = true;
+      await this.persistMeta();
+    })();
+
+    try {
+      await this.metaLoadPromise;
+    } finally {
+      this.metaLoadPromise = null;
+    }
+  }
+
+  private async persistMeta() {
+    if (!this.metaLoaded || this.readonlyMode) return;
+    await this.db.put(COUNT_META_KEY, String(this.docCount));
   }
 
   /* ===================== SCHEMA ===================== */
@@ -160,6 +204,7 @@ export class Collection<T = any> {
       case "deleteOne": return this._deleteOne(args[0]);
       case "deleteMany": return this._deleteMany(args[0]);
       case "countDocuments": return this._countDocuments(args[0]);
+      case "count": return this._count();
       default: throw new Error(`Unknown operation: ${op}`);
     }
   }
@@ -168,15 +213,37 @@ export class Collection<T = any> {
 
   private async _insertOne(doc: any) {
     this.assertWritable();
+    await this.ensureMetaLoaded();
 
     const _id = doc._id ?? uuid();
+    if (String(_id).startsWith(META_KEY_PREFIX)) {
+      throw new Error(`Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`);
+    }
+    const existing = await this.db.get(String(_id)).catch(() => null);
+
+    if (existing) {
+      throw new Error(`Document with _id "${_id}" already exists`);
+    }
+
     const final = this.validate({
       _id,
       ...doc,
       __v: this.schemaVersion
     });
 
-    await this.db.put(String(_id), encryptData(final));
+    this.docCount++;
+    await this.db.batch([
+      {
+        type: "put",
+        key: String(_id),
+        value: encryptData(final)
+      },
+      {
+        type: "put",
+        key: COUNT_META_KEY,
+        value: String(this.docCount)
+      }
+    ]);
     await this._updateIndexes(null, final);
 
     return final;
@@ -184,12 +251,29 @@ export class Collection<T = any> {
 
   private async _insertMany(docs: any[]) {
     this.assertWritable();
+    await this.ensureMetaLoaded();
 
     const batch: any[] = [];
     const out = [];
+    const seenIds = new Set<string>();
 
     for (const d of docs) {
       const _id = d._id ?? uuid();
+      const id = String(_id);
+      if (id.startsWith(META_KEY_PREFIX)) {
+        throw new Error(`Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`);
+      }
+
+      if (seenIds.has(id)) {
+        throw new Error(`Duplicate _id "${id}" in insertMany batch`);
+      }
+
+      const existing = await this.db.get(id).catch(() => null);
+      if (existing) {
+        throw new Error(`Document with _id "${id}" already exists`);
+      }
+
+      seenIds.add(id);
       const final = this.validate({
         _id,
         ...d,
@@ -198,17 +282,24 @@ export class Collection<T = any> {
 
       batch.push({
         type: "put",
-        key: String(_id),
+        key: id,
         value: encryptData(final)
       });
 
       out.push(final);
     }
 
+    this.docCount += out.length;
+    batch.push({
+      type: "put",
+      key: COUNT_META_KEY,
+      value: String(this.docCount)
+    });
+
     await this.db.batch(batch);
 
-    for (const doc of out) {
-      await this._updateIndexes(null, doc);
+    for (const index of this.indexes.values()) {
+      await index.bulkInsert(out);
     }
 
     return out;
@@ -227,11 +318,17 @@ export class Collection<T = any> {
           const idx = this.indexes.get(field);
           if (!idx) return null;
           return new Set(await idx.find(value));
+        },
+        rangeByIndex: async (field, cond) => {
+        const idx = this.indexes.get(field);
+        if (!idx) return null;
+        return new Set(await idx.findRange(cond));
         }
       },
       async () => {
         const ids: string[] = [];
         for await (const [key] of this.db.iterator()) {
+          if (key.startsWith(META_KEY_PREFIX)) continue;
           ids.push(key);
         }
         return ids;
@@ -290,6 +387,12 @@ export class Collection<T = any> {
   }
 
   private async _countDocuments(filter: any) {
+    await this.ensureMetaLoaded();
+
+    if (!filter || Object.keys(filter).length === 0) {
+      return this.docCount;
+    }
+
     const ids = await this._getCandidateIds(filter);
     let count = 0;
 
@@ -303,6 +406,11 @@ export class Collection<T = any> {
     }
 
     return count;
+  }
+
+  private async _count() {
+    await this.ensureMetaLoaded();
+    return this.docCount;
   }
 
   /* ===================== UPDATE ===================== */
@@ -368,6 +476,7 @@ export class Collection<T = any> {
 
   private async _deleteOne(filter: any) {
     this.assertWritable();
+    await this.ensureMetaLoaded();
 
     const ids = await this._getCandidateIds(filter);
 
@@ -376,7 +485,18 @@ export class Collection<T = any> {
       if (!existing) continue;
 
       if (matchDocument(existing, filter)) {
-        await this.db.del(id);
+        this.docCount--;
+        await this.db.batch([
+          {
+            type: "del",
+            key: id
+          },
+          {
+            type: "put",
+            key: COUNT_META_KEY,
+            value: String(this.docCount)
+          }
+        ]);
         await this._updateIndexes(existing, null);
         return true;
       }
@@ -387,8 +507,14 @@ export class Collection<T = any> {
 
   private async _deleteMany(filter: any) {
     this.assertWritable();
+    await this.ensureMetaLoaded();
 
     const ids = await this._getCandidateIds(filter);
+    const matchedDocs: any[] = [];
+    const deleteOps: Array<
+      | { type: "del"; key: string }
+      | { type: "put"; key: string; value: string }
+    > = [];
     let count = 0;
 
     for (const id of ids) {
@@ -396,9 +522,26 @@ export class Collection<T = any> {
       if (!existing) continue;
 
       if (matchDocument(existing, filter)) {
-        await this.db.del(id);
-        await this._updateIndexes(existing, null);
+        deleteOps.push({
+          type: "del",
+          key: id
+        });
+        matchedDocs.push(existing);
         count++;
+      }
+    }
+
+    if (count > 0) {
+      this.docCount -= count;
+      deleteOps.push({
+        type: "put",
+        key: COUNT_META_KEY,
+        value: String(this.docCount)
+      });
+      await this.db.batch(deleteOps);
+
+      for (const doc of matchedDocs) {
+        await this._updateIndexes(doc, null);
       }
     }
 
@@ -450,6 +593,12 @@ export class Collection<T = any> {
   countDocuments(filter: any = {}) {
     return this._enqueue(() =>
       this._exec("countDocuments", [filter])
+    );
+  }
+
+  count() {
+    return this._enqueue(() =>
+      this._count()
     );
   }
 }

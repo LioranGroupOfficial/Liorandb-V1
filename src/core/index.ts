@@ -8,7 +8,12 @@ export interface IndexOptions {
   unique?: boolean;
 }
 
-type IndexValue = string | string[];
+type IndexValue = string;
+
+const UNIQUE_PREFIX = "u:";
+const ENTRY_PREFIX = "e:";
+const VALUE_SEPARATOR = "\u0000";
+const RANGE_END = "\uffff";
 
 /* ----------------------------- INDEX ----------------------------- */
 
@@ -30,28 +35,79 @@ export class Index {
 
   /* ------------------------- INTERNAL ------------------------- */
 
-  private normalizeKey(value: any): string {
-    if (value === null || value === undefined) return "__null__";
+  private escapeString(value: string): string {
+    return value
+      .replaceAll("\\", "\\\\")
+      .replaceAll(VALUE_SEPARATOR, "\\0")
+      .replaceAll(RANGE_END, "\\f");
+  }
 
-    if (typeof value === "object") {
-      return JSON.stringify(value);
+  private encodeNumber(value: number): string {
+    const buffer = Buffer.allocUnsafe(8);
+    buffer.writeDoubleBE(value, 0);
+
+    if (value >= 0 || Object.is(value, 0)) {
+      buffer[0] ^= 0x80;
+    } else {
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] ^= 0xff;
+      }
     }
 
-    return String(value);
+    return buffer.toString("hex");
+  }
+
+  private normalizeKey(value: any): string {
+    if (value === null || value === undefined) return "0:";
+
+    if (typeof value === "number") {
+      return `1:${this.encodeNumber(value)}`;
+    }
+
+    if (typeof value === "bigint") {
+      const sign = value < 0n ? "0" : "1";
+      const abs = (value < 0n ? -value : value).toString().padStart(32, "0");
+      return `2:${sign}:${abs}`;
+    }
+
+    if (typeof value === "boolean") {
+      return `3:${value ? "1" : "0"}`;
+    }
+
+    if (typeof value === "string") {
+      return `4:${this.escapeString(value)}`;
+    }
+
+    if (value instanceof Date) {
+      return `5:${this.encodeNumber(value.getTime())}`;
+    }
+
+    return `6:${this.escapeString(JSON.stringify(value))}`;
+  }
+
+  private makeUniqueKey(value: any): string {
+    return UNIQUE_PREFIX + this.normalizeKey(value);
+  }
+
+  private makeEntryPrefix(value: any): string {
+    return ENTRY_PREFIX + this.normalizeKey(value) + VALUE_SEPARATOR;
+  }
+
+  private makeEntryKey(value: any, id: string): string {
+    return this.makeEntryPrefix(value) + String(id);
   }
 
   private async getRaw(key: string): Promise<IndexValue | null> {
     try {
-      const v = await this.db.get(key);
-      if (v === undefined) return null;
-      return JSON.parse(v);
+      const value = await this.db.get(key);
+      return value === undefined ? null : value;
     } catch {
       return null;
     }
   }
 
   private async setRaw(key: string, value: IndexValue) {
-    await this.db.put(key, JSON.stringify(value));
+    await this.db.put(key, value);
   }
 
   private async delRaw(key: string) {
@@ -64,9 +120,8 @@ export class Index {
     const val = doc[this.field];
     if (val === undefined) return;
 
-    const key = this.normalizeKey(val);
-
     if (this.unique) {
+      const key = this.makeUniqueKey(val);
       const existing = await this.getRaw(key);
       if (existing) {
         throw new Error(
@@ -74,43 +129,23 @@ export class Index {
         );
       }
 
-      await this.setRaw(key, doc._id);
+      await this.setRaw(key, String(doc._id));
       return;
     }
 
-    const arr = (await this.getRaw(key)) as string[] | null;
-
-    if (!arr) {
-      await this.setRaw(key, [doc._id]);
-    } else {
-      if (!arr.includes(doc._id)) {
-        arr.push(doc._id);
-        await this.setRaw(key, arr);
-      }
-    }
+    await this.setRaw(this.makeEntryKey(val, doc._id), "1");
   }
 
   async delete(doc: any) {
     const val = doc[this.field];
     if (val === undefined) return;
 
-    const key = this.normalizeKey(val);
-
     if (this.unique) {
-      await this.delRaw(key);
+      await this.delRaw(this.makeUniqueKey(val));
       return;
     }
 
-    const arr = (await this.getRaw(key)) as string[] | null;
-    if (!arr) return;
-
-    const next = arr.filter(id => id !== doc._id);
-
-    if (next.length === 0) {
-      await this.delRaw(key);
-    } else {
-      await this.setRaw(key, next);
-    }
+    await this.delRaw(this.makeEntryKey(val, doc._id));
   }
 
   async update(oldDoc: any, newDoc: any) {
@@ -124,14 +159,93 @@ export class Index {
   }
 
   async find(value: any): Promise<string[]> {
-    const key = this.normalizeKey(value);
+    if (this.unique) {
+      const raw = await this.getRaw(this.makeUniqueKey(value));
+      return raw ? [raw] : [];
+    }
 
-    const raw = await this.getRaw(key);
-    if (!raw) return [];
+    const prefix = this.makeEntryPrefix(value);
+    const ids: string[] = [];
 
-    if (this.unique) return [raw as string];
+    for await (const [key] of this.db.iterator({
+      gte: prefix,
+      lte: prefix + RANGE_END
+    })) {
+      ids.push(key.slice(prefix.length));
+    }
 
-    return raw as string[];
+    return ids;
+  }
+
+  async findRange(cond: any): Promise<string[]> {
+    const normalizedGte = cond.$gt !== undefined
+      ? this.normalizeKey(cond.$gt) + RANGE_END
+      : cond.$gte !== undefined
+        ? this.normalizeKey(cond.$gte)
+        : "";
+    const normalizedLte = cond.$lt !== undefined
+      ? this.normalizeKey(cond.$lt)
+      : cond.$lte !== undefined
+        ? this.normalizeKey(cond.$lte) + RANGE_END
+        : RANGE_END;
+
+    const prefix = this.unique ? UNIQUE_PREFIX : ENTRY_PREFIX;
+    const ids: string[] = [];
+
+    for await (const [key, value] of this.db.iterator({
+      gte: prefix + normalizedGte,
+      lte: prefix + normalizedLte
+    })) {
+      if (this.unique) {
+        ids.push(value);
+        continue;
+      }
+
+      const separatorAt = key.lastIndexOf(VALUE_SEPARATOR);
+      ids.push(key.slice(separatorAt + VALUE_SEPARATOR.length));
+    }
+
+    return ids;
+  }
+
+  async bulkInsert(docs: any[]) {
+    if (docs.length === 0) return;
+
+    const ops: Array<{ type: "put"; key: string; value: string }> = [];
+
+    if (this.unique) {
+      const seen = new Set<string>();
+
+      for (const doc of docs) {
+        const val = doc[this.field];
+        if (val === undefined) continue;
+
+        const key = this.makeUniqueKey(val);
+        if (seen.has(key) || await this.getRaw(key)) {
+          throw new Error(
+            `Unique index violation on "${this.field}" = ${val}`
+          );
+        }
+
+        seen.add(key);
+        ops.push({ type: "put", key, value: String(doc._id) });
+      }
+    } else {
+      for (const doc of docs) {
+        const val = doc[this.field];
+        if (val === undefined) continue;
+
+        ops.push({
+          type: "put",
+          key: this.makeEntryKey(val, doc._id),
+          value: "1"
+        });
+      }
+    }
+
+    if (ops.length > 0) {
+      await this.db.batch(ops);
+    }
   }
 
   async close() {
