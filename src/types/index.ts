@@ -32,6 +32,12 @@ export type Query<T = any> =
       [key: string]: any;
     };
 
+export interface FindOptions {
+  limit?: number;
+  offset?: number;
+  projection?: string[];
+}
+
 /* ================================ INDEX =================================== */
 
 export type IndexType = "hash" | "btree";
@@ -115,6 +121,8 @@ export interface CollectionIndexAPI<T = any> {
 export interface CollectionQueryAPI<T = any> {
   count(): Promise<number>;
   countDocuments(filter?: Query<T>): Promise<number>;
+  find(query?: Query<T>, options?: FindOptions): Promise<T[]>;
+  findOne(query?: Query<T>, options?: FindOptions): Promise<T | null>;
 }
 
 /* =============================== DATABASE ================================= */

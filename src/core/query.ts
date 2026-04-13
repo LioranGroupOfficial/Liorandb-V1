@@ -5,6 +5,14 @@ function getByPath(obj: any, path: string): any {
 /* ----------------------------- MATCH ENGINE ----------------------------- */
 
 export function matchDocument(doc: any, query: any): boolean {
+  if (typeof query === "function") {
+    return !!query(doc);
+  }
+
+  if (!query || typeof query !== "object") {
+    return true;
+  }
+
   for (const key of Object.keys(query)) {
     const cond = query[key];
     const val = getByPath(doc, key);
@@ -68,6 +76,10 @@ export function applyUpdate(oldDoc: any, update: any): any {
 /* ------------------------------ INDEX ROUTER ------------------------------ */
 
 export function extractIndexQuery(query: any): { field: string; value: any } | null {
+  if (!query || typeof query !== "object" || typeof query === "function") {
+    return null;
+  }
+
   for (const key of Object.keys(query)) {
     const cond = query[key];
 
@@ -106,6 +118,10 @@ export interface IndexProvider {
  * Selects best possible index from query.
  */
 export function selectIndex(query: any, indexes: Set<string>) {
+  if (!query || typeof query !== "object" || typeof query === "function") {
+    return null;
+  }
+
   for (const key of Object.keys(query)) {
     if (!indexes.has(key)) continue;
 

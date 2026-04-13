@@ -27,6 +27,12 @@ export interface CollectionOptions {
   readonly?: boolean;
 }
 
+export interface FindOptions {
+  limit?: number;
+  offset?: number;
+  projection?: string[];
+}
+
 const META_KEY_PREFIX = "\u0000__meta__:";
 const COUNT_META_KEY = META_KEY_PREFIX + "count";
 
@@ -197,8 +203,8 @@ export class Collection<T = any> {
     switch (op) {
       case "insertOne": return this._insertOne(args[0]);
       case "insertMany": return this._insertMany(args[0]);
-      case "find": return this._find(args[0]);
-      case "findOne": return this._findOne(args[0]);
+      case "find": return this._find(args[0], args[1]);
+      case "findOne": return this._findOne(args[0], args[1]);
       case "updateOne": return this._updateOne(args[0], args[1], args[2]);
       case "updateMany": return this._updateMany(args[0], args[1]);
       case "deleteOne": return this._deleteOne(args[0]);
@@ -351,15 +357,84 @@ export class Collection<T = any> {
     return migrated;
   }
 
-  private async _find(query: any) {
+  private normalizeFindOptions(options?: FindOptions) {
+    const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+    const rawLimit = options?.limit;
+    const limit = rawLimit === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, Math.trunc(rawLimit));
+    const projection = Array.isArray(options?.projection)
+      ? options!.projection.filter(
+          (field): field is string => typeof field === "string" && field.length > 0
+        )
+      : undefined;
+
+    return { offset, limit, projection };
+  }
+
+  private projectDocument(doc: T, projection?: string[]): T {
+    if (!projection || projection.length === 0) {
+      return doc;
+    }
+
+    const out: Record<string, any> = {};
+
+    for (const field of projection) {
+      const parts = field.split(".");
+      let source: any = doc;
+
+      for (const part of parts) {
+        if (source == null) {
+          source = undefined;
+          break;
+        }
+        source = source[part];
+      }
+
+      if (source === undefined) {
+        continue;
+      }
+
+      let target: Record<string, any> = out;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        const existing = target[part];
+        if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+          target[part] = {};
+        }
+        target = target[part];
+      }
+
+      target[parts[parts.length - 1]] = source;
+    }
+
+    return out as T;
+  }
+
+  private async _find(query: any, options?: FindOptions) {
     const ids = await this._getCandidateIds(query);
-    const out = [];
+    const out: T[] = [];
+    const { offset, limit, projection } = this.normalizeFindOptions(options);
+    let skipped = 0;
+
+    if (limit === 0) {
+      return out;
+    }
 
     for (const id of ids) {
       try {
         const doc = await this._readAndMigrate(id);
         if (doc && matchDocument(doc, query)) {
-          out.push(doc);
+          if (skipped < offset) {
+            skipped++;
+            continue;
+          }
+
+          out.push(this.projectDocument(doc, projection));
+
+          if (out.length >= limit) {
+            break;
+          }
         }
       } catch {}
     }
@@ -367,9 +442,15 @@ export class Collection<T = any> {
     return out;
   }
 
-  private async _findOne(query: any) {
-    if (query?._id) {
-      return this._readAndMigrate(String(query._id));
+  private async _findOne(query: any, options?: FindOptions) {
+    const { projection } = this.normalizeFindOptions(options);
+
+    if (query && typeof query === "object" && !Array.isArray(query) && "_id" in query) {
+      const doc = await this._readAndMigrate(String(query._id));
+      if (doc && matchDocument(doc, query)) {
+        return this.projectDocument(doc, projection);
+      }
+      return null;
     }
 
     const ids = await this._getCandidateIds(query);
@@ -378,7 +459,7 @@ export class Collection<T = any> {
       try {
         const doc = await this._readAndMigrate(id);
         if (doc && matchDocument(doc, query)) {
-          return doc;
+          return this.projectDocument(doc, projection);
         }
       } catch {}
     }
@@ -558,12 +639,12 @@ export class Collection<T = any> {
     return this._enqueue(() => this._exec("insertMany", [docs]));
   }
 
-  find(query: any = {}) {
-    return this._enqueue(() => this._exec("find", [query]));
+  find(query: any = {}, options?: FindOptions) {
+    return this._enqueue(() => this._exec("find", [query, options]));
   }
 
-  findOne(query: any = {}) {
-    return this._enqueue(() => this._exec("findOne", [query]));
+  findOne(query: any = {}, options?: FindOptions) {
+    return this._enqueue(() => this._exec("findOne", [query, options]));
   }
 
   updateOne(filter: any, update: any, options?: UpdateOptions) {

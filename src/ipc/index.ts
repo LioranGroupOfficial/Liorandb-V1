@@ -36,11 +36,11 @@ class CollectionProxy {
   insertMany = (docs: any[]) =>
     this.call("insertMany", [docs]);
 
-  find = (query?: any) =>
-    this.call("find", [query]);
+  find = (query?: any, options?: any) =>
+    this.call("find", [query, options]);
 
-  findOne = (query?: any) =>
-    this.call("findOne", [query]);
+  findOne = (query?: any, options?: any) =>
+    this.call("findOne", [query, options]);
 
   updateOne = (filter: any, update: any, options?: any) =>
     this.call("updateOne", [filter, update, options]);
