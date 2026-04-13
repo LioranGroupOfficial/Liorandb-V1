@@ -9,11 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@liorandb/driver": "^1.0.4",
+    "@liorandb/driver": "^1.1.2",
     "@monaco-editor/react": "^4.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.563.0",
-    "next": "16.1.6",
+    "next": "^16.2.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "zustand": "^5.0.11"
