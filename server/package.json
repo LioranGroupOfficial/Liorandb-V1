@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/db",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "LioranDB server and CLI",
   "main": "dist/server.js",
   "bin": {
@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@liorandb/core": "^1.1.2",
+    "@liorandb/driver": "^1.1.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",

@@ -2,37 +2,40 @@
 
 import readline from "readline";
 import util from "util";
-import bcrypt from "bcryptjs";
 
-import { manager, getAuthCollection } from "../config/database";
-import { AuthUser } from "../types/auth-user";
-import {
-  createCollectionByName,
-  createDatabaseByName,
-  deleteCollectionByName,
-  deleteDatabaseByName,
-  listCollectionNames,
-  listDatabaseNames,
-  renameCollectionByName,
-  renameDatabaseByName
-} from "../utils/coreStorage";
+import { HttpError, LioranClient } from "@liorandb/driver";
 
 console.clear();
-console.log("LioranDB Interactive Shell");
-console.log('Type: help   to see commands\n');
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-  historySize: 1000
+  historySize: 1000,
 });
 
 let currentDB = "default";
 let currentCollection: string | null = null;
 
-function getInlineCommand() {
+function printUsage() {
+  console.log(`Usage:
+  ldb-cli <connection-uri>
+  ldb-cli <connection-uri> '<command>'
+
+Connection URI formats:
+  http://<host>:<port>
+  https://<host>:<port>
+  lioran://<username>:<password>@<host>:<port>
+
+Examples:
+  ldb-cli lioran://admin:password123@localhost:4000
+  ldb-cli http://localhost:4000 'login("admin","password123")'
+`);
+}
+
+function parseStartupArgs() {
   const args = process.argv.slice(2);
   const commandParts: string[] = [];
+  let connectionUri: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -42,10 +45,18 @@ function getInlineCommand() {
       continue;
     }
 
+    if (!connectionUri) {
+      connectionUri = arg;
+      continue;
+    }
+
     commandParts.push(arg);
   }
 
-  return commandParts.join(" ").trim();
+  return {
+    connectionUri,
+    inlineCommand: commandParts.join(" ").trim(),
+  };
 }
 
 function updatePrompt() {
@@ -53,55 +64,23 @@ function updatePrompt() {
   if (currentCollection) {
     prompt += `.${currentCollection}`;
   }
+
+  if (!client.isAuthenticated()) {
+    prompt += " (guest)";
+  }
+
   rl.setPrompt(`${prompt}> `);
 }
 
-async function printHelp() {
-  console.log(`
-Database:   ( current: ${currentDB} )
-  show dbs
-  use <dbname>
-  db.create("<name>")
-  db.delete("<name>")
-  db.rename("<old>", "<new>")
-  show collections
-
-Collection:   ( current: ${currentCollection ?? "none"} )
-  use collection <name>
-  db.createCollection("<name>")
-  db.dropCollection("<name>")
-  db.renameCollection("<old>", "<new>")
-
-CRUD:
-  db.<collection>.find({...})
-  db.<collection>.insert({...})
-
-  When collection selected:
-    find({...})
-    findOne({...})
-    insert({...})
-    insertMany([...])
-    update({...filter},{...update})
-    updateMany({...filter},{...update})
-    delete({...})
-    deleteMany({...})
-    count({...})
-
-User:
-  admin.create("username","password")
-  user.create("username","password")
-  user.delete("username")
-  user.list()
-
-System:
-  clear
-  exit
-`);
+function printBanner(uri: string) {
+  console.log("LioranDB Interactive Shell");
+  console.log(`Connected to: ${uri}`);
+  console.log('Type: help   to see commands\n');
 }
 
-function safeParse(obj: string) {
+function safeParse(value: string) {
   try {
-    return eval(`(${obj})`);
+    return eval(`(${value})`);
   } catch {
     return null;
   }
@@ -115,7 +94,7 @@ function parseCall(action: string) {
 
   return {
     name: match[1],
-    rawArgs: match[2].trim()
+    rawArgs: match[2].trim(),
   };
 }
 
@@ -146,64 +125,139 @@ function parseNameTuple(rawArgs: string) {
   return values;
 }
 
-async function handleUserCommand(cmd: string) {
-  const users = await getAuthCollection();
+function logValue(value: unknown) {
+  console.log(util.inspect(value, false, 10, true));
+}
 
-  if (cmd.startsWith("admin.create") || cmd.startsWith("user.create")) {
-    const tupleArgs = cmd.match(/\(\s*"?([^",()]+)"?\s*,\s*"?([^",()]+)"?\s*\)/);
-    const spacedArgs = cmd.match(/^(?:admin|user)\.create\s+(\S+)\s+(\S+)$/);
-
-    if (!tupleArgs && !spacedArgs) {
-      return console.error("Invalid syntax");
-    }
-
-    const username = tupleArgs?.[1] ?? spacedArgs?.[1];
-    const password = tupleArgs?.[2] ?? spacedArgs?.[2];
-
-    if (!username || !password) {
-      return console.error("Invalid syntax");
-    }
-
-    const existing = await users.findOne({ username }) as AuthUser | null;
-
-    if (existing) {
-      return console.error("User already exists");
-    }
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    await users.insertOne({
-      username,
-      password: hashed,
-      createdAt: new Date().toISOString(),
-    } as AuthUser);
-
-    return console.log(`User '${username}' created`);
+function normalizeCommandError(error: unknown) {
+  if (error instanceof HttpError) {
+    return error.data ?? { status: error.status, message: error.message };
   }
 
-  if (cmd.startsWith("user.delete")) {
-    const args = cmd.match(/\("(.+?)"\)/);
-    if (!args) {
-      return console.error("Invalid syntax");
+  return error;
+}
+
+async function printHelp() {
+  console.log(`
+Connection:
+  health()
+  info()
+  login("username","password")
+  register("username","password")
+  setToken("<jwt>")
+  getToken()
+  getUser()
+  logout()
+
+Database:   ( current: ${currentDB} )
+  show dbs
+  use <dbname>
+  db.create("<name>")
+  db.delete("<name>")
+  db.rename("<old>", "<new>")
+  db.stats("<name>")
+  show collections
+
+Collection:   ( current: ${currentCollection ?? "none"} )
+  use collection <name>
+  db.createCollection("<name>")
+  db.dropCollection("<name>")
+  db.renameCollection("<old>", "<new>")
+  db.collectionStats("<name>")
+
+CRUD:
+  db.<collection>.find({...})
+  db.<collection>.insert({...})
+
+  When collection selected:
+    find({...})
+    findOne({...})
+    insert({...})
+    insertMany([...])
+    update({...filter},{...update})
+    updateMany({...filter},{...update})
+    delete({...})
+    deleteMany({...})
+    count({...})
+    stats()
+
+System:
+  clear
+  exit
+`);
+}
+
+async function runAuthCommand(cmd: string) {
+  const parsedCall = parseCall(cmd);
+  if (!parsedCall) {
+    return false;
+  }
+
+  const { name, rawArgs } = parsedCall;
+
+  if (name === "health") {
+    logValue(await client.health());
+    return true;
+  }
+
+  if (name === "info") {
+    logValue(await client.info());
+    return true;
+  }
+
+  if (name === "login" || name === "register") {
+    const args = parseNameTuple(rawArgs);
+    if (args.length < 2) {
+      console.error(`${name} expects username and password`);
+      return true;
     }
 
-    const [, username] = args;
-    const deleted = await users.deleteOne({ username });
-    return console.log(`Deleted: ${deleted}`);
+    const auth =
+      name === "login"
+        ? await client.login(args[0], args[1])
+        : await client.register(args[0], args[1]);
+
+    logValue(auth);
+    updatePrompt();
+    return true;
   }
 
-  if (cmd === "user.list()") {
-    const list = await users.find({}) as AuthUser[];
-    return console.table(list.map((user: AuthUser) => ({
-      username: user.username,
-      createdAt: user.createdAt
-    })));
+  if (name === "setToken") {
+    const args = parseNameTuple(rawArgs);
+    if (args.length < 1) {
+      console.error("setToken expects a JWT");
+      return true;
+    }
+
+    client.setToken(args[0]);
+    console.log("Token set");
+    updatePrompt();
+    return true;
   }
+
+  if (name === "getToken") {
+    logValue(client.getToken());
+    return true;
+  }
+
+  if (name === "getUser") {
+    logValue(client.getUser());
+    return true;
+  }
+
+  if (name === "logout") {
+    client.logout();
+    console.log("Logged out");
+    updatePrompt();
+    return true;
+  }
+
+  return false;
 }
 
 async function runCollectionCommand(colName: string, action: string) {
-  const db = await manager.db(currentDB);
-  const col = db.collection<any>(colName);
+  const db = client.db(currentDB);
+  const col = db.collection<Record<string, unknown>>(colName);
   const parsedCall = parseCall(action);
   if (!parsedCall) {
     return console.error("Invalid syntax");
@@ -216,7 +270,8 @@ async function runCollectionCommand(colName: string, action: string) {
     if (data == null || Array.isArray(data)) {
       return console.error("Invalid syntax");
     }
-    return console.log(util.inspect(await col.insertOne(data), false, 10, true));
+
+    return logValue(await col.insertOne(data));
   }
 
   if (name === "insertMany") {
@@ -224,7 +279,8 @@ async function runCollectionCommand(colName: string, action: string) {
     if (!Array.isArray(data)) {
       return console.error("insertMany expects an array");
     }
-    return console.log(util.inspect(await col.insertMany(data), false, 10, true));
+
+    return logValue(await col.insertMany(data));
   }
 
   if (name === "find") {
@@ -232,7 +288,8 @@ async function runCollectionCommand(colName: string, action: string) {
     if (query == null) {
       return console.error("Invalid syntax");
     }
-    return console.log(util.inspect(await col.find(query), false, 10, true));
+
+    return logValue(await col.find(query));
   }
 
   if (name === "findOne") {
@@ -240,39 +297,26 @@ async function runCollectionCommand(colName: string, action: string) {
     if (query == null) {
       return console.error("Invalid syntax");
     }
-    return console.log(util.inspect(await col.findOne(query), false, 10, true));
+
+    return logValue(await col.findOne(query));
   }
 
-  if (name === "update" || name === "updateOne") {
+  if (name === "update" || name === "updateOne" || name === "updateMany") {
     const args = parseTupleArgs(rawArgs);
     if (!args || args.length < 2) {
-      return console.error("updateOne expects filter and update");
+      return console.error(`${name} expects filter and update`);
     }
-    return console.log(util.inspect(await col.updateOne(args[0], args[1]), false, 10, true));
+
+    return logValue(await col.updateMany(args[0], args[1]));
   }
 
-  if (name === "updateMany") {
-    const args = parseTupleArgs(rawArgs);
-    if (!args || args.length < 2) {
-      return console.error("updateMany expects filter and update");
-    }
-    return console.log(util.inspect(await col.updateMany(args[0], args[1]), false, 10, true));
-  }
-
-  if (name === "delete" || name === "deleteOne") {
+  if (name === "delete" || name === "deleteOne" || name === "deleteMany") {
     const query = parseSingleArg(rawArgs);
     if (query == null) {
       return console.error("Invalid syntax");
     }
-    return console.log(`Deleted: ${await col.deleteOne(query)}`);
-  }
 
-  if (name === "deleteMany") {
-    const query = parseSingleArg(rawArgs);
-    if (query == null) {
-      return console.error("Invalid syntax");
-    }
-    return console.log(`Deleted: ${await col.deleteMany(query)}`);
+    return logValue(await col.deleteMany(query));
   }
 
   if (name === "count" || name === "countDocuments") {
@@ -280,26 +324,12 @@ async function runCollectionCommand(colName: string, action: string) {
     if (query == null) {
       return console.error("Invalid syntax");
     }
-    return console.log(`Count: ${await col.countDocuments(query)}`);
+
+    return console.log(`Count: ${await col.count(query)}`);
   }
 
-  if (name === "aggregate") {
-    const pipeline = parseSingleArg(rawArgs);
-    if (!Array.isArray(pipeline)) {
-      return console.error("aggregate expects an array pipeline");
-    }
-    return console.log(util.inspect(await col.aggregate(pipeline), false, 10, true));
-  }
-
-  if (name === "explain") {
-    const args = parseTupleArgs(rawArgs);
-    if (args === null) {
-      return console.error("Invalid syntax");
-    }
-
-    const query = args[0] ?? {};
-    const options = args[1];
-    return console.log(util.inspect(await col.explain(query, options), false, 10, true));
+  if (name === "stats") {
+    return logValue(await col.stats());
   }
 
   return console.log("Unknown collection command. Type: help");
@@ -316,56 +346,68 @@ async function handleCommand(input: string) {
   }
 
   if (cmd === "clear") {
-    return console.clear();
+    console.clear();
+    printBanner(connectionUri);
+    updatePrompt();
+    return;
   }
 
   if (cmd === "help") {
     return printHelp();
   }
 
+  if (await runAuthCommand(cmd)) {
+    return;
+  }
+
   if (cmd === "show dbs") {
-    return console.table(await listDatabaseNames());
+    return console.table(await client.listDatabases());
   }
 
   if (cmd.startsWith("use collection ")) {
     currentCollection = cmd.split(" ")[2];
-    return updatePrompt();
+    updatePrompt();
+    return;
   }
 
   if (cmd.startsWith("use ")) {
     currentDB = cmd.split(" ")[1];
     currentCollection = null;
-    await manager.db(currentDB);
-    return updatePrompt();
+    updatePrompt();
+    return;
   }
 
   if (cmd === "show collections") {
-    return console.table(await listCollectionNames(currentDB));
+    return console.table(await client.db(currentDB).listCollections());
   }
 
   if (cmd.startsWith("db.create(")) {
     const parsedCall = parseCall(cmd);
-    const name = parsedCall?.name === "db.create"
-      ? parseNameTuple(parsedCall.rawArgs)[0]
-      : undefined;
+    const name =
+      parsedCall?.name === "db.create"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
     if (!name) {
       return console.error("Invalid syntax");
     }
 
-    await createDatabaseByName(name);
+    await client.createDatabase(name);
     return console.log("Database created");
   }
 
   if (cmd.startsWith("db.delete(")) {
     const parsedCall = parseCall(cmd);
-    const name = parsedCall?.name === "db.delete"
-      ? parseNameTuple(parsedCall.rawArgs)[0]
-      : undefined;
+    const name =
+      parsedCall?.name === "db.delete"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
     if (!name) {
       return console.error("Invalid syntax");
     }
 
-    await deleteDatabaseByName(name);
+    await client.dropDatabase(name);
 
     if (currentDB === name) {
       currentDB = "default";
@@ -378,17 +420,17 @@ async function handleCommand(input: string) {
 
   if (cmd.startsWith("db.rename(")) {
     const parsedCall = parseCall(cmd);
-    const args = parsedCall?.name === "db.rename"
-      ? parseNameTuple(parsedCall.rawArgs)
-      : [];
+    const args =
+      parsedCall?.name === "db.rename" ? parseNameTuple(parsedCall.rawArgs) : [];
+
     if (args.length < 2) {
       return console.error("Invalid syntax");
     }
 
-    await renameDatabaseByName(args[1], args[2]);
+    await client.renameDatabase(args[0], args[1]);
 
-    if (currentDB === args[1]) {
-      currentDB = args[2];
+    if (currentDB === args[0]) {
+      currentDB = args[1];
       currentCollection = null;
       updatePrompt();
     }
@@ -396,29 +438,47 @@ async function handleCommand(input: string) {
     return console.log("Database renamed");
   }
 
-  if (cmd.startsWith("db.createCollection")) {
+  if (cmd.startsWith("db.stats(")) {
     const parsedCall = parseCall(cmd);
-    const name = parsedCall?.name === "db.createCollection"
-      ? parseNameTuple(parsedCall.rawArgs)[0]
-      : undefined;
+    const name =
+      parsedCall?.name === "db.stats"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
     if (!name) {
       return console.error("Invalid syntax");
     }
 
-    await createCollectionByName(currentDB, name);
+    return logValue(await client.databaseStats(name));
+  }
+
+  if (cmd.startsWith("db.createCollection(")) {
+    const parsedCall = parseCall(cmd);
+    const name =
+      parsedCall?.name === "db.createCollection"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
+    if (!name) {
+      return console.error("Invalid syntax");
+    }
+
+    await client.db(currentDB).createCollection(name);
     return console.log("Collection created");
   }
 
-  if (cmd.startsWith("db.dropCollection")) {
+  if (cmd.startsWith("db.dropCollection(")) {
     const parsedCall = parseCall(cmd);
-    const name = parsedCall?.name === "db.dropCollection"
-      ? parseNameTuple(parsedCall.rawArgs)[0]
-      : undefined;
+    const name =
+      parsedCall?.name === "db.dropCollection"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
     if (!name) {
       return console.error("Invalid syntax");
     }
 
-    await deleteCollectionByName(currentDB, name);
+    await client.db(currentDB).dropCollection(name);
 
     if (currentCollection === name) {
       currentCollection = null;
@@ -428,27 +488,39 @@ async function handleCommand(input: string) {
     return console.log("Collection deleted");
   }
 
-  if (cmd.startsWith("db.renameCollection")) {
+  if (cmd.startsWith("db.renameCollection(")) {
     const parsedCall = parseCall(cmd);
-    const args = parsedCall?.name === "db.renameCollection"
-      ? parseNameTuple(parsedCall.rawArgs)
-      : [];
+    const args =
+      parsedCall?.name === "db.renameCollection"
+        ? parseNameTuple(parsedCall.rawArgs)
+        : [];
+
     if (args.length < 2) {
       return console.error("Invalid syntax");
     }
 
-    await renameCollectionByName(currentDB, args[1], args[2]);
+    await client.db(currentDB).renameCollection(args[0], args[1]);
 
-    if (currentCollection === args[1]) {
-      currentCollection = args[2];
+    if (currentCollection === args[0]) {
+      currentCollection = args[1];
       updatePrompt();
     }
 
     return console.log("Collection renamed");
   }
 
-  if (cmd.startsWith("user.") || cmd.startsWith("admin.")) {
-    return handleUserCommand(cmd);
+  if (cmd.startsWith("db.collectionStats(")) {
+    const parsedCall = parseCall(cmd);
+    const name =
+      parsedCall?.name === "db.collectionStats"
+        ? parseNameTuple(parsedCall.rawArgs)[0]
+        : undefined;
+
+    if (!name) {
+      return console.error("Invalid syntax");
+    }
+
+    return logValue(await client.db(currentDB).collection(name).stats());
   }
 
   if (cmd.startsWith("db.")) {
@@ -467,31 +539,58 @@ async function handleCommand(input: string) {
   console.log("Unknown command. Type: help");
 }
 
-const inlineCommand = getInlineCommand();
+const startupArgs = parseStartupArgs();
 
-if (inlineCommand) {
-  handleCommand(inlineCommand)
-    .then(async () => {
-      await manager.closeAll();
-      process.exit(0);
-    })
-    .catch(async (err) => {
-      console.error("Error:", err);
-      await manager.closeAll();
-      process.exit(1);
-    });
-} else {
+if (!startupArgs.connectionUri) {
+  printUsage();
+  process.exit(1);
+}
+
+const connectionUri = startupArgs.connectionUri;
+const inlineCommand = startupArgs.inlineCommand;
+
+let client: LioranClient;
+
+try {
+  client = new LioranClient(connectionUri);
+} catch (error) {
+  console.error("Invalid connection URI:", error);
+  printUsage();
+  process.exit(1);
+}
+
+async function initializeClient() {
+  if (connectionUri.startsWith("lioran://")) {
+    await client.connect();
+  }
+}
+
+async function main() {
+  await initializeClient();
+  printBanner(connectionUri);
+
+  if (inlineCommand) {
+    await handleCommand(inlineCommand);
+    process.exit(0);
+  }
+
   updatePrompt();
   rl.prompt();
 
   rl.on("line", async (line) => {
     try {
       await handleCommand(line);
-    } catch (err) {
-      console.error("Error:", err);
+    } catch (error) {
+      console.error("Error:", normalizeCommandError(error));
     }
+
     rl.prompt();
   });
 
   rl.on("close", () => process.exit(0));
 }
+
+main().catch((error) => {
+  console.error("Error:", normalizeCommandError(error));
+  process.exit(1);
+});
