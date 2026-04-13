@@ -1,10 +1,15 @@
 import { Request, Response } from "express";
 import { manager } from "../config/database";
+import {
+  createCollectionByName,
+  deleteCollectionByName,
+  listCollectionNames,
+  renameCollectionByName
+} from "../utils/coreStorage";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
-    const database = await manager.db(req.params.db);
-    const collections = await database.listCollections();
+    const collections = await listCollectionNames(req.params.db);
     res.json({ collections });
   } catch {
     res.status(500).json({ error: "server error" });
@@ -13,19 +18,17 @@ export const listCollections = async (req: Request, res: Response) => {
 
 export const createCollection = async (req: Request, res: Response) => {
   try {
-    const database = await manager.db(req.params.db);
-    await database.createCollection(req.body.name);
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "server error" });
+    await createCollectionByName(req.params.db, req.body.name);
+    res.json({ ok: true, collection: req.body.name });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 
 export const deleteCollection = async (req: Request, res: Response) => {
   try {
-    const database = await manager.db(req.params.db);
-    await database.deleteCollection(req.params.col);
-    res.json({ ok: true });
+    const ok = await deleteCollectionByName(req.params.db, req.params.col);
+    res.json({ ok });
   } catch {
     res.status(500).json({ error: "server error" });
   }
@@ -36,12 +39,11 @@ export const renameCollection = async (req: Request, res: Response) => {
     const { db, col } = req.params;
     const { newName } = req.body;
 
-    const database = await manager.db(db);
-    await database.renameCollection(col, newName);
+    await renameCollectionByName(db, col, newName);
 
     res.json({ ok: true, old: col, new: newName });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 

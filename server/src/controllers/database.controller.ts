@@ -1,11 +1,16 @@
 import { Request, Response } from "express";
-import fs from "fs";
-import path from "path";
 import { manager } from "../config/database";
+import {
+  createDatabaseByName,
+  deleteDatabaseByName,
+  listCollectionNames,
+  listDatabaseNames,
+  renameDatabaseByName
+} from "../utils/coreStorage";
 
 export const listDatabases = async (_: Request, res: Response) => {
   try {
-    const list = await manager.listDatabases();
+    const list = await listDatabaseNames();
     res.json({ databases: list });
   } catch {
     res.status(500).json({ error: "server error" });
@@ -17,17 +22,17 @@ export const createDatabase = async (req: Request, res: Response) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: "database name required" });
 
-    await manager.createDatabase(name);
+    await createDatabaseByName(name);
     res.json({ ok: true, db: name });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 
 export const deleteDatabase = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
-    const ok = await manager.deleteDatabase(db);
+    const ok = await deleteDatabaseByName(db);
     res.json({ ok: !!ok });
   } catch {
     res.status(500).json({ error: "server error" });
@@ -41,10 +46,10 @@ export const renameDatabase = async (req: Request, res: Response) => {
 
     if (!newName) return res.status(400).json({ error: "newName required" });
 
-    await manager.renameDatabase(db, newName);
+    await renameDatabaseByName(db, newName);
     res.json({ ok: true, old: db, new: newName });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 
@@ -52,7 +57,7 @@ export const databaseStats = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
     const database = await manager.db(db);
-    const cols = await database.listCollections();
+    const cols = await listCollectionNames(db);
 
     let totalDocs = 0;
 

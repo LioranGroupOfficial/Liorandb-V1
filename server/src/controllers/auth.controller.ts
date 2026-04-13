@@ -27,7 +27,7 @@ export const register = async (req: Request, res: Response) => {
       username,
       password: hashed,
       createdAt: new Date().toISOString(),
-    } as AuthUser);
+    } as AuthUser) as AuthUser;
 
     const token = signToken({ id: created._id, username });
 
@@ -46,7 +46,7 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "username and password required" });
 
     const users = await getAuthCollection();
-    const user = await users.findOne({ username });
+    const user = await users.findOne({ username }) as AuthUser | null;
 
     if (!user) return res.status(401).json({ error: "invalid credentials" });
 
