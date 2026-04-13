@@ -4,7 +4,7 @@ import os from "os";
 import app from "./app";
 import { manager } from "./config/database";
 import { parseCLIArgs } from "./utils/cli";
-import { hasAdminUser } from "./utils/startup";
+import { ensureAdminUser } from "./utils/startup";
 
 const cli = parseCLIArgs();
 const PORT = 4000;
@@ -36,12 +36,10 @@ function printHostAddresses(port: number) {
 }
 
 async function start() {
-  const adminExists = await hasAdminUser();
+  const adminState = await ensureAdminUser();
 
-  if (!adminExists) {
-    console.error("No admin user found. Create an admin user first with `ldb-cli admin.create(\"admin\",\"password\")`.");
-    await manager.closeAll();
-    process.exit(1);
+  if (adminState.created) {
+    console.log('No "admin" user found. Created default admin account with username "admin" and password "admin".');
   }
 
   app.listen(PORT, "0.0.0.0", () => {

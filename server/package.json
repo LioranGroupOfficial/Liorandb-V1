@@ -1,17 +1,19 @@
 {
   "name": "@liorandb/db",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "LioranDB server and CLI",
   "main": "dist/server.js",
   "bin": {
     "ldb-cli": "dist/cli/index.js",
+    "ldb-users": "dist/cli/users.js",
     "ldb-serve": "dist/server.js"
   },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "cli": "ts-node src/cli/index.ts"
+    "cli": "ts-node src/cli/index.ts",
+    "users": "ts-node src/cli/users.ts"
   },
   "files": [
     "dist"
