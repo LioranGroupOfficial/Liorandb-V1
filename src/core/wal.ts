@@ -1,5 +1,10 @@
 import fs from "fs";
 import path from "path";
+import {
+  decryptStringWithKey,
+  encryptStringWithKey,
+  getEncryptionKey
+} from "../utils/encryption.js";
 
 /* =========================
    WAL RECORD TYPES
@@ -11,6 +16,7 @@ export type WALRecord =
   | { lsn: number; tx: number; type: "applied" };
 
 type StoredRecord = WALRecord & { crc: number };
+type EncryptedStoredRecord = { v: 2; enc: string };
 
 /* =========================
    CONSTANTS
@@ -108,16 +114,12 @@ export class WALManager {
       for (const line of lines) {
         if (!line.trim()) continue;
 
-        try {
-          const parsed: StoredRecord = JSON.parse(line);
-          const { crc, ...record } = parsed;
-
-          if (crc32(JSON.stringify(record)) !== crc) break;
-
-          this.lsn = Math.max(this.lsn, record.lsn);
-        } catch {
+        const record = this.decodeLine(line, getEncryptionKey());
+        if (!record) {
           break;
         }
+
+        this.lsn = Math.max(this.lsn, record.lsn);
       }
     }
   }
@@ -156,6 +158,54 @@ export class WALManager {
     this.currentGen++;
   }
 
+  private encodeRecord(record: WALRecord, key = getEncryptionKey()) {
+    const payload: StoredRecord = {
+      ...record,
+      crc: crc32(JSON.stringify(record))
+    };
+
+    const encrypted: EncryptedStoredRecord = {
+      v: 2,
+      enc: encryptStringWithKey(JSON.stringify(payload), key)
+    };
+
+    return JSON.stringify(encrypted) + "\n";
+  }
+
+  private decodeLegacyLine(line: string): WALRecord | null {
+    try {
+      const parsed: StoredRecord = JSON.parse(line);
+      const { crc, ...record } = parsed;
+
+      if (crc32(JSON.stringify(record)) !== crc) {
+        return null;
+      }
+
+      return record;
+    } catch {
+      return null;
+    }
+  }
+
+  private decodeLine(line: string, key = getEncryptionKey()): WALRecord | null {
+    try {
+      const wrapper = JSON.parse(line) as EncryptedStoredRecord;
+      if (wrapper && wrapper.v === 2 && typeof wrapper.enc === "string") {
+        const raw = decryptStringWithKey(wrapper.enc, key);
+        const parsed = JSON.parse(raw) as StoredRecord;
+        const { crc, ...record } = parsed;
+
+        if (crc32(JSON.stringify(record)) !== crc) {
+          return null;
+        }
+
+        return record;
+      }
+    } catch {}
+
+    return this.decodeLegacyLine(line);
+  }
+
   /* -------------------------
      APPEND (Primary only)
   ------------------------- */
@@ -172,14 +222,7 @@ export class WALManager {
       lsn: ++this.lsn
     };
 
-    const body = JSON.stringify(full);
-
-    const stored: StoredRecord = {
-      ...full,
-      crc: crc32(body)
-    };
-
-    const line = JSON.stringify(stored) + "\n";
+    const line = this.encodeRecord(full);
 
     await this.fd!.write(line);
     await this.fd!.sync();
@@ -224,18 +267,8 @@ export class WALManager {
           continue;
         }
 
-        let parsed: StoredRecord;
-
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          break;
-        }
-
-        const { crc, ...record } = parsed;
-        const expected = crc32(JSON.stringify(record));
-
-        if (expected !== crc) {
+        const record = this.decodeLine(line);
+        if (!record) {
           break;
         }
 
@@ -293,5 +326,36 @@ export class WALManager {
 
   isReadonly() {
     return this.readonlyMode;
+  }
+
+  async rotateEncryptionKey(oldKey: Buffer, newKey: Buffer) {
+    if (this.readonlyMode || !fs.existsSync(this.walDir)) return;
+
+    if (this.fd) {
+      await this.fd.sync();
+      await this.fd.close();
+      this.fd = null;
+    }
+
+    const files = this.getSortedWalFiles();
+
+    for (const file of files) {
+      const filePath = path.join(this.walDir, file);
+      const lines = fs.readFileSync(filePath, "utf8").split("\n");
+      const nextLines: string[] = [];
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const record = this.decodeLine(line, oldKey);
+        if (!record) {
+          throw new Error(`Failed to decrypt WAL record in ${file}`);
+        }
+
+        nextLines.push(this.encodeRecord(record, newKey).trimEnd());
+      }
+
+      fs.writeFileSync(filePath, nextLines.join("\n") + (nextLines.length ? "\n" : ""), "utf8");
+    }
   }
 }

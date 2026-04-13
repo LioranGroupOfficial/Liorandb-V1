@@ -6,6 +6,7 @@ import { IPCWorkerPool } from "./pool.js";
 
 export type IPCAction =
   | "db"
+  | "db:meta"
   | "op"
   | "index"
   | "compact:collection"
@@ -44,6 +45,12 @@ export class DBQueue {
       case "db":
         await this.manager.db(args.db);
         return true;
+
+      case "db:meta": {
+        const { db, method, params } = args;
+        const database = await this.manager.db(db);
+        return await (database as any)[method](...params);
+      }
 
       /* ---------------- CRUD OPS ---------------- */
 

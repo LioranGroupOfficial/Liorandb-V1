@@ -5,7 +5,12 @@ import { Index, IndexOptions } from "./index.js";
 import { MigrationEngine } from "./migration.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
-import { decryptData } from "../utils/encryption.js";
+import {
+  decryptData,
+  deriveEncryptionKey,
+  getEncryptionKey,
+  setEncryptionKey
+} from "../utils/encryption.js";
 
 import { WALManager } from "./wal.js";
 import { CheckpointManager } from "./checkpoint.js";
@@ -293,6 +298,17 @@ export class LioranDB {
     return col;
   }
 
+  private getAllCollectionNames() {
+    if (!fs.existsSync(this.basePath)) return [];
+
+    return fs.readdirSync(this.basePath, { withFileTypes: true })
+      .filter(entry =>
+        entry.isDirectory() &&
+        entry.name !== "__wal"
+      )
+      .map(entry => entry.name);
+  }
+
   /* ------------------------- INDEX API ------------------------- */
 
   async createIndex(
@@ -351,6 +367,27 @@ export class LioranDB {
     for (const name of this.collections.keys()) {
       await this.compactCollection(name);
     }
+  }
+
+  async explain(collection: string, query: any = {}, options?: any) {
+    const col = this.collection(collection);
+    return await (col as any).explain(query, options);
+  }
+
+  async rotateEncryptionKey(newKey: string | Buffer) {
+    this.assertWritable();
+
+    const oldKey = getEncryptionKey();
+    const nextKey = deriveEncryptionKey(newKey);
+    const collectionNames = this.getAllCollectionNames();
+
+    for (const name of collectionNames) {
+      const col = this.collection(name);
+      await col.reencryptAll(oldKey, nextKey);
+    }
+
+    await this.wal.rotateEncryptionKey(oldKey, nextKey);
+    setEncryptionKey(nextKey);
   }
 
   /* ------------------------- TX API ------------------------- */

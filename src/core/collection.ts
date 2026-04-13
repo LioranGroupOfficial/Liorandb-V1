@@ -2,10 +2,17 @@ import { ClassicLevel } from "classic-level";
 import {
   matchDocument,
   applyUpdate,
-  runIndexedQuery
+  runIndexedQuery,
+  selectIndex,
+  getByPath
 } from "./query.js";
 import { v4 as uuid } from "uuid";
-import { encryptData, decryptData } from "../utils/encryption.js";
+import {
+  encryptData,
+  decryptData,
+  encryptDataWithKey,
+  decryptDataWithKey
+} from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
 import { Index } from "./index.js";
@@ -32,6 +39,19 @@ export interface FindOptions {
   offset?: number;
   projection?: string[];
 }
+
+type QueryExecutionResult<R> = {
+  results: R[];
+  explain: {
+    indexUsed?: string;
+    indexType?: "btree";
+    scannedDocuments: number;
+    returnedDocuments: number;
+    executionTimeMs: number;
+    usedFullScan: boolean;
+    candidateDocuments: number;
+  };
+};
 
 const META_KEY_PREFIX = "\u0000__meta__:";
 const COUNT_META_KEY = META_KEY_PREFIX + "count";
@@ -164,6 +184,34 @@ export class Collection<T = any> {
     try { await this.db.close(); } catch {}
   }
 
+  async reencryptAll(oldKey: Buffer, newKey: Buffer): Promise<void> {
+    this.assertWritable();
+
+    return this._enqueue(async () => {
+      const batch: Array<{ type: "put"; key: string; value: string }> = [];
+
+      for await (const [key, value] of this.db.iterator()) {
+        if (key.startsWith(META_KEY_PREFIX) || !value) continue;
+
+        const doc = decryptDataWithKey(value, oldKey);
+        batch.push({
+          type: "put",
+          key,
+          value: encryptDataWithKey(doc, newKey)
+        });
+
+        if (batch.length >= 1000) {
+          await this.db.batch(batch);
+          batch.length = 0;
+        }
+      }
+
+      if (batch.length > 0) {
+        await this.db.batch(batch);
+      }
+    });
+  }
+
   /* ===================== INDEX MANAGEMENT ===================== */
 
   registerIndex(index: Index) {
@@ -205,6 +253,8 @@ export class Collection<T = any> {
       case "insertMany": return this._insertMany(args[0]);
       case "find": return this._find(args[0], args[1]);
       case "findOne": return this._findOne(args[0], args[1]);
+      case "aggregate": return this._aggregate(args[0]);
+      case "explain": return this._explain(args[0], args[1]);
       case "updateOne": return this._updateOne(args[0], args[1], args[2]);
       case "updateMany": return this._updateMany(args[0], args[1]);
       case "deleteOne": return this._deleteOne(args[0]);
@@ -411,17 +461,158 @@ export class Collection<T = any> {
     return out as T;
   }
 
-  private async _find(query: any, options?: FindOptions) {
-    const ids = await this._getCandidateIds(query);
-    const out: T[] = [];
-    const { offset, limit, projection } = this.normalizeFindOptions(options);
-    let skipped = 0;
-
-    if (limit === 0) {
-      return out;
+  private normalizeProjectSpec(spec: string[] | Record<string, any>) {
+    if (Array.isArray(spec)) {
+      return spec.filter(
+        (field): field is string => typeof field === "string" && field.length > 0
+      );
     }
 
+    const out: string[] = [];
+    for (const [field, value] of Object.entries(spec ?? {})) {
+      if (value === 1 || value === true) {
+        out.push(field);
+      } else if (typeof value === "string" && value.startsWith("$")) {
+        out.push(value.slice(1));
+      }
+    }
+    return out;
+  }
+
+  private computeAccumulator(docs: any[], expr: any) {
+    if (!expr || typeof expr !== "object" || Array.isArray(expr)) {
+      return expr;
+    }
+
+    if ("$sum" in expr) {
+      const source = expr.$sum;
+      if (source === 1) return docs.length;
+      return docs.reduce((total, doc) => total + Number(getByPath(doc, String(source).replace(/^\$/, "")) ?? 0), 0);
+    }
+
+    if ("$avg" in expr) {
+      if (docs.length === 0) return null;
+      const total = docs.reduce(
+        (sum, doc) => sum + Number(getByPath(doc, String(expr.$avg).replace(/^\$/, "")) ?? 0),
+        0
+      );
+      return total / docs.length;
+    }
+
+    if ("$min" in expr) {
+      return docs.reduce((min, doc) => {
+        const value = getByPath(doc, String(expr.$min).replace(/^\$/, ""));
+        return min === undefined || value < min ? value : min;
+      }, undefined as any);
+    }
+
+    if ("$max" in expr) {
+      return docs.reduce((max, doc) => {
+        const value = getByPath(doc, String(expr.$max).replace(/^\$/, ""));
+        return max === undefined || value > max ? value : max;
+      }, undefined as any);
+    }
+
+    if ("$push" in expr) {
+      return docs.map(doc => getByPath(doc, String(expr.$push).replace(/^\$/, "")));
+    }
+
+    if ("$first" in expr) {
+      return docs.length === 0
+        ? null
+        : getByPath(docs[0], String(expr.$first).replace(/^\$/, ""));
+    }
+
+    if ("$last" in expr) {
+      return docs.length === 0
+        ? null
+        : getByPath(docs[docs.length - 1], String(expr.$last).replace(/^\$/, ""));
+    }
+
+    throw new Error(`Unsupported aggregation accumulator: ${Object.keys(expr)[0]}`);
+  }
+
+  private applyGroupStage(docs: any[], spec: Record<string, any>) {
+    const idExpr = spec._id;
+    const groups = new Map<string, any[]>();
+
+    for (const doc of docs) {
+      const keyValue =
+        typeof idExpr === "string" && idExpr.startsWith("$")
+          ? getByPath(doc, idExpr.slice(1))
+          : idExpr;
+      const key = JSON.stringify(keyValue);
+
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+
+      groups.get(key)!.push(doc);
+    }
+
+    const results: any[] = [];
+
+    for (const [key, groupedDocs] of groups) {
+      const out: Record<string, any> = {
+        _id: JSON.parse(key)
+      };
+
+      for (const [field, expr] of Object.entries(spec)) {
+        if (field === "_id") continue;
+        out[field] = this.computeAccumulator(groupedDocs, expr);
+      }
+
+      results.push(out);
+    }
+
+    return results;
+  }
+
+  private async executeQuery<R = T>(
+    query: any,
+    options?: FindOptions,
+    limitOverride?: number
+  ): Promise<QueryExecutionResult<R>> {
+    const startedAt = Date.now();
+    const ids = await this._getCandidateIds(query);
+    const out: R[] = [];
+    const { offset, limit, projection } = this.normalizeFindOptions(options);
+    const finalLimit = limitOverride === undefined ? limit : Math.min(limit, limitOverride);
+    const selection = selectIndex(query, new Set(this.indexes.keys()));
+    const indexUsable = selection
+      ? (
+          "$eq" in selection.cond ||
+          "$in" in selection.cond ||
+          "$gt" in selection.cond ||
+          "$gte" in selection.cond ||
+          "$lt" in selection.cond ||
+          "$lte" in selection.cond
+        )
+      : false;
+    const indexUsed = selection && indexUsable ? selection.field : undefined;
+    const usedFullScan = !indexUsed;
+    let skipped = 0;
+
+    if (finalLimit === 0) {
+      return {
+        results: out,
+        explain: {
+          indexUsed,
+          indexType: indexUsed ? "btree" : undefined,
+          scannedDocuments: 0,
+          returnedDocuments: 0,
+          executionTimeMs: Date.now() - startedAt,
+          usedFullScan,
+          candidateDocuments: ids.size
+        }
+      };
+    }
+
+    let scannedDocuments = 0;
+
     for (const id of ids) {
+      scannedDocuments++;
+
       try {
         const doc = await this._readAndMigrate(id);
         if (doc && matchDocument(doc, query)) {
@@ -430,41 +621,92 @@ export class Collection<T = any> {
             continue;
           }
 
-          out.push(this.projectDocument(doc, projection));
+          out.push(this.projectDocument(doc, projection) as unknown as R);
 
-          if (out.length >= limit) {
+          if (out.length >= finalLimit) {
             break;
           }
         }
       } catch {}
     }
 
-    return out;
+    return {
+      results: out,
+      explain: {
+        indexUsed,
+        indexType: indexUsed ? "btree" : undefined,
+        scannedDocuments,
+        returnedDocuments: out.length,
+        executionTimeMs: Date.now() - startedAt,
+        usedFullScan,
+        candidateDocuments: ids.size
+      }
+    };
+  }
+
+  private async _find(query: any, options?: FindOptions) {
+    const execution = await this.executeQuery<T>(query, options);
+    return execution.results;
   }
 
   private async _findOne(query: any, options?: FindOptions) {
-    const { projection } = this.normalizeFindOptions(options);
+    const execution = await this.executeQuery<T>(query, options, 1);
+    return execution.results[0] ?? null;
+  }
 
-    if (query && typeof query === "object" && !Array.isArray(query) && "_id" in query) {
-      const doc = await this._readAndMigrate(String(query._id));
-      if (doc && matchDocument(doc, query)) {
-        return this.projectDocument(doc, projection);
+  private async _aggregate(pipeline: any[]) {
+    if (!Array.isArray(pipeline)) {
+      throw new Error("Aggregation pipeline must be an array");
+    }
+
+    let working: any[];
+    let stageIndex = 0;
+
+    if (pipeline[0]?.$match) {
+      working = await this._find(pipeline[0].$match);
+      stageIndex = 1;
+    } else {
+      working = await this._find({});
+    }
+
+    for (; stageIndex < pipeline.length; stageIndex++) {
+      const stage = pipeline[stageIndex];
+
+      if (stage.$match) {
+        working = working.filter(doc => matchDocument(doc, stage.$match));
+        continue;
       }
-      return null;
+
+      if (stage.$project) {
+        const projection = this.normalizeProjectSpec(stage.$project);
+        working = working.map(doc => this.projectDocument(doc, projection));
+        continue;
+      }
+
+      if (stage.$skip !== undefined) {
+        working = working.slice(Math.max(0, Math.trunc(stage.$skip)));
+        continue;
+      }
+
+      if (stage.$limit !== undefined) {
+        working = working.slice(0, Math.max(0, Math.trunc(stage.$limit)));
+        continue;
+      }
+
+      if (stage.$group) {
+        working = this.applyGroupStage(working, stage.$group);
+        continue;
+      }
+
+      throw new Error(`Unsupported aggregation stage: ${Object.keys(stage ?? {})[0] ?? "unknown"}`);
     }
 
-    const ids = await this._getCandidateIds(query);
+    return working;
+  }
 
-    for (const id of ids) {
-      try {
-        const doc = await this._readAndMigrate(id);
-        if (doc && matchDocument(doc, query)) {
-          return this.projectDocument(doc, projection);
-        }
-      } catch {}
-    }
-
-    return null;
+  private async _explain(query: any = {}, options?: FindOptions) {
+    const execution = await this.executeQuery(query, options);
+    return execution.explain;
   }
 
   private async _countDocuments(filter: any) {
@@ -645,6 +887,14 @@ export class Collection<T = any> {
 
   findOne(query: any = {}, options?: FindOptions) {
     return this._enqueue(() => this._exec("findOne", [query, options]));
+  }
+
+  aggregate(pipeline: any[]) {
+    return this._enqueue(() => this._exec("aggregate", [pipeline]));
+  }
+
+  explain(query: any = {}, options?: FindOptions) {
+    return this._enqueue(() => this._exec("explain", [query, options]));
   }
 
   updateOne(filter: any, update: any, options?: UpdateOptions) {

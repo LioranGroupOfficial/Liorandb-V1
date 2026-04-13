@@ -38,6 +38,13 @@ export interface FindOptions {
   projection?: string[];
 }
 
+export type AggregationStage =
+  | { $match: Query<any> }
+  | { $group: Record<string, any> }
+  | { $project: string[] | Record<string, any> }
+  | { $limit: number }
+  | { $skip: number };
+
 /* ================================ INDEX =================================== */
 
 export type IndexType = "hash" | "btree";
@@ -65,6 +72,8 @@ export interface QueryExplainPlan {
   scannedDocuments: number;
   returnedDocuments: number;
   executionTimeMs: number;
+  usedFullScan?: boolean;
+  candidateDocuments?: number;
 }
 
 /* ========================== SCHEMA VERSIONING ============================= */
@@ -123,12 +132,26 @@ export interface CollectionQueryAPI<T = any> {
   countDocuments(filter?: Query<T>): Promise<number>;
   find(query?: Query<T>, options?: FindOptions): Promise<T[]>;
   findOne(query?: Query<T>, options?: FindOptions): Promise<T | null>;
+  aggregate(pipeline: AggregationStage[]): Promise<any[]>;
+  explain(query?: Query<T>, options?: FindOptions): Promise<QueryExplainPlan>;
 }
 
 /* =============================== DATABASE ================================= */
 
 export interface DatabaseIndexAPI {
   rebuildAllIndexes(): Promise<void>;
+}
+
+export interface DatabaseQueryAPI {
+  explain(
+    collection: string,
+    query?: Query<any>,
+    options?: FindOptions
+  ): Promise<QueryExplainPlan>;
+}
+
+export interface DatabaseSecurityAPI {
+  rotateEncryptionKey(newKey: string | Buffer): Promise<void>;
 }
 
 /**

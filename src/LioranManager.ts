@@ -267,6 +267,25 @@ class IPCDatabase {
   collection(name: string) {
     return new IPCCollection(this.name, name);
   }
+
+  private async getQueue() {
+    const { dbQueue } = await import("./ipc/queue.js");
+    return dbQueue;
+  }
+
+  private async call(method: string, params: any[]) {
+    const queue = await this.getQueue();
+    return queue.exec("db:meta", {
+      db: this.name,
+      method,
+      params
+    });
+  }
+
+  explain = (collection: string, query?: any, options?: any) =>
+    this.call("explain", [collection, query, options]);
+  rotateEncryptionKey = (newKey: string | Buffer) =>
+    this.call("rotateEncryptionKey", [newKey]);
 }
 
 class IPCCollection {
@@ -294,6 +313,8 @@ class IPCCollection {
   insertMany = (docs: any[]) => this.call("insertMany", [docs]);
   find = (query?: any, options?: any) => this.call("find", [query, options]);
   findOne = (query?: any, options?: any) => this.call("findOne", [query, options]);
+  aggregate = (pipeline: any[]) => this.call("aggregate", [pipeline]);
+  explain = (query?: any, options?: any) => this.call("explain", [query, options]);
   updateOne = (filter: any, update: any, options?: any) =>
     this.call("updateOne", [filter, update, options]);
   updateMany = (filter: any, update: any) =>

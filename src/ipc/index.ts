@@ -42,6 +42,12 @@ class CollectionProxy {
   findOne = (query?: any, options?: any) =>
     this.call("findOne", [query, options]);
 
+  aggregate = (pipeline: any[]) =>
+    this.call("aggregate", [pipeline]);
+
+  explain = (query?: any, options?: any) =>
+    this.call("explain", [query, options]);
+
   updateOne = (filter: any, update: any, options?: any) =>
     this.call("updateOne", [filter, update, options]);
 
@@ -96,12 +102,28 @@ class DBProxy {
     return dbQueue.exec("compact:db", { db: this.dbName });
   }
 
+  explain(collection: string, query?: any, options?: any) {
+    return dbQueue.exec("db:meta", {
+      db: this.dbName,
+      method: "explain",
+      params: [collection, query, options]
+    });
+  }
+
   snapshot(path: string) {
     return dbQueue.exec("snapshot", { path });
   }
 
   restore(path: string) {
     return dbQueue.exec("restore", { path });
+  }
+
+  rotateEncryptionKey(newKey: string) {
+    return dbQueue.exec("db:meta", {
+      db: this.dbName,
+      method: "rotateEncryptionKey",
+      params: [newKey]
+    });
   }
 }
 
