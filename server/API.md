@@ -2,23 +2,48 @@
 
 Base URL: `http://<host>:4000`
 
-All endpoints except `/` and `/health` require JSON requests. All routes except `/health`, `/`, and `/auth/*` require a JWT bearer token:
+## Authentication
+
+Public routes:
+
+- `GET /`
+- `GET /health`
+- `POST /auth/login`
+- `POST /auth/super-admin/login`
+
+Protected routes accept either:
 
 ```http
-Authorization: Bearer <token>
+Authorization: Bearer <jwt>
 ```
 
-## Startup Requirement
+or:
 
-The server will not start until at least one admin user exists in the auth database.
-
-Create the first admin with the CLI before starting the host:
-
-```bash
-ldb-cli 'admin.create("admin","password123")'
+```http
+x-liorandb-connection-string: liorandb://<dbUsername>:<dbPassword>@<host>/<databaseName>
 ```
 
-After that, start the server and use `/auth/login` to obtain a token. `POST /auth/register` is still available, but it cannot be used to create the very first user because the host refuses to boot without one.
+Notes:
+
+- JWT auth is used for `super_admin`, `admin`, and `user`
+- Connection-string auth only grants access to the single database encoded in the connection string
+- `POST /auth/register` is protected now; it is no longer a public signup route
+
+## Startup Behavior
+
+On startup the server checks the repository root `secret.key`.
+
+- If `secret.key` exists and is valid, it is reused
+- If it is missing or invalid, a new random secret is generated and written once
+- All JWT signing and verification uses that file-backed secret
+
+The server also ensures a default local admin account exists:
+
+```text
+username: admin
+password: admin
+role: admin
+```
 
 ## Health
 
@@ -29,7 +54,7 @@ Response:
 ```json
 {
   "ok": true,
-  "time": "2026-04-13T12:00:00.000Z"
+  "time": "2026-04-14T12:00:00.000Z"
 }
 ```
 
@@ -45,18 +70,17 @@ Response:
 }
 ```
 
-## Authentication
+## Auth Endpoints
 
-### `POST /auth/register`
+### `POST /auth/super-admin/login`
 
-Create another user account.
+Authenticate as the JWT super-admin by using the raw value from `secret.key`.
 
 Body:
 
 ```json
 {
-  "username": "editor",
-  "password": "password123"
+  "secret": "<contents-of-secret.key>"
 }
 ```
 
@@ -65,30 +89,33 @@ Success response:
 ```json
 {
   "user": {
-    "id": "<user_id>",
-    "username": "editor"
+    "authType": "jwt",
+    "userId": "super-admin",
+    "username": "super-admin",
+    "role": "super_admin"
   },
-  "token": "<jwt_token>"
+  "token": "<jwt_token>",
+  "secretBacked": true
 }
 ```
 
 Possible errors:
 
 ```json
-{ "error": "username and password required" }
-{ "error": "invalid types" }
-{ "error": "password must be at least 6 characters" }
-{ "error": "username already exists" }
+{ "error": "secret required" }
+{ "error": "invalid super admin secret" }
 ```
 
 ### `POST /auth/login`
+
+Login with a managed local username/password.
 
 Body:
 
 ```json
 {
   "username": "admin",
-  "password": "password123"
+  "password": "admin"
 }
 ```
 
@@ -97,8 +124,10 @@ Success response:
 ```json
 {
   "user": {
-    "id": "<user_id>",
-    "username": "admin"
+    "userId": "admin",
+    "username": "admin",
+    "role": "admin",
+    "authType": "jwt"
   },
   "token": "<jwt_token>"
 }
@@ -108,30 +137,217 @@ Possible errors:
 
 ```json
 { "error": "username and password required" }
+{ "error": "password login is not enabled for this user" }
 { "error": "invalid credentials" }
 ```
 
-## Databases
+### `GET /auth/me`
 
-### `GET /databases`
+Return the currently authenticated identity.
 
-List database directories, excluding the internal auth database.
-
-Response:
+Success response:
 
 ```json
 {
-  "databases": ["app", "analytics"]
+  "user": {
+    "authType": "jwt",
+    "userId": "admin",
+    "username": "admin",
+    "role": "admin"
+  }
 }
 ```
 
-### `POST /databases`
+### `GET /auth/users`
+
+List all managed users.
+
+Requires: `admin` or `super_admin`
+
+Success response:
+
+```json
+{
+  "users": [
+    {
+      "userId": "admin",
+      "username": "admin",
+      "role": "admin",
+      "externalUserId": null,
+      "createdAt": "2026-04-14T12:00:00.000Z",
+      "updatedAt": "2026-04-14T12:00:00.000Z",
+      "createdBy": "system",
+      "passwordEnabled": true
+    }
+  ]
+}
+```
+
+### `POST /auth/register`
+
+Create a managed user.
+
+Requires:
+
+- `super_admin` to create `admin` or `user`
+- `admin` to create `user`
 
 Body:
 
 ```json
 {
-  "name": "app"
+  "userId": "user_123",
+  "username": "user_123",
+  "password": "strongpass123",
+  "role": "user",
+  "externalUserId": "clerk_user_123"
+}
+```
+
+Success response:
+
+```json
+{
+  "user": {
+    "userId": "user_123",
+    "username": "user_123",
+    "role": "user",
+    "externalUserId": "clerk_user_123",
+    "authType": "jwt"
+  },
+  "token": "<jwt_token>",
+  "secretBacked": false
+}
+```
+
+Possible errors:
+
+```json
+{ "error": "admin access required" }
+{ "error": "cannot create this role" }
+{ "error": "userId or username is required" }
+{ "error": "password must be at least 6 characters" }
+{ "error": "userId already exists" }
+{ "error": "username already exists" }
+```
+
+### `POST /auth/users/:userId/token`
+
+Issue a JWT for an existing managed user.
+
+Requires: `admin` or `super_admin`
+
+Success response:
+
+```json
+{
+  "user": {
+    "userId": "user_123",
+    "username": "user_123",
+    "role": "user",
+    "externalUserId": "clerk_user_123",
+    "authType": "jwt"
+  },
+  "token": "<jwt_token>"
+}
+```
+
+## Database Endpoints
+
+Managed databases store metadata in `_auth.databases`.
+
+Ownership rules:
+
+- `user` can only manage databases where `ownerUserId === user.userId`
+- `user` databases are physically stored as `${userId}-${databaseName}`
+- `admin` and `super_admin` can manage all databases
+- each managed database can have exactly one username/password pair at a time
+
+### `GET /databases`
+
+List visible databases for the current identity.
+
+Success response:
+
+```json
+{
+  "databases": [
+    {
+      "ownerUserId": "user_123",
+      "ownerRole": "user",
+      "requestedName": "analytics",
+      "databaseName": "user_123-analytics",
+      "createdAt": "2026-04-14T12:00:00.000Z",
+      "updatedAt": "2026-04-14T12:00:00.000Z",
+      "credentialsConfigured": true,
+      "dbUsername": "analytics_user",
+      "connectionString": "liorandb://analytics_user:analytics_pass_123@localhost:4000/user_123-analytics"
+    }
+  ]
+}
+```
+
+### `GET /databases/count`
+
+Count databases visible to the current identity.
+
+Admins may pass `?userId=user_123`.
+
+Success response:
+
+```json
+{
+  "userId": "user_123",
+  "count": 1
+}
+```
+
+### `GET /databases/user/:userId`
+
+List managed databases for one specific user.
+
+Requires: `admin` or `super_admin`
+
+Success response:
+
+```json
+{
+  "userId": "user_123",
+  "count": 1,
+  "databases": [
+    {
+      "ownerUserId": "user_123",
+      "ownerRole": "user",
+      "requestedName": "analytics",
+      "databaseName": "user_123-analytics",
+      "createdAt": "2026-04-14T12:00:00.000Z",
+      "updatedAt": "2026-04-14T12:00:00.000Z",
+      "credentialsConfigured": false,
+      "dbUsername": null,
+      "connectionString": null
+    }
+  ]
+}
+```
+
+### `POST /databases`
+
+Create a managed database.
+
+User-owned example:
+
+```json
+{
+  "name": "analytics"
+}
+```
+
+Admin creating for another user:
+
+```json
+{
+  "name": "analytics",
+  "ownerUserId": "user_123"
 }
 ```
 
@@ -140,18 +356,34 @@ Success response:
 ```json
 {
   "ok": true,
-  "db": "app"
+  "database": {
+    "ownerUserId": "user_123",
+    "ownerRole": "user",
+    "requestedName": "analytics",
+    "databaseName": "user_123-analytics",
+    "createdAt": "2026-04-14T12:00:00.000Z",
+    "updatedAt": "2026-04-14T12:00:00.000Z",
+    "credentialsConfigured": false,
+    "dbUsername": null,
+    "connectionString": null
+  }
 }
 ```
 
-Validation errors return `400`, for example:
+Possible errors:
 
 ```json
+{ "error": "jwt auth required" }
 { "error": "database name required" }
+{ "error": "cannot create database for another user" }
+{ "error": "target user not found" }
+{ "error": "database already exists" }
 { "error": "invalid database name" }
 ```
 
 ### `DELETE /databases/:db`
+
+Delete a managed database and remove its metadata.
 
 Success response:
 
@@ -161,21 +393,63 @@ Success response:
 }
 ```
 
-If the database does not exist:
+Possible errors:
 
 ```json
-{
-  "ok": false
-}
+{ "error": "managed database not found" }
+{ "error": "database access denied" }
 ```
 
 ### `PATCH /databases/:db/rename`
+
+Managed database rename is disabled.
+
+Response:
+
+```json
+{
+  "error": "database rename is not supported for managed databases"
+}
+```
+
+### `GET /databases/:db/stats`
+
+Success response:
+
+```json
+{
+  "name": "user_123-analytics",
+  "collections": 2,
+  "documents": 154
+}
+```
+
+### `GET /databases/:db/credentials`
+
+Return the current database credentials and connection string.
+
+Success response:
+
+```json
+{
+  "databaseName": "user_123-analytics",
+  "ownerUserId": "user_123",
+  "username": "analytics_user",
+  "password": "analytics_pass_123",
+  "connectionString": "liorandb://analytics_user:analytics_pass_123@localhost:4000/user_123-analytics"
+}
+```
+
+### `PUT /databases/:db/credentials`
+
+Configure or replace the single username/password pair for a managed database.
 
 Body:
 
 ```json
 {
-  "newName": "app_v2"
+  "username": "analytics_user",
+  "password": "analytics_pass_123"
 }
 ```
 
@@ -184,34 +458,49 @@ Success response:
 ```json
 {
   "ok": true,
-  "old": "app",
-  "new": "app_v2"
+  "credentials": {
+    "databaseName": "user_123-analytics",
+    "username": "analytics_user",
+    "password": "analytics_pass_123",
+    "connectionString": "liorandb://analytics_user:analytics_pass_123@localhost:4000/user_123-analytics"
+  }
 }
 ```
 
-Possible `400` errors include:
+Possible errors:
 
 ```json
-{ "error": "newName required" }
-{ "error": "database not found" }
-{ "error": "target database already exists" }
+{ "error": "username and password required" }
+{ "error": "password must be at least 8 characters" }
+{ "error": "invalid username" }
 ```
 
-### `GET /databases/:db/stats`
+### `GET /databases/:db/connection-string`
 
-Response:
+Generate the current connection string for a managed database.
+
+Success response:
 
 ```json
 {
-  "name": "app",
-  "collections": 2,
-  "documents": 154
+  "databaseName": "user_123-analytics",
+  "connectionString": "liorandb://analytics_user:analytics_pass_123@localhost:4000/user_123-analytics"
 }
 ```
 
-## Collections
+Possible errors:
+
+```json
+{ "error": "managed database not found" }
+{ "error": "database access denied" }
+{ "error": "database credentials are not configured" }
+```
+
+## Collection Endpoints
 
 Base path: `/db/:db/collections`
+
+These routes require access to `:db` through either JWT auth or a valid database connection string.
 
 ### `GET /db/:db/collections`
 
@@ -291,9 +580,11 @@ Response:
 }
 ```
 
-## Documents
+## Document Endpoints
 
 Base path: `/db/:db/collections/:col`
+
+These routes require access to `:db` through either JWT auth or a valid database connection string.
 
 ### `POST /db/:db/collections/:col`
 
@@ -425,12 +716,14 @@ Response:
 }
 ```
 
-## Auth Flow
+## Example Flow
 
-1. Create the first admin with `ldb-cli`.
-2. Start the server.
-3. Call `POST /auth/login`.
-4. Send the returned token in the `Authorization` header for protected routes.
+1. Read or generate the repo-root `secret.key`
+2. Call `POST /auth/super-admin/login` or `POST /auth/login`
+3. If needed, create app users with `POST /auth/register`
+4. Create a database with `POST /databases`
+5. Set database credentials with `PUT /databases/:db/credentials`
+6. Access collections and documents with JWT auth or `x-liorandb-connection-string`
 
 ## Status Codes
 
@@ -439,5 +732,7 @@ Response:
 | `200` | Success |
 | `400` | Bad request or validation failure |
 | `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not found |
 | `409` | Conflict |
 | `500` | Server error |
