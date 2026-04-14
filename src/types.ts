@@ -1,10 +1,37 @@
+export type LioranRole = "super_admin" | "admin" | "user";
+export type LioranAuthType = "jwt" | "connection_string";
+
 export interface LioranUser {
-  id: string;
+  userId: string;
   username: string;
+  role: LioranRole;
+  authType: LioranAuthType;
+  externalUserId?: string | null;
+}
+
+export interface LioranManagedUser extends LioranUser {
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  passwordEnabled?: boolean;
 }
 
 export interface LioranAuthResponse {
   user: LioranUser;
+  token: string;
+  secretBacked?: boolean;
+}
+
+export interface LioranMeResponse {
+  user: LioranUser;
+}
+
+export interface LioranUsersResponse {
+  users: LioranManagedUser[];
+}
+
+export interface LioranIssueUserTokenResponse {
+  user: LioranManagedUser;
   token: string;
 }
 
@@ -19,13 +46,36 @@ export interface LioranHostInfoResponse {
   status: string;
 }
 
+export interface LioranManagedDatabase {
+  ownerUserId?: string;
+  ownerRole?: LioranRole;
+  requestedName?: string;
+  databaseName: string;
+  createdAt?: string;
+  updatedAt?: string;
+  credentialsConfigured?: boolean;
+  dbUsername?: string | null;
+  connectionString?: string | null;
+}
+
 export interface LioranDatabaseListResponse {
-  databases: string[];
+  databases: LioranManagedDatabase[];
+}
+
+export interface LioranDatabaseCountResponse {
+  userId?: string;
+  count: number;
+}
+
+export interface LioranDatabaseUserListResponse {
+  userId: string;
+  count: number;
+  databases: LioranManagedDatabase[];
 }
 
 export interface LioranDatabaseMutationResponse {
   ok: boolean;
-  db: string;
+  database: LioranManagedDatabase;
 }
 
 export interface LioranDeleteResponse {
@@ -42,6 +92,26 @@ export interface LioranDatabaseStats {
   name: string;
   collections: number;
   documents: number;
+}
+
+export interface LioranDatabaseCredentials {
+  databaseName: string;
+  ownerUserId?: string;
+  username: string;
+  password: string;
+  connectionString: string;
+}
+
+export interface LioranDatabaseCredentialsResponse extends LioranDatabaseCredentials {}
+
+export interface LioranDatabaseCredentialsMutationResponse {
+  ok: true;
+  credentials: LioranDatabaseCredentials;
+}
+
+export interface LioranDatabaseConnectionStringResponse {
+  databaseName: string;
+  connectionString: string;
 }
 
 export interface LioranCollectionListResponse {

@@ -3,11 +3,19 @@ import {
   DocumentData,
   LioranCollectionListResponse,
   LioranCollectionMutationResponse,
+  LioranDatabaseConnectionStringResponse,
+  LioranDatabaseCredentialsMutationResponse,
+  LioranDatabaseCredentialsResponse,
   LioranDatabaseStats,
   LioranDeleteResponse,
   LioranRenameResponse,
 } from "./types";
 import { HttpClient } from "./http";
+
+export interface DatabaseCredentialsInput {
+  username: string;
+  password: string;
+}
 
 export class DB {
   constructor(
@@ -21,21 +29,21 @@ export class DB {
 
   async listCollections(): Promise<string[]> {
     const res = await this.http.get<LioranCollectionListResponse>(
-      `/db/${this.name}/collections`
+      `/db/${encodeURIComponent(this.name)}/collections`
     );
     return res.collections;
   }
 
   async createCollection(name: string): Promise<LioranCollectionMutationResponse> {
     return this.http.post<LioranCollectionMutationResponse>(
-      `/db/${this.name}/collections`,
+      `/db/${encodeURIComponent(this.name)}/collections`,
       { name }
     );
   }
 
   async dropCollection(name: string): Promise<LioranDeleteResponse> {
     return this.http.delete<LioranDeleteResponse>(
-      `/db/${this.name}/collections/${name}`
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(name)}`
     );
   }
 
@@ -44,12 +52,37 @@ export class DB {
     newName: string
   ): Promise<LioranRenameResponse> {
     return this.http.patch<LioranRenameResponse>(
-      `/db/${this.name}/collections/${oldName}/rename`,
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        oldName
+      )}/rename`,
       { newName }
     );
   }
 
   async stats(): Promise<LioranDatabaseStats> {
-    return this.http.get<LioranDatabaseStats>(`/databases/${this.name}/stats`);
+    return this.http.get<LioranDatabaseStats>(
+      `/databases/${encodeURIComponent(this.name)}/stats`
+    );
+  }
+
+  async getCredentials(): Promise<LioranDatabaseCredentialsResponse> {
+    return this.http.get<LioranDatabaseCredentialsResponse>(
+      `/databases/${encodeURIComponent(this.name)}/credentials`
+    );
+  }
+
+  async setCredentials(
+    input: DatabaseCredentialsInput
+  ): Promise<LioranDatabaseCredentialsMutationResponse> {
+    return this.http.put<LioranDatabaseCredentialsMutationResponse>(
+      `/databases/${encodeURIComponent(this.name)}/credentials`,
+      input
+    );
+  }
+
+  async getConnectionString(): Promise<LioranDatabaseConnectionStringResponse> {
+    return this.http.get<LioranDatabaseConnectionStringResponse>(
+      `/databases/${encodeURIComponent(this.name)}/connection-string`
+    );
   }
 }

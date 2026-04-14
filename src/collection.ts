@@ -21,21 +21,27 @@ export class Collection<T extends DocumentData = DocumentData> {
 
   async insertOne(doc: T): Promise<T & { _id: string }> {
     return (await this.http.post<LioranInsertOneResponse<T>>(
-      `/db/${this.dbName}/collections/${this.colName}`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}`,
       doc
     )).doc;
   }
 
   async insertMany(docs: T[]): Promise<Array<T & { _id: string }>> {
     return (await this.http.post<LioranInsertManyResponse<T>>(
-      `/db/${this.dbName}/collections/${this.colName}/bulk`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/bulk`,
       { docs }
     )).docs;
   }
 
   async find(filter: Filter = {}): Promise<Array<T & { _id?: string }>> {
     return (await this.http.post<LioranFindResponse<T>>(
-      `/db/${this.dbName}/collections/${this.colName}/find`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/find`,
       { query: filter }
     )).results;
   }
@@ -50,28 +56,36 @@ export class Collection<T extends DocumentData = DocumentData> {
     update: UpdateQuery
   ): Promise<LioranUpdateManyResponse> {
     return this.http.patch<LioranUpdateManyResponse>(
-      `/db/${this.dbName}/collections/${this.colName}/updateMany`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/updateMany`,
       { filter, update }
     );
   }
 
   async deleteMany(filter: Filter): Promise<LioranDeleteManyResponse> {
     return this.http.post<LioranDeleteManyResponse>(
-      `/db/${this.dbName}/collections/${this.colName}/deleteMany`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/deleteMany`,
       { filter }
     );
   }
 
   async count(filter: Filter = {}): Promise<number> {
     return (await this.http.post<LioranCountResponse>(
-      `/db/${this.dbName}/collections/${this.colName}/count`,
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/count`,
       { filter }
     )).count;
   }
 
   async stats(): Promise<LioranCollectionStats> {
     return this.http.get<LioranCollectionStats>(
-      `/db/${this.dbName}/collections/${this.colName}/stats`
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/stats`
     );
   }
 }

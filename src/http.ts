@@ -11,15 +11,26 @@ export class HttpError extends Error {
 
 export class HttpClient {
   private token: string | null = null;
+  private connectionString: string | null = null;
 
   constructor(private baseURL: string) {}
 
   setToken(token: string): void {
     this.token = token;
+    this.connectionString = null;
   }
 
   clearToken(): void {
     this.token = null;
+  }
+
+  setConnectionString(connectionString: string): void {
+    this.connectionString = connectionString;
+    this.token = null;
+  }
+
+  clearConnectionString(): void {
+    this.connectionString = null;
   }
 
   async get<T>(path: string): Promise<T> {
@@ -32,6 +43,10 @@ export class HttpClient {
 
   async patch<T>(path: string, body?: unknown): Promise<T> {
     return this.request<T>("PATCH", path, body);
+  }
+
+  async put<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("PUT", path, body);
   }
 
   async delete<T>(path: string): Promise<T> {
@@ -53,6 +68,8 @@ export class HttpClient {
 
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
+    } else if (this.connectionString) {
+      headers["x-liorandb-connection-string"] = this.connectionString;
     }
 
     const response = await fetch(`${this.baseURL}${path}`, {
