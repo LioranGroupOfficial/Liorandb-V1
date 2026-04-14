@@ -1,22 +1,23 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { getBaseDBFolder } from "@liorandb/core";
 
 const SECRET_FILE_NAME = "secret.key";
 const MIN_SECRET_LENGTH = 64;
 
-function resolveProjectRoot() {
-  const cwd = process.cwd();
+// function resolveProjectRoot() {
+//   const cwd = process.cwd();
 
-  if (path.basename(cwd).toLowerCase() === "server") {
-    return path.resolve(cwd, "..");
-  }
+//   if (path.basename(cwd).toLowerCase() === "server") {
+//     return path.resolve(cwd, "..");
+//   }
 
-  return cwd;
-}
+//   return cwd;
+// }
 
 export function getSecretFilePath() {
-  return path.join(resolveProjectRoot(), SECRET_FILE_NAME);
+  return path.join(getBaseDBFolder(), SECRET_FILE_NAME);
 }
 
 function isValidSecret(value: string) {
