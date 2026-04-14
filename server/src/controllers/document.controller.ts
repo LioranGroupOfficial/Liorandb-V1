@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
 import { manager } from "../config/database";
+import { requireDatabaseAccess } from "../utils/databaseAccess";
 
 export const insertDocument = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 
@@ -10,6 +12,7 @@ export const insertDocument = async (req: Request, res: Response) => {
 };
 
 export const insertMany = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 
@@ -18,6 +21,7 @@ export const insertMany = async (req: Request, res: Response) => {
 };
 
 export const findDocuments = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 
@@ -26,6 +30,7 @@ export const findDocuments = async (req: Request, res: Response) => {
 };
 
 export const updateMany = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 
@@ -34,6 +39,7 @@ export const updateMany = async (req: Request, res: Response) => {
 };
 
 export const deleteMany = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 
@@ -42,6 +48,7 @@ export const deleteMany = async (req: Request, res: Response) => {
 };
 
 export const countDocuments = async (req: Request, res: Response) => {
+  await requireDatabaseAccess(req, req.params.db);
   const collection = (await manager.db(req.params.db))
     .collection<any>(req.params.col);
 

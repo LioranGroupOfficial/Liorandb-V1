@@ -89,8 +89,10 @@ async function listUsers() {
 
   console.table(
     authUsers.map((user) => ({
+      userId: user.userId,
       id: user._id ?? "",
       username: user.username,
+      role: user.role,
       createdAt: user.createdAt,
     }))
   );
@@ -116,10 +118,15 @@ async function createUser(username: string, password: string) {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
+  const createdAt = new Date().toISOString();
   const created = await users.insertOne({
+    userId: username,
     username,
-    password: hashedPassword,
-    createdAt: new Date().toISOString(),
+    role: "user",
+    passwordHash: hashedPassword,
+    createdAt,
+    updatedAt: createdAt,
+    createdBy: "cli",
   } as AuthUser) as AuthUser;
 
   console.log(`Created user "${created.username}" (${created._id ?? "no id"}).`);
@@ -163,7 +170,7 @@ async function setPassword(username: string, password: string) {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  await users.updateMany({ username }, { $set: { password: hashedPassword } });
+  await users.updateMany({ username }, { $set: { passwordHash: hashedPassword } });
   console.log(`Updated password for "${username}".`);
 }
 

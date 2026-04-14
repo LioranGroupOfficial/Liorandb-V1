@@ -14,11 +14,16 @@ export async function ensureAdminUser() {
   }
 
   const hashedPassword = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
+  const createdAt = new Date().toISOString();
 
   await users.insertOne({
+    userId: DEFAULT_ADMIN_USERNAME,
     username: DEFAULT_ADMIN_USERNAME,
-    password: hashedPassword,
-    createdAt: new Date().toISOString(),
+    role: "admin",
+    passwordHash: hashedPassword,
+    createdAt,
+    updatedAt: createdAt,
+    createdBy: "system",
   } as AuthUser);
 
   return { created: true, username: DEFAULT_ADMIN_USERNAME };

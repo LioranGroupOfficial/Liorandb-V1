@@ -1,6 +1,6 @@
 // src/config/database.ts
 import { LioranManager, getBaseDBFolder } from "@liorandb/core";
-import { AuthUser } from "../types/auth-user";
+import { AuthUser, ManagedDatabaseRecord } from "../types/auth-user";
 
 import { parseCLIArgs } from "../utils/cli";
 
@@ -13,6 +13,10 @@ export const manager = new LioranManager({
 
 export async function getAuthCollection() {
   const db = await manager.db("_auth");
-  // explicitly type this collection as AuthUser so TS knows the fields
   return db.collection<AuthUser>("users");
+}
+
+export async function getDatabaseMetadataCollection() {
+  const db = await manager.db("_auth");
+  return db.collection<ManagedDatabaseRecord>("databases");
 }

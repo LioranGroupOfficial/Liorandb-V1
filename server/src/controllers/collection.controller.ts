@@ -6,18 +6,21 @@ import {
   listCollectionNames,
   renameCollectionByName
 } from "../utils/coreStorage";
+import { requireDatabaseAccess } from "../utils/databaseAccess";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
+    await requireDatabaseAccess(req, req.params.db);
     const collections = await listCollectionNames(req.params.db);
     res.json({ collections });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 
 export const createCollection = async (req: Request, res: Response) => {
   try {
+    await requireDatabaseAccess(req, req.params.db);
     await createCollectionByName(req.params.db, req.body.name);
     res.json({ ok: true, collection: req.body.name });
   } catch (error) {
@@ -27,10 +30,11 @@ export const createCollection = async (req: Request, res: Response) => {
 
 export const deleteCollection = async (req: Request, res: Response) => {
   try {
+    await requireDatabaseAccess(req, req.params.db);
     const ok = await deleteCollectionByName(req.params.db, req.params.col);
     res.json({ ok });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
 
@@ -39,6 +43,7 @@ export const renameCollection = async (req: Request, res: Response) => {
     const { db, col } = req.params;
     const { newName } = req.body;
 
+    await requireDatabaseAccess(req, db);
     await renameCollectionByName(db, col, newName);
 
     res.json({ ok: true, old: col, new: newName });
@@ -50,6 +55,7 @@ export const renameCollection = async (req: Request, res: Response) => {
 export const collectionStats = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
+    await requireDatabaseAccess(req, db);
     const database = await manager.db(db);
     const collection = database.collection<any>(col);
 
@@ -59,7 +65,7 @@ export const collectionStats = async (req: Request, res: Response) => {
       name: col,
       documents: count,
     });
-  } catch {
-    res.status(500).json({ error: "server error" });
+  } catch (error) {
+    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
   }
 };
