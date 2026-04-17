@@ -72,8 +72,8 @@ const config: Config = {
     // Replace with your project's social card
     image: 'img/liorandb-social-card.jpg',
     metadata: [
-      {name: 'twitter:card', content: 'summary_large_image'},
-      {name: 'twitter:image', content: '/img/liorandb.png'},
+      {name: 'twitter:card', content: 'img/liorandb-social-card.jpg'},
+      {name: 'twitter:image', content: 'img/liorandb-social-card.jpg'},
     ],
     colorMode: {
       respectPrefersColorScheme: true,
