@@ -73,8 +73,16 @@ const config: Config = {
     image: 'img/liorandb-social-card.jpg',
     metadata: [
       {
+        property: 'og:type',
+        content: 'website',
+      },
+      {
         property: 'og:image',
         content: 'https://db.lioransolutions.com/img/liorandb-social-card.jpg',
+      },
+      {
+        property: 'fb:app_id',
+        content: process.env.FB_APP_ID ?? 'YOUR_FACEBOOK_APP_ID',
       },
     ],
     colorMode: {
