@@ -44,7 +44,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/LioranGroupOfficial/Liorandb/tree/core',
+            'https://github.com/LioranGroupOfficial/Liorandb',
         },
         blog: {
           showReadingTime: true,
@@ -55,7 +55,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/LioranGroupOfficial/Liorandb/tree/core',
+            'https://github.com/LioranGroupOfficial/Liorandb',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -93,7 +93,7 @@ const config: Config = {
         },
         // {to: '/blog', label: 'Blog', position: 'left'},
         {
-          href: 'https://github.com/LioranGroupOfficial/Liorandb/tree/core',
+          href: 'https://github.com/LioranGroupOfficial/Liorandb',
           label: 'GitHub',
           position: 'right',
         },
@@ -125,7 +125,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/LioranGroupOfficial/Liorandb/tree/core',
+              href: 'https://github.com/LioranGroupOfficial/Liorandb',
             },
           ],
         },
