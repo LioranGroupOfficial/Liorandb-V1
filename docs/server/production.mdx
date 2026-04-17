@@ -1,0 +1,59 @@
+---
+title: Production notes (Docker, ops)
+sidebar_position: 5
+---
+
+## VPS (PM2 + Nginx)
+
+For a full Ubuntu VPS production setup using PM2 + Nginx (rate limiting, TLS, firewall), see:
+
+- [Ubuntu VPS production (PM2 + Nginx)](./ubuntu-vps-pm2-nginx)
+
+## System requirements
+
+Minimum:
+
+- Node.js 16+
+- ~512MB RAM
+- SSD recommended
+
+## Running in production
+
+Typical flow:
+
+```bash
+npm i -g @liorandb/db
+NODE_ENV=production PORT=4000 ldb-serve
+```
+
+Use `--root` to place data on a dedicated volume/disk.
+
+## Docker example
+
+This example assumes you are building an image from the `@liorandb/db` server repository output (a `dist/` folder that contains `server.js`).
+
+Example `Dockerfile`:
+
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY dist ./dist
+
+EXPOSE 4000
+CMD ["node", "dist/server.js"]
+```
+
+Example `docker run` (mount data):
+
+```bash
+docker run -d ^
+  -p 4000:4000 ^
+  -v liorandb-data:/app/data ^
+  --name liorandb-server ^
+  liorandb-server
+```

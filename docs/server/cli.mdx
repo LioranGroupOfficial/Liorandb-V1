@@ -1,0 +1,85 @@
+---
+title: CLI (ldb-cli)
+sidebar_position: 2
+---
+
+`ldb-cli` is an interactive shell built on `@liorandb/driver`.
+
+## Start interactive shell
+
+```bash
+ldb-cli <connection-uri>
+```
+
+Connection URI formats:
+
+- `http://<host>:<port>`
+- `https://<host>:<port>`
+- `lioran://<username>:<password>@<host>:<port>`
+
+Examples:
+
+```bash
+ldb-cli lioran://admin:password123@localhost:4000
+```
+
+```bash
+ldb-cli http://localhost:4000 'login("admin","password123")'
+```
+
+## One-shot command mode
+
+```bash
+ldb-cli <connection-uri> '<command>'
+```
+
+Example:
+
+```bash
+ldb-cli http://localhost:4000 'health()'
+```
+
+## Built-in commands
+
+Connection:
+
+- `health()`
+- `info()`
+- `login("username","password")`
+- `register("username","password")`
+- `setToken("<jwt>")`
+- `getToken()`
+- `getUser()`
+- `logout()`
+
+Database:
+
+- `show dbs`
+- `use <dbname>`
+- `db.create("<name>")`
+- `db.delete("<name>")`
+- `db.rename("<old>", "<new>")`
+- `db.stats("<name>")`
+- `show collections`
+
+Collection:
+
+- `use collection <name>`
+- `db.createCollection("<name>")`
+- `db.dropCollection("<name>")`
+- `db.renameCollection("<old>", "<new>")`
+- `db.collectionStats("<name>")`
+
+CRUD (when a collection is selected):
+
+- `find({...})`
+- `findOne({...})`
+- `insert({...})`
+- `insertMany([...])`
+- `update({...filter},{...update})`
+- `updateMany({...filter},{...update})`
+- `delete({...})`
+- `deleteMany({...})`
+- `count({...})`
+- `stats()`
+

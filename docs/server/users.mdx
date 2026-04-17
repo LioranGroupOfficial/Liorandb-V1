@@ -1,0 +1,36 @@
+---
+title: User management (ldb-users)
+sidebar_position: 3
+---
+
+`ldb-users` manages the server’s local auth users store.
+
+## Important: requires elevated OS account
+
+This CLI only runs as:
+
+- **Administrator** on Windows, or
+- **root** on Unix
+
+## Usage
+
+```bash
+ldb-users [--root <path>] [-ed <key> | -ef <file>] <command> [args]
+```
+
+Commands:
+
+- `list`
+- `create <username> <password>`
+- `delete <username>`
+- `set-password <username> <password>`
+
+Examples:
+
+```bash
+ldb-users list
+ldb-users create editor secret123
+ldb-users delete editor
+ldb-users set-password admin admin123
+```
+

@@ -1,0 +1,261 @@
+---
+title: Ubuntu VPS production (PM2 + Nginx)
+sidebar_position: 6
+---
+
+This guide runs the LioranDB server (`ldb-serve`) on an Ubuntu VPS with:
+
+- **PM2** for process management + restarts
+- **Nginx** for reverse proxy, TLS termination, rate limiting, and basic load controls
+- a **dedicated data directory/volume** for maximum storage
+
+Assumptions:
+
+- Ubuntu 22.04/24.04
+- A domain name (optional but recommended for TLS)
+- You want a **single primary server instance per data volume** (file-based storage)
+
+## 0) Choose resource sizing
+
+Recommended VPS sizing for production:
+
+- **vCPU**: 2 (or more for higher concurrency)
+- **RAM**: 4GB (or more if your working set is large)
+- **Disk**: SSD, size based on your dataset + WAL growth + snapshots
+
+PM2 can enforce a **memory ceiling** by restarting the process when it exceeds a limit. CPU/vCPU is handled by VPS sizing; you typically scale CPU by choosing a larger plan.
+
+## 1) Base packages
+
+```bash
+sudo apt update
+sudo apt install -y curl ca-certificates gnupg nginx ufw
+```
+
+Optional (TLS via Let’s Encrypt):
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+```
+
+## 2) Create a dedicated system user + directories
+
+```bash
+sudo adduser --system --group --home /var/lib/liorandb liorandb
+
+sudo mkdir -p /var/lib/liorandb/data
+sudo mkdir -p /var/log/liorandb
+sudo mkdir -p /etc/liorandb
+
+sudo chown -R liorandb:liorandb /var/lib/liorandb
+sudo chown -R liorandb:liorandb /var/log/liorandb
+sudo chmod 750 /var/lib/liorandb /var/log/liorandb
+sudo chmod 750 /etc/liorandb
+```
+
+## 3) Max storage: mount a dedicated volume (recommended)
+
+If your VPS provider supports “block storage” volumes, mount it to `/var/lib/liorandb/data`.
+
+Example (adjust device name to your VPS):
+
+```bash
+lsblk
+sudo mkfs.ext4 /dev/sdb
+sudo mount /dev/sdb /var/lib/liorandb/data
+sudo chown -R liorandb:liorandb /var/lib/liorandb/data
+```
+
+Persist the mount in `/etc/fstab` (provider-specific; verify before reboot).
+
+## 4) Install Node.js 20
+
+You can use any Node.js 20+ install method. One common approach on Ubuntu is NodeSource:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node -v
+npm -v
+```
+
+## 5) Install LioranDB server + PM2 (recommended: non-root runtime)
+
+Install `pm2` and `@liorandb/db` for the `liorandb` system user (so the server does not run as root):
+
+```bash
+sudo -iu liorandb bash -lc 'mkdir -p ~/.npm-global'
+sudo -iu liorandb bash -lc 'npm config set prefix "$HOME/.npm-global"'
+sudo -iu liorandb bash -lc 'echo "export PATH=$HOME/.npm-global/bin:$PATH" >> ~/.profile'
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && npm i -g pm2 @liorandb/db'
+```
+
+Verify binaries (as the `liorandb` user):
+
+```bash
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && ldb-serve --help'
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && ldb-cli --help'
+```
+
+## 6) Configure encryption key (recommended)
+
+Create a key file owned by `root` but readable by the `liorandb` group:
+
+```bash
+sudo bash -lc 'umask 077; openssl rand -base64 48 > /etc/liorandb/encryption.key'
+sudo chgrp liorandb /etc/liorandb/encryption.key
+sudo chmod 640 /etc/liorandb/encryption.key
+sudo cat /etc/liorandb/encryption.key
+```
+
+You will use this key with:
+
+- server startup (`ldb-serve -ef ...`)
+- user management (`sudo ldb-users -ef ...`)
+
+## 7) Create your first access user (server auth)
+
+`ldb-users` must be run from an elevated OS account (Administrator/root). On Ubuntu, use `sudo`.
+
+Create an admin user:
+
+```bash
+sudo env "PATH=$PATH:/var/lib/liorandb/.npm-global/bin" ldb-users \
+  --root /var/lib/liorandb/data \
+  -ef /etc/liorandb/encryption.key \
+  create admin 'change-me-now'
+```
+
+List users:
+
+```bash
+sudo env "PATH=$PATH:/var/lib/liorandb/.npm-global/bin" ldb-users \
+  --root /var/lib/liorandb/data \
+  -ef /etc/liorandb/encryption.key \
+  list
+```
+
+## 8) Run `ldb-serve` with PM2 (4GB max memory)
+
+Start the server:
+
+```bash
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && pm2 start ldb-serve \
+  --name liorandb \
+  --max-memory-restart 4096M \
+  -- \
+  --root /var/lib/liorandb/data \
+  -ef /etc/liorandb/encryption.key'
+```
+
+Make PM2 start on boot:
+
+```bash
+sudo env "PATH=$PATH:/var/lib/liorandb/.npm-global/bin" pm2 startup systemd -u liorandb --hp /var/lib/liorandb
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && pm2 save'
+```
+
+Useful PM2 commands:
+
+```bash
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && pm2 status'
+sudo -iu liorandb bash -lc 'export PATH=$HOME/.npm-global/bin:$PATH && pm2 logs liorandb'
+```
+
+### Notes on CPU / multi-instance
+
+Because LioranDB storage is **file-based**, run **one primary server process per data directory/volume**.
+
+- If you need more throughput, scale **vertically** (more vCPU/RAM) or **horizontally** by running multiple VPS nodes (each with its own storage) behind a load balancer.
+
+## 9) Nginx reverse proxy (rate limit + basic load controls)
+
+Create a site config:
+
+```bash
+sudo nano /etc/nginx/sites-available/liorandb.conf
+```
+
+Example config (HTTP, reverse proxy to `localhost:4000`):
+
+```nginx
+limit_req_zone $binary_remote_addr zone=lioran_rate:10m rate=10r/s;
+limit_conn_zone $binary_remote_addr zone=lioran_conn:10m;
+
+upstream liorandb_upstream {
+  server 127.0.0.1:4000;
+  keepalive 64;
+}
+
+server {
+  listen 80;
+  server_name example.com;
+
+  client_max_body_size 10m;
+
+  location / {
+    limit_conn lioran_conn 20;
+    limit_req zone=lioran_rate burst=30 nodelay;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_connect_timeout 10s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
+    proxy_pass http://liorandb_upstream;
+  }
+}
+```
+
+Enable and test:
+
+```bash
+sudo ln -sf /etc/nginx/sites-available/liorandb.conf /etc/nginx/sites-enabled/liorandb.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### TLS (Let’s Encrypt)
+
+If you installed certbot:
+
+```bash
+sudo certbot --nginx -d example.com
+```
+
+## 10) Firewall (UFW)
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+sudo ufw status
+```
+
+## 11) Health checks
+
+From the VPS:
+
+```bash
+curl -fsSL http://127.0.0.1:4000/health
+```
+
+Through Nginx:
+
+```bash
+curl -fsSL http://example.com/health
+```
+
+## 12) Load balancing
+
+If you need real load balancing:
+
+- Run **multiple VPS nodes**, each with its own data volume and `ldb-serve`.
+- Put them behind an L4/L7 load balancer (cloud LB) or Nginx in front.
+
+Do **not** run multiple server processes against the same on-disk data directory unless you have a proven replication/coordination setup.

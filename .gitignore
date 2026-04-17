@@ -133,7 +133,7 @@ dist
 # FuseBox cache
 .fusebox/
 liorandb-studio
-server
+./server
 stest
 dtest
 log.txt

@@ -1,0 +1,38 @@
+---
+title: Server quickstart
+sidebar_position: 1
+---
+
+Install the server package globally (recommended for ops/dev machines):
+
+```bash
+npm i -g @liorandb/db
+```
+
+Start the server:
+
+```bash
+ldb-serve
+```
+
+Defaults:
+
+- HTTP: `http://localhost:4000`
+- Storage: file-based local directories (no external DB required)
+
+## CLI flags (shared)
+
+The server and CLIs support:
+
+- `--root <path>`: override the storage root path
+- `-ed <key>`: set encryption key directly
+- `-ef <file>`: read encryption key from a file
+
+## Environment variables
+
+Common environment variables:
+
+- `PORT` (default `4000`)
+- `NODE_ENV`
+- `LOG_LEVEL`
+

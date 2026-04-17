@@ -1,0 +1,9 @@
+{
+  "label": "Server & CLI (@liorandb/db)",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Run LioranDB as an HTTP server, use the interactive shell, and manage users from the command line."
+  }
+}
+

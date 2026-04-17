@@ -1,0 +1,32 @@
+---
+title: Connection strings
+sidebar_position: 4
+---
+
+LioranDB uses two different “URI” formats in the ecosystem:
+
+## Admin/login URI (`lioran://`)
+
+This is a legacy-style URI used for logging into the server with a username/password:
+
+```text
+lioran://<username>:<password>@<host>:<port>
+```
+
+Used by:
+
+- `ldb-cli`
+- `@liorandb/driver` (`new LioranClient(...)`)
+
+## Database connection string (`liorandb://`)
+
+This is a database-scoped credential format:
+
+```text
+liorandb://<dbUsername>:<dbPassword>@<host>[:<port>]/<databaseName>
+```
+
+Used by:
+
+- `@liorandb/driver` (`connect()` auto-detects and uses it)
+
