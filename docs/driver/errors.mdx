@@ -1,0 +1,18 @@
+---
+title: Errors
+sidebar_position: 5
+---
+
+The driver throws `HttpError` for non-2xx responses.
+
+## `HttpError`
+
+```ts
+class HttpError extends Error {
+  status: number;
+  data?: unknown;
+}
+```
+
+In tooling and CLIs, you often want to log `error.data` if available (it may include server error details).
+

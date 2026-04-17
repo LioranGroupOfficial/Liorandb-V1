@@ -1,0 +1,156 @@
+---
+title: LioranDB
+sidebar_position: 3
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+`LioranDB` represents a single database directory under the manager root.
+
+## `collection(name, schema?, schemaVersion?)`
+
+```ts
+collection<T = any>(
+  name: string,
+  schema?: ZodSchema<T>,
+  schemaVersion?: number
+): Collection<T>
+```
+
+- `name`: collection directory name.
+- `schema` (optional): a Zod schema used to validate writes and migrated reads.
+- `schemaVersion` (optional): stored in documents as `__v` (defaults to `1`).
+- Returns a cached `Collection` instance per `name`.
+
+## Index API
+
+### `createIndex(collection, field, options?)`
+
+```ts
+createIndex(
+  collection: string,
+  field: string,
+  options?: { unique?: boolean }
+): Promise<void>
+```
+
+- Builds an index for existing documents, then keeps it updated on writes.
+- `unique: true` enforces uniqueness for that field.
+
+### `explain(collection, query?, options?)`
+
+```ts
+explain(collection: string, query?: any, options?: any): Promise<{
+  indexUsed?: string;
+  indexType?: "btree";
+  scannedDocuments: number;
+  returnedDocuments: number;
+  executionTimeMs: number;
+  usedFullScan: boolean;
+  candidateDocuments: number;
+}>
+```
+
+- Returns planner + execution stats for a query.
+
+## Transactions
+
+### `transaction(fn)`
+
+```ts
+transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T>
+```
+
+- Runs multiple operations as a single atomic commit (WAL-backed).
+- Not allowed when the manager is in readonly mode.
+
+## Migrations (database-level)
+
+### `getSchemaVersion()` / `setSchemaVersion(v)`
+
+- `getSchemaVersion(): string`
+- `setSchemaVersion(v: string): void` (writable mode only)
+
+### `migrate(from, to, fn)`
+
+```ts
+migrate(
+  from: string,
+  to: string,
+  fn: (db: LioranDB) => Promise<void>
+): void
+```
+
+- Registers a migration step that runs once when applying migrations.
+- After `fn` completes, the DB schema version is set to `to`.
+
+### `applyMigrations(targetVersion)`
+
+```ts
+applyMigrations(targetVersion: string): Promise<void>
+```
+
+- Applies registered migrations up to the latest registered version.
+
+## Maintenance
+
+- `compactCollection(name: string): Promise<void>`
+- `compactAll(): Promise<void>`
+- `rotateEncryptionKey(newKey: string | Buffer): Promise<void>`
+- `close(): Promise<void>`
+
+## Example: schema + collection
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+import { z } from "zod";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+
+const User = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  age: z.number().int().nonnegative(),
+  __v: z.number().optional(),
+});
+
+const users = db.collection("users", User, 1);
+await users.insertOne({ email: "u@example.com", age: 18 });
+
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+import { z } from "zod";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+
+const User = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  age: z.number().int().nonnegative(),
+  __v: z.number().optional(),
+});
+
+const users = db.collection("users", User, 1);
+await users.insertOne({ email: "u@example.com", age: 18 });
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+

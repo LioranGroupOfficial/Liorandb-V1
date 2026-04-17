@@ -1,0 +1,120 @@
+---
+title: Collection
+sidebar_position: 4
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+A `Collection` stores JSON documents keyed by `_id` (string).
+
+## Document IDs (`_id`)
+
+- If you don’t provide `_id`, LioranDB generates one.
+- `_id` **cannot** start with the reserved prefix `\u0000__meta__:` (used for internal metadata).
+
+## Schema validation (optional)
+
+### `setSchema(schema, version)`
+
+```ts
+setSchema(schema: ZodSchema<T>, version: number): void
+```
+
+- Sets/updates the schema used to validate writes and migrated reads.
+- `version` is stored in documents as `__v`.
+
+### `addMigration({ from, to, migrate })`
+
+```ts
+addMigration(migration: {
+  from: number;
+  to: number;
+  migrate: (doc: any) => T;
+}): void
+```
+
+- Lets you evolve document shapes over time.
+- When reading, documents are upgraded from `__v` to the current schema version.
+
+## CRUD API
+
+All operations below are queued per collection to keep ordering consistent.
+
+- `insertOne(doc: any): Promise<T>`
+- `insertMany(docs: any[]): Promise<T[]>`
+- `find(query?: any, options?: { limit?: number; offset?: number; projection?: string[] }): Promise<T[]>`
+- `findOne(query?: any, options?: FindOptions): Promise<T | null>`
+- `updateOne(filter: any, update: any, options?: { upsert?: boolean }): Promise<T | null>`
+- `updateMany(filter: any, update: any): Promise<T[]>`
+- `deleteOne(filter: any): Promise<boolean>`
+- `deleteMany(filter: any): Promise<number>`
+- `countDocuments(filter?: any): Promise<number>`
+- `count(): Promise<number>`
+
+## Aggregation API
+
+### `aggregate(pipeline)`
+
+```ts
+aggregate(pipeline: any[]): Promise<any[]>
+```
+
+Supported stages:
+
+- `$match`
+- `$project`
+- `$skip`
+- `$limit`
+- `$group`
+
+## Example: CRUD
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+const items = db.collection<{ _id?: string; sku: string; qty: number }>("items");
+
+await items.insertMany([
+  { sku: "A", qty: 10 },
+  { sku: "B", qty: 2 },
+]);
+
+await items.updateOne({ sku: "B" }, { $inc: { qty: 1 } });
+console.log(await items.find({ qty: { $gte: 3 } }));
+
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+const items = db.collection("items");
+
+await items.insertMany([
+  { sku: "A", qty: 10 },
+  { sku: "B", qty: 2 },
+]);
+
+await items.updateOne({ sku: "B" }, { $inc: { qty: 1 } });
+console.log(await items.find({ qty: { $gte: 3 } }));
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+

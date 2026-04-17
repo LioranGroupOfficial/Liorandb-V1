@@ -13,6 +13,19 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+save_src_tree.py
+log.txt
+test.ts
+path.txt
+scan_src.py
+extract_logs.py
+config.json
+prompt.txt
+prompt_new.txt
+build_prompt.py
+.vscode
+build
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 

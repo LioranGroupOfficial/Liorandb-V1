@@ -1,0 +1,35 @@
+---
+title: Encryption & key rotation
+sidebar_position: 11
+---
+
+LioranDB encrypts documents at rest when an encryption key is configured.
+
+## Setting the encryption key
+
+Provide `encryptionKey` when creating a `LioranManager`:
+
+- `string`: derived into a fixed-length key internally
+- `Buffer`: must be **32 bytes**
+
+If you lose the key, encrypted data cannot be decrypted.
+
+## Document size limit
+
+Encrypted documents are stored as JSON and must be **≤ 5,000,000 characters** (about 5MB). Larger documents throw:
+
+- `Error: Document too large (>5MB)`
+
+## Rotating keys
+
+`LioranDB.rotateEncryptionKey(newKey)` re-encrypts:
+
+- every collection document (all collections on disk), and
+- the WAL records
+
+Use rotation for:
+
+- incident response
+- planned key rollover
+- changing environments (dev → prod)
+

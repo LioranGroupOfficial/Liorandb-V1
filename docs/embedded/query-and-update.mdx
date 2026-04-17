@@ -1,0 +1,74 @@
+---
+title: Query & update language
+sidebar_position: 5
+---
+
+LioranDB’s embedded query engine supports:
+
+## Queries
+
+Queries are plain objects. Keys can be dot-paths (example: `"profile.age"`).
+
+### Equality
+
+```js
+{ email: "a@b.com" }
+```
+
+### Operators
+
+For a field `x`, these operators are supported:
+
+- `$gt`, `$gte`
+- `$lt`, `$lte`
+- `$ne`, `$eq`
+- `$in` (array membership)
+
+Examples:
+
+```js
+{ age: { $gte: 18, $lt: 65 } }
+```
+
+```js
+{ status: { $in: ["active", "trial"] } }
+```
+
+### Functional queries
+
+You can also pass a function:
+
+```js
+(doc) => doc.qty > 0 && doc.sku?.startsWith("A")
+```
+
+## Updates
+
+Updates can be:
+
+### Operator updates
+
+#### `$set`
+
+```js
+{ $set: { "profile.name": "New Name" } }
+```
+
+#### `$inc`
+
+```js
+{ $inc: { attempts: 1 } }
+```
+
+### Replacement/merge updates
+
+If the update object contains **no** `$` keys, it’s treated as a shallow merge:
+
+```js
+{ status: "active", plan: "pro" }
+```
+
+## Upserts
+
+`updateOne(filter, update, { upsert: true })` inserts a new document if nothing matches.
+

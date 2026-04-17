@@ -1,0 +1,106 @@
+---
+title: LioranManager
+sidebar_position: 2
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+`LioranManager` owns:
+
+- the **root path** on disk,
+- the **encryption key** (optional),
+- and the set of **opened databases**.
+
+## Constructor
+
+```ts
+new LioranManager(options?: LioranManagerOptions)
+```
+
+### `LioranManagerOptions`
+
+- `rootPath?: string`  
+  Base folder where database directories are stored.
+- `encryptionKey?: string | Buffer`  
+  Enables encryption-at-rest for documents and WAL records.
+- `ipc?: "primary" | "client" | "readonly"`  
+  Process mode for multi-process usage (see IPC docs).
+
+## `db(name)`
+
+```ts
+db(name: string): Promise<LioranDB>
+```
+
+- Opens (or reuses) a database named `name`.
+- In IPC `client` mode, returns a proxy that forwards operations to the primary process.
+
+## `snapshot(snapshotPath)`
+
+```ts
+snapshot(snapshotPath: string): Promise<true>
+```
+
+- Creates a **tar.gz** snapshot of the manager root directory.
+- Not allowed in `readonly` mode.
+- In IPC client mode, the snapshot is executed by the primary process.
+
+## `restore(snapshotPath)`
+
+```ts
+restore(snapshotPath: string): Promise<never>
+```
+
+- Restores the snapshot into the manager root directory.
+- **Clears the existing root directory** before restore.
+- After a successful restore, the process prints a message and exits.
+
+## `close()` / `closeAll()`
+
+```ts
+close(): Promise<void>
+```
+
+- Closes all open databases and releases the process lock (primary mode).
+
+## Example: project-local root + encryption
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  encryptionKey: "dev-secret-change-me",
+});
+
+const db = await manager.db("app");
+await db.collection("notes").insertOne({ title: "hello" });
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  encryptionKey: "dev-secret-change-me",
+});
+
+const db = await manager.db("app");
+await db.collection("notes").insertOne({ title: "hello" });
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+

@@ -1,0 +1,90 @@
+---
+title: Indexes & explain
+sidebar_position: 6
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Indexes are created per collection field and are persisted on disk.
+
+## Create an index
+
+```ts
+createIndex(collection: string, field: string, options?: { unique?: boolean }): Promise<void>
+```
+
+- Builds the index from existing documents.
+- After creation, writes keep the index updated.
+- `unique: true` enforces uniqueness for that field.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+
+db.collection("users"); // ensure collection exists
+await db.createIndex("users", "email", { unique: true });
+
+const users = db.collection("users");
+console.log(await users.findOne({ email: { $eq: "a@b.com" } }));
+
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./data" });
+const db = await manager.db("app");
+
+db.collection("users");
+await db.createIndex("users", "email", { unique: true });
+
+const users = db.collection("users");
+console.log(await users.findOne({ email: { $eq: "a@b.com" } }));
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
+## How indexes are used
+
+- Query execution tries to pick **one best index** from your query.
+- If no index can be selected, a full scan is used.
+- Even with an index, documents are still re-checked against your full query to ensure correctness.
+
+Supported indexed shapes include:
+
+- `{ field: value }`
+- `{ field: { $eq: value } }`
+- `{ field: { $in: [...] } }`
+- `{ field: { $gt/$gte/$lt/$lte: ... } }` (range queries)
+
+## `explain()`
+
+You can ask for query plan stats:
+
+```ts
+db.explain("users", { age: { $gte: 18 } })
+```
+
+The result includes:
+
+- `indexUsed`: which field index was used (if any)
+- `scannedDocuments`: how many documents were read
+- `candidateDocuments`: how many IDs the index/full-scan produced
+- `executionTimeMs`: elapsed time in milliseconds
+

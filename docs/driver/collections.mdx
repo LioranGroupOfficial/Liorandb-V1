@@ -1,0 +1,63 @@
+---
+title: Collections (HTTP)
+sidebar_position: 4
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+`db.collection(name)` returns a `Collection` wrapper that calls server endpoints.
+
+## CRUD
+
+- `insertOne(doc): Promise<T>`
+- `insertMany(docs): Promise<T[]>`
+- `find(filter = {}): Promise<T[]>`
+- `findOne(filter = {}): Promise<T | null>`
+- `updateOne(filter, update): Promise<T | null>`
+- `updateMany(filter, update): Promise<T[]>`
+- `deleteOne(filter): Promise<{ deleted: boolean }>`
+- `deleteMany(filter): Promise<{ deleted: number }>`
+- `count(filter = {}): Promise<number>`
+- `stats(): Promise<...>`
+
+## Example
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "password123");
+
+const db = client.db("default");
+const users = db.collection<{ userId: string; role: string }>("users");
+
+await users.insertOne({ userId: "u1", role: "user" });
+console.log(await users.count({ role: "user" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "password123");
+
+const db = client.db("default");
+const users = db.collection("users");
+
+await users.insertOne({ userId: "u1", role: "user" });
+console.log(await users.count({ role: "user" }));
+```
+
+</TabItem>
+</Tabs>
+

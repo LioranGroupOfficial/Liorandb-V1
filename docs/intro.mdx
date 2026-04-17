@@ -1,0 +1,29 @@
+---
+sidebar_position: 1
+---
+
+# LioranDB Docs
+
+LioranDB is a lightweight database ecosystem:
+
+- **Embedded database** for Node.js scripts and apps: `npm i @liorandb/core`
+- **Server + CLI** (optional) for HTTP access and user management: `npm i -g @liorandb/db`
+- **HTTP driver** for apps that talk to the server: `npm i @liorandb/driver`
+
+All packages ship with TypeScript types.
+
+## Where to start
+
+- If you want **embedded, file-based DB** (no server, no CLI): go to **Embedded → Getting started (1 minute)**
+- If you want an **HTTP server**: go to **Server & CLI → Server quickstart**
+- If you want a **client SDK**: go to **Driver → Getting started**
+
+## Package map
+
+- `@liorandb/core`: embedded DB engine + encryption + indexing + WAL recovery
+- `@liorandb/db`: server binary (`ldb-serve`) + interactive shell (`ldb-cli`) + admin user CLI (`ldb-users`)
+- `@liorandb/driver`: HTTP client + typed DB/Collection wrappers
+
+## Supported languages
+
+Every code sample is provided as **TypeScript** and **JavaScript**. Use the tabs in each section to switch and copy/paste.

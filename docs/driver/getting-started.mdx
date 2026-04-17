@@ -1,0 +1,62 @@
+---
+title: Getting started
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Install:
+
+```bash
+npm i @liorandb/driver
+```
+
+## Connect and use a collection
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:password123@localhost:4000");
+await client.connect();
+
+const db = client.db("default");
+const items = db.collection<{ _id?: string; sku: string; qty: number }>("items");
+
+await items.insertOne({ sku: "A", qty: 1 });
+console.log(await items.findOne({ sku: "A" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:password123@localhost:4000");
+await client.connect();
+
+const db = client.db("default");
+const items = db.collection("items");
+
+await items.insertOne({ sku: "A", qty: 1 });
+console.log(await items.findOne({ sku: "A" }));
+```
+
+</TabItem>
+</Tabs>
+
+## Authentication options
+
+`connect()` behaves differently depending on the URI:
+
+- `lioran://username:password@host:port` → logs in and stores a JWT token
+- `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses the connection string mode
+- `http(s)://host:port` → does **not** auto-login (call `login()` or `setToken()` / `setConnectionString()`)
+

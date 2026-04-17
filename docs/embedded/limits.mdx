@@ -1,0 +1,23 @@
+---
+title: Limits & performance notes
+sidebar_position: 13
+---
+
+## Key limits
+
+- **Document size**: encrypted JSON must be ≤ ~5MB.
+- **Reserved keys**: document `_id` cannot start with `\u0000__meta__:`.
+
+## Performance tips
+
+- Prefer `insertMany()` over many `insertOne()` calls.
+- Create indexes for fields you filter on frequently (`db.createIndex(...)`).
+- Use `find({ ... }, { limit, offset })` for paging.
+- Run compaction periodically for long-lived workloads.
+
+## Concurrency model
+
+Each collection serializes its operations through an internal queue to keep ordering consistent.
+
+For multi-process scenarios, use manager IPC mode (see IPC docs) rather than pointing multiple writers directly at the same root directory.
+

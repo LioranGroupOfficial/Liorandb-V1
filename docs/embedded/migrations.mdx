@@ -1,0 +1,51 @@
+---
+title: Migrations
+sidebar_position: 8
+---
+
+Migrations exist at two levels:
+
+## 1) Collection document migrations (`__v`)
+
+Use `collection.addMigration(...)` to transform stored documents from an older `__v` to the current schema version when they are read.
+
+Good for:
+
+- renaming fields
+- changing shapes
+- adding defaults
+
+## 2) Database schema migrations (`schemaVersion`)
+
+The database stores a `schemaVersion` string in its metadata file.
+
+### `db.getSchemaVersion()`
+
+```ts
+getSchemaVersion(): string
+```
+
+### `db.setSchemaVersion(v)`
+
+```ts
+setSchemaVersion(v: string): void
+```
+
+Writable mode only.
+
+### `db.migrate(from, to, fn)`
+
+```ts
+migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>): void
+```
+
+Registers a step; after `fn` finishes, the DB schema version is updated to `to`.
+
+### `db.applyMigrations(targetVersion)`
+
+```ts
+applyMigrations(targetVersion: string): Promise<void>
+```
+
+Applies registered migrations up to the latest registered version.
+

@@ -1,0 +1,24 @@
+---
+title: Storage paths
+sidebar_position: 14
+---
+
+`@liorandb/core` uses a single “root folder” where all database directories are stored.
+
+## Default root path
+
+If you do not pass `rootPath` to `LioranManager`, the default root is:
+
+- `process.env.LIORANDB_PATH` if set, otherwise
+- `~/LioranDB/db`
+
+The directory is created automatically if it does not exist.
+
+## `getBaseDBFolder()`
+
+```ts
+getBaseDBFolder(): string
+```
+
+Returns the resolved default root folder path used by the embedded engine.
+

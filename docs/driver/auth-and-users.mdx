@@ -1,0 +1,33 @@
+---
+title: Auth & users
+sidebar_position: 2
+---
+
+`LioranClient` exposes authentication + user management methods.
+
+## Login
+
+- `connect(): Promise<void>` (auto-detects from URI)
+- `login(username: string, password: string): Promise<{ user; token; ... }>`
+- `superAdminLogin(secret: string): Promise<{ user; token; ... }>`
+
+## Session helpers
+
+- `setToken(token: string): void`
+- `getToken(): string | null`
+- `setConnectionString(connectionString: string): void`
+- `getConnectionString(): string | null`
+- `logout(): void`
+- `isAuthenticated(): boolean`
+- `getUser(): LioranUser | null`
+
+## User APIs
+
+Requires authentication.
+
+- `me(): Promise<{ user }>`
+- `register(username: string, password: string): Promise<{ user; token; ... }>`
+- `register(input: { userId; username?; password?; role?; externalUserId? }): Promise<{ user; token; ... }>`
+- `listUsers(): Promise<LioranManagedUser[]>`
+- `issueUserToken(userId: string): Promise<{ user; token }>`
+

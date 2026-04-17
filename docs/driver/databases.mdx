@@ -1,0 +1,35 @@
+---
+title: Databases
+sidebar_position: 3
+---
+
+The driver provides both:
+
+- **management APIs** (`client.*`) and
+- **database scoped APIs** (`client.db(name)`)
+
+## Management (LioranClient)
+
+Requires authentication.
+
+- `listDatabases(): Promise<LioranManagedDatabase[]>`
+- `countDatabases(userId?: string): Promise<{ count: number }>`
+- `listUserDatabases(userId: string): Promise<{ databases: LioranManagedDatabase[] }>`
+- `createDatabase(name | { name; ownerUserId? }): Promise<...>`
+- `dropDatabase(name: string): Promise<{ deleted: boolean }>`
+- `databaseStats(name: string): Promise<LioranDatabaseStats>`
+
+## Database wrapper (DB)
+
+`client.db(name)` returns a `DB` instance with:
+
+- `collection(name): Collection`
+- `listCollections(): Promise<string[]>`
+- `createCollection(name: string): Promise<...>`
+- `dropCollection(name: string): Promise<...>`
+- `renameCollection(oldName, newName): Promise<...>`
+- `stats(): Promise<LioranDatabaseStats>`
+- `getCredentials(): Promise<...>`
+- `setCredentials({ username, password }): Promise<...>`
+- `getConnectionString(): Promise<...>`
+

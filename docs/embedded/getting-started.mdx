@@ -1,0 +1,78 @@
+---
+title: Getting started
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Install the embedded database:
+
+```bash
+npm i @liorandb/core
+```
+
+Create a database, write a document, read it back:
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  // optional: where databases live on disk
+  // rootPath: "./data",
+});
+
+const db = await manager.db("app");
+const users = db.collection<{ _id?: string; email: string; plan: "free" | "pro" }>("users");
+
+await users.insertOne({ email: "a@b.com", plan: "free" });
+
+const found = await users.findOne({ email: "a@b.com" });
+console.log(found);
+
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  // optional: where databases live on disk
+  // rootPath: "./data",
+});
+
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await users.insertOne({ email: "a@b.com", plan: "free" });
+
+const found = await users.findOne({ email: "a@b.com" });
+console.log(found);
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
+## What gets created on disk?
+
+- A **root folder** containing one folder per database name.
+- Each collection is stored in its own directory (file-based storage).
+
+By default, `@liorandb/core` uses:
+
+- `process.env.LIORANDB_PATH` if set, otherwise
+- `~/LioranDB/db` (created automatically)
+
+If you want a project-local folder, pass `rootPath` to `new LioranManager({ rootPath })`.
+

@@ -1,0 +1,33 @@
+---
+title: Compaction
+sidebar_position: 10
+---
+
+Compaction rebuilds collection storage to remove fragmentation and then rebuilds indexes.
+
+## `db.compactCollection(name)`
+
+```ts
+compactCollection(name: string): Promise<void>
+```
+
+## `db.compactAll()`
+
+```ts
+compactAll(): Promise<void>
+```
+
+## `collection.compact()`
+
+```ts
+compact(): Promise<void>
+```
+
+The compaction engine performs:
+
+1. crash recovery checks
+2. snapshot rebuild to a temporary directory
+3. atomic directory swap
+4. reopen DB
+5. rebuild indexes
+

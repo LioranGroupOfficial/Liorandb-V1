@@ -1,0 +1,30 @@
+---
+title: IPC (multi-process)
+sidebar_position: 12
+---
+
+`LioranManager` supports multiple process modes:
+
+## Modes
+
+- `primary`: owns the lock and performs database work locally
+- `client`: forwards DB operations to the primary via an IPC queue
+- `readonly`: opens databases in read-only mode (no WAL, no writes)
+
+## Auto-detect behavior (default)
+
+If you do not pass `ipc`, the manager tries to acquire a lock file:
+
+- if it succeeds → acts as `primary`
+- if it fails → acts as `client`
+
+The lock is stored at:
+
+- `<rootPath>/.lioran.lock`
+
+## Recommended usage
+
+- **One primary** process per root path.
+- Any additional processes should use `ipc: "client"` (or rely on auto-detect).
+- Use `ipc: "readonly"` for safe read replicas that never write.
+
