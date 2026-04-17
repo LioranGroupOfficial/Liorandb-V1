@@ -74,7 +74,7 @@ const config: Config = {
     metadata: [
       {
         property: 'og:image',
-        content: 'https://db.lioransolutions.com/img/liorandb-social-card.jpg',
+        content: 'img/liorandb-social-card.jpg',
       },
     ],
     colorMode: {
