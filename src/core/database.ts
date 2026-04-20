@@ -129,18 +129,21 @@ export class LioranDB {
     if (!this.readonlyMode) {
       this.wal = new WALManager(basePath);
       this.checkpoint = new CheckpointManager(basePath);
+      const userPressure = options.writeQueue?.memoryPressure;
       this.writer = new DedicatedWriter({
         ...(options.writeQueue ?? {}),
         memoryPressure: {
           ...(options.writeQueue?.memoryPressure ?? {}),
           onPressureStart: info => {
+            userPressure?.onPressureStart?.(info);
             console.warn(
-              `[LioranDB] Memory pressure start: ratio=${info.ratio.toFixed(3)} heapUsed=${info.heapUsed} heapLimit=${info.heapLimit} db=${this.dbName}`
+              `[LioranDB] Memory pressure start: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
             );
           },
           onPressureEnd: info => {
+            userPressure?.onPressureEnd?.(info);
             console.warn(
-              `[LioranDB] Memory pressure end: ratio=${info.ratio.toFixed(3)} heapUsed=${info.heapUsed} heapLimit=${info.heapLimit} db=${this.dbName}`
+              `[LioranDB] Memory pressure end: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
             );
           }
         },

@@ -110,7 +110,7 @@ export class DedicatedWriter {
       throw new Error("Writer is closed");
     }
 
-    await this.memoryGate.waitUntilOk();
+    await this.memoryGate.waitUntilOk(this.timeoutMs);
 
     let release: ReleaseFn | null = null;
 
@@ -160,4 +160,3 @@ export class DedicatedWriter {
     await this.drain();
   }
 }
-

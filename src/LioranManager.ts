@@ -27,8 +27,11 @@ export interface LioranManagerOptions {
     memoryPressure?: {
       enabled?: boolean;
       pollMs?: number;
+      mode?: "heap_ratio" | "rss_mb";
       highWaterMark?: number;
       lowWaterMark?: number;
+      rssMaxMB?: number;
+      rssResumeMB?: number;
     };
   };
   batch?: {
