@@ -8,9 +8,9 @@
     "rootDir": "src",
     "outDir": "dist",
 
-    "baseUrl": ".",               // REQUIRED when using paths
+    // "baseUrl": ".",               // REQUIRED when using paths
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
 
     // "ignoreDeprecations": "6.0",  // Silences node10 deprecation warning
