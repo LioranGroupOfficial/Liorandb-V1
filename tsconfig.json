@@ -1,10 +1,19 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Node",
-    "declaration": true,
+
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "rootDir": "src",
     "outDir": "dist",
+
+    // "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    "declaration": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
