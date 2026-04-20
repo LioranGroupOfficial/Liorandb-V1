@@ -158,6 +158,18 @@ export class WALManager {
     this.currentGen++;
   }
 
+  async close(): Promise<void> {
+    if (this.fd) {
+      try {
+        await this.fd.sync();
+      } catch {}
+      try {
+        await this.fd.close();
+      } catch {}
+      this.fd = null;
+    }
+  }
+
   private encodeRecord(record: WALRecord, key = getEncryptionKey()) {
     const payload: StoredRecord = {
       ...record,

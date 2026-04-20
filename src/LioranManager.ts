@@ -4,6 +4,7 @@ import process from "process";
 import { LioranDB } from "./core/database.js";
 import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
+import { LifecycleManager } from "./utils/lifecycle.js";
 
 /* ---------------- PROCESS MODE ---------------- */
 
@@ -19,6 +20,20 @@ export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
   ipc?: "primary" | "client" | "readonly";
+  writeQueue?: {
+    maxSize?: number;
+    mode?: "wait" | "reject";
+    timeoutMs?: number;
+    memoryPressure?: {
+      enabled?: boolean;
+      pollMs?: number;
+      highWaterMark?: number;
+      lowWaterMark?: number;
+    };
+  };
+  batch?: {
+    chunkSize?: number;
+  };
 }
 
 /* ---------------- MANAGER ---------------- */
@@ -29,9 +44,13 @@ export class LioranManager {
   private closed = false;
   private mode: ProcessMode;
   private lockFd?: number;
+  private lifecycle = new LifecycleManager();
+  private options: LioranManagerOptions;
+  private shutdownHookCleanup?: () => void;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
+    this.options = options;
 
     this.rootPath = rootPath || getDefaultRootPath();
 
@@ -104,6 +123,14 @@ export class LioranManager {
     try {
       this.lockFd = fs.openSync(lockPath, "wx");
       fs.writeSync(this.lockFd, String(process.pid));
+      this.lifecycle.register(() => {
+        try {
+          if (this.lockFd) fs.closeSync(this.lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      });
       return true;
     } catch {
       try {
@@ -112,6 +139,14 @@ export class LioranManager {
           fs.unlinkSync(lockPath);
           this.lockFd = fs.openSync(lockPath, "wx");
           fs.writeSync(this.lockFd, String(process.pid));
+          this.lifecycle.register(() => {
+            try {
+              if (this.lockFd) fs.closeSync(this.lockFd);
+            } catch {}
+            try {
+              fs.unlinkSync(lockPath);
+            } catch {}
+          });
           return true;
         }
       } catch {}
@@ -141,7 +176,11 @@ export class LioranManager {
     const dbPath = path.join(this.rootPath, name);
     await fs.promises.mkdir(dbPath, { recursive: true });
 
-    const db = new LioranDB(dbPath, name, this);
+    const db = new LioranDB(dbPath, name, this, {
+      writeQueue: this.options.writeQueue,
+      batch: this.options.batch
+    });
+    await db.ready;
     this.openDBs.set(name, db);
     return db;
   }
@@ -229,13 +268,9 @@ export class LioranManager {
 
     this.openDBs.clear();
 
-    // Only primary owns lock
-    if (this.mode === ProcessMode.PRIMARY) {
-      try {
-        if (this.lockFd) fs.closeSync(this.lockFd);
-        fs.unlinkSync(path.join(this.rootPath, ".lioran.lock"));
-      } catch {}
-    }
+    try {
+      await this.lifecycle.close();
+    } catch {}
   }
 
   async close(): Promise<void> {
@@ -247,9 +282,25 @@ export class LioranManager {
       await this.closeAll();
     };
 
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-    process.on("exit", shutdown);
+    const onSigint = () => void shutdown();
+    const onSigterm = () => void shutdown();
+    const onBeforeExit = () => void shutdown();
+
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    process.once("beforeExit", onBeforeExit);
+
+    this.shutdownHookCleanup = () => {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+      process.off("beforeExit", onBeforeExit);
+    };
+
+    this.lifecycle.register(() => {
+      try {
+        this.shutdownHookCleanup?.();
+      } catch {}
+    });
   }
 
   private _assertOpen() {

@@ -1,4 +1,4 @@
-import { MigrationMeta } from "./migration.types";
+import { MigrationMeta } from "./migration.types.js";
 import type { LioranDB } from "./database.js";
 
 const MIGRATION_COLLECTION = "__migrations__";

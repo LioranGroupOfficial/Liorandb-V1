@@ -92,8 +92,6 @@ export class CheckpointManager {
       this.data = b.data;
       return;
     }
-
-    console.warn("No valid checkpoint found, starting from zero");
   }
 
   private readCheckpoint(file: string): StoredCheckpoint | null {

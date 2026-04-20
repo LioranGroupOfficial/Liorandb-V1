@@ -32,6 +32,8 @@ export interface UpdateOptions {
 
 export interface CollectionOptions {
   readonly?: boolean;
+  batchChunkSize?: number;
+  scheduler?: CollectionScheduler;
 }
 
 export interface FindOptions {
@@ -39,6 +41,12 @@ export interface FindOptions {
   offset?: number;
   projection?: string[];
 }
+
+export type CollectionScheduler = {
+  write: (op: string, args: any[]) => Promise<any>;
+  maintenance: <R>(task: () => Promise<R>) => Promise<R>;
+  getChunkSize: () => number;
+};
 
 type QueryExecutionResult<R> = {
   results: R[];
@@ -59,7 +67,7 @@ const COUNT_META_KEY = META_KEY_PREFIX + "count";
 export class Collection<T = any> {
   dir: string;
   db: ClassicLevel<string, string>;
-  private queue: Promise<any> = Promise.resolve();
+  private writeQueue: Promise<any> = Promise.resolve();
 
   private schema?: ZodSchema<T>;
   private schemaVersion: number = 1;
@@ -70,6 +78,8 @@ export class Collection<T = any> {
   private docCount = 0;
   private metaLoaded = false;
   private metaLoadPromise: Promise<void> | null = null;
+  private scheduler?: CollectionScheduler;
+  private batchChunkSize: number;
 
   constructor(
     dir: string,
@@ -81,6 +91,8 @@ export class Collection<T = any> {
     this.schema = schema;
     this.schemaVersion = schemaVersion;
     this.readonlyMode = options?.readonly ?? false;
+    this.scheduler = options?.scheduler;
+    this.batchChunkSize = Math.max(1, Math.trunc(options?.batchChunkSize ?? 500));
 
     this.db = new ClassicLevel(dir, {
       valueEncoding: "utf8",
@@ -170,11 +182,11 @@ export class Collection<T = any> {
     return this.validate(working);
   }
 
-  /* ===================== QUEUE ===================== */
+  /* ===================== WRITE SERIALIZATION ===================== */
 
-  private _enqueue<R>(task: () => Promise<R>): Promise<R> {
-    this.queue = this.queue.then(task).catch(console.error);
-    return this.queue;
+  private _enqueueWrite<R>(task: () => Promise<R>): Promise<R> {
+    this.writeQueue = this.writeQueue.then(task).catch(console.error);
+    return this.writeQueue;
   }
 
   async close(): Promise<void> {
@@ -187,7 +199,7 @@ export class Collection<T = any> {
   async reencryptAll(oldKey: Buffer, newKey: Buffer): Promise<void> {
     this.assertWritable();
 
-    return this._enqueue(async () => {
+    const task = async () => {
       const batch: Array<{ type: "put"; key: string; value: string }> = [];
 
       for await (const [key, value] of this.db.iterator()) {
@@ -209,7 +221,13 @@ export class Collection<T = any> {
       if (batch.length > 0) {
         await this.db.batch(batch);
       }
-    });
+    };
+
+    if (this.scheduler) {
+      return this.scheduler.maintenance(task);
+    }
+
+    return this._enqueueWrite(task);
   }
 
   /* ===================== INDEX MANAGEMENT ===================== */
@@ -234,14 +252,20 @@ export class Collection<T = any> {
   async compact(): Promise<void> {
     this.assertWritable();
 
-    return this._enqueue(async () => {
-      await compactCollectionEngine(this);
-    });
+    if (this.scheduler) {
+      return this.scheduler.maintenance(() => this._compactInternal());
+    }
+
+    return this._enqueueWrite(() => this._compactInternal());
+  }
+
+  async _compactInternal(): Promise<void> {
+    await compactCollectionEngine(this);
   }
 
   /* ===================== INTERNAL EXEC ===================== */
 
-  async _exec(op: string, args: any[]) {
+  async _exec(op: string, args: any[]): Promise<any> {
     switch (op) {
       case "insertOne": return this._insertOne(args[0]);
       case "insertMany": return this._insertMany(args[0]);
@@ -394,8 +418,16 @@ export class Collection<T = any> {
     const migrated = this.migrateIfNeeded(raw);
 
     if (!this.readonlyMode && raw.__v !== this.schemaVersion) {
-      await this.db.put(id, encryptData(migrated));
-      await this._updateIndexes(raw, migrated);
+      const persist = async () => {
+        await this.db.put(id, encryptData(migrated));
+        await this._updateIndexes(raw, migrated);
+      };
+
+      if (this.scheduler) {
+        void this.scheduler.maintenance(persist).catch(() => {});
+      } else {
+        await persist();
+      }
     }
 
     return migrated;
@@ -868,62 +900,132 @@ export class Collection<T = any> {
   /* ===================== PUBLIC API ===================== */
 
   insertOne(doc: any) {
-    return this._enqueue(() => this._exec("insertOne", [doc]));
+    if (this.scheduler) {
+      return this.scheduler.write("insertOne", [doc]);
+    }
+    return this._enqueueWrite(() => this._exec("insertOne", [doc]));
   }
 
-  insertMany(docs: any[]) {
-    return this._enqueue(() => this._exec("insertMany", [docs]));
+  async insertMany(docs: any[], options?: { chunkSize?: number }) {
+    const chunkSize = Math.max(
+      1,
+      Math.trunc(
+        options?.chunkSize ?? this.scheduler?.getChunkSize() ?? this.batchChunkSize
+      )
+    );
+
+    if (!Array.isArray(docs) || docs.length === 0) {
+      return [];
+    }
+
+    if (docs.length <= chunkSize) {
+      if (this.scheduler) {
+        return await this.scheduler.write("insertMany", [docs]);
+      }
+      return await this._enqueueWrite(() => this._exec("insertMany", [docs]));
+    }
+
+    const out: any[] = [];
+
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const inserted = this.scheduler
+        ? await this.scheduler.write("insertMany", [chunk])
+        : await this._enqueueWrite(() => this._exec("insertMany", [chunk]));
+      out.push(...inserted);
+    }
+
+    return out;
+  }
+
+  async insertManyStream(
+    docs: Iterable<any> | AsyncIterable<any>,
+    options?: { chunkSize?: number }
+  ): Promise<number> {
+    const chunkSize = Math.max(
+      1,
+      Math.trunc(
+        options?.chunkSize ?? this.scheduler?.getChunkSize() ?? this.batchChunkSize
+      )
+    );
+
+    let count = 0;
+    let chunk: any[] = [];
+
+    for await (const doc of docs as any) {
+      chunk.push(doc);
+      if (chunk.length >= chunkSize) {
+        if (this.scheduler) {
+          await this.scheduler.write("insertMany", [chunk]);
+        } else {
+          await this._enqueueWrite(() => this._exec("insertMany", [chunk]));
+        }
+        count += chunk.length;
+        chunk = [];
+      }
+    }
+
+    if (chunk.length > 0) {
+      if (this.scheduler) {
+        await this.scheduler.write("insertMany", [chunk]);
+      } else {
+        await this._enqueueWrite(() => this._exec("insertMany", [chunk]));
+      }
+      count += chunk.length;
+    }
+
+    return count;
   }
 
   find(query: any = {}, options?: FindOptions) {
-    return this._enqueue(() => this._exec("find", [query, options]));
+    return this._exec("find", [query, options]);
   }
 
   findOne(query: any = {}, options?: FindOptions) {
-    return this._enqueue(() => this._exec("findOne", [query, options]));
+    return this._exec("findOne", [query, options]);
   }
 
   aggregate(pipeline: any[]) {
-    return this._enqueue(() => this._exec("aggregate", [pipeline]));
+    return this._exec("aggregate", [pipeline]);
   }
 
   explain(query: any = {}, options?: FindOptions) {
-    return this._enqueue(() => this._exec("explain", [query, options]));
+    return this._exec("explain", [query, options]);
   }
 
   updateOne(filter: any, update: any, options?: UpdateOptions) {
-    return this._enqueue(() =>
-      this._exec("updateOne", [filter, update, options])
-    );
+    if (this.scheduler) {
+      return this.scheduler.write("updateOne", [filter, update, options]);
+    }
+    return this._enqueueWrite(() => this._exec("updateOne", [filter, update, options]));
   }
 
   updateMany(filter: any, update: any) {
-    return this._enqueue(() =>
-      this._exec("updateMany", [filter, update])
-    );
+    if (this.scheduler) {
+      return this.scheduler.write("updateMany", [filter, update]);
+    }
+    return this._enqueueWrite(() => this._exec("updateMany", [filter, update]));
   }
 
   deleteOne(filter: any) {
-    return this._enqueue(() =>
-      this._exec("deleteOne", [filter])
-    );
+    if (this.scheduler) {
+      return this.scheduler.write("deleteOne", [filter]);
+    }
+    return this._enqueueWrite(() => this._exec("deleteOne", [filter]));
   }
 
   deleteMany(filter: any) {
-    return this._enqueue(() =>
-      this._exec("deleteMany", [filter])
-    );
+    if (this.scheduler) {
+      return this.scheduler.write("deleteMany", [filter]);
+    }
+    return this._enqueueWrite(() => this._exec("deleteMany", [filter]));
   }
 
   countDocuments(filter: any = {}) {
-    return this._enqueue(() =>
-      this._exec("countDocuments", [filter])
-    );
+    return this._exec("countDocuments", [filter]);
   }
 
   count() {
-    return this._enqueue(() =>
-      this._count()
-    );
+    return this._count();
   }
 }

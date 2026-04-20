@@ -14,6 +14,7 @@ import {
 
 import { WALManager } from "./wal.js";
 import { CheckpointManager } from "./checkpoint.js";
+import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -34,6 +35,16 @@ const META_FILE = "__db_meta.json";
 const META_VERSION = 2;
 const DEFAULT_SCHEMA_VERSION = "v1";
 const COLLECTION_META_KEY_PREFIX = "\u0000__meta__:";
+const DB_META_COL = "\u0000__db__";
+
+export type LioranDBRuntimeOptions = {
+  writeQueue?: Omit<WriterQueueOptions, "memoryPressure"> & {
+    memoryPressure?: WriterQueueOptions["memoryPressure"];
+  };
+  batch?: {
+    chunkSize?: number;
+  };
+};
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
 
@@ -68,29 +79,7 @@ class DBTransactionContext {
       throw new Error("Cannot commit transaction in readonly mode");
     }
 
-    for (const op of this.ops) {
-      await this.db.wal.append({
-        tx: this.txId,
-        type: "op",
-        payload: op
-      } as any);
-    }
-
-    const commitLSN = await this.db.wal.append({
-      tx: this.txId,
-      type: "commit"
-    } as any);
-
-    await this.db.applyTransaction(this.ops);
-
-    const appliedLSN = await this.db.wal.append({
-      tx: this.txId,
-      type: "applied"
-    } as any);
-
-    this.db.advanceCheckpoint(appliedLSN);
-
-    await this.db.postCommitMaintenance();
+    await this.db._commitTransaction(this.txId, this.ops);
   }
 }
 
@@ -110,14 +99,24 @@ export class LioranDB {
 
   public wal!: WALManager;
   private checkpoint!: CheckpointManager;
+  private writer!: DedicatedWriter;
+  private runtimeOptions: LioranDBRuntimeOptions;
+  private lastBackpressureLogAt = 0;
 
   private readonly readonlyMode: boolean;
+  public readonly ready: Promise<void>;
 
-  constructor(basePath: string, dbName: string, manager: LioranManager) {
+  constructor(
+    basePath: string,
+    dbName: string,
+    manager: LioranManager,
+    options: LioranDBRuntimeOptions = {}
+  ) {
     this.basePath = basePath;
     this.dbName = dbName;
     this.manager = manager;
     this.collections = new Map();
+    this.runtimeOptions = options;
 
     this.readonlyMode = (manager as any)?.isReadonly?.() ?? false;
 
@@ -130,11 +129,36 @@ export class LioranDB {
     if (!this.readonlyMode) {
       this.wal = new WALManager(basePath);
       this.checkpoint = new CheckpointManager(basePath);
+      this.writer = new DedicatedWriter({
+        ...(options.writeQueue ?? {}),
+        memoryPressure: {
+          ...(options.writeQueue?.memoryPressure ?? {}),
+          onPressureStart: info => {
+            console.warn(
+              `[LioranDB] Memory pressure start: ratio=${info.ratio.toFixed(3)} heapUsed=${info.heapUsed} heapLimit=${info.heapLimit} db=${this.dbName}`
+            );
+          },
+          onPressureEnd: info => {
+            console.warn(
+              `[LioranDB] Memory pressure end: ratio=${info.ratio.toFixed(3)} heapUsed=${info.heapUsed} heapLimit=${info.heapLimit} db=${this.dbName}`
+            );
+          }
+        },
+        onBackpressure: info => {
+          const now = Date.now();
+          if (now - this.lastBackpressureLogAt < 1000) return;
+          this.lastBackpressureLogAt = now;
+
+          console.warn(
+            `[LioranDB] Backpressure: pending=${info.pending} max=${info.maxSize} db=${this.dbName}`
+          );
+        }
+      });
     }
 
     this.migrator = new MigrationEngine(this);
 
-    this.initialize().catch(console.error);
+    this.ready = this.initialize();
   }
 
   /* ------------------------- MODE ------------------------- */
@@ -164,10 +188,14 @@ export class LioranDB {
     const committed = new Set<number>();
     const applied = new Set<number>();
     const ops = new Map<number, TXOp[]>();
+    const commitLSNByTx = new Map<number, number>();
+    let maxSeenLSN = fromLSN;
 
     await this.wal.replay(fromLSN, async (record) => {
+      maxSeenLSN = Math.max(maxSeenLSN, record.lsn);
       if (record.type === "commit") {
         committed.add(record.tx);
+        commitLSNByTx.set(record.tx, record.lsn);
       } else if (record.type === "applied") {
         applied.add(record.tx);
       } else if (record.type === "op") {
@@ -178,13 +206,17 @@ export class LioranDB {
 
     let highestAppliedLSN = fromLSN;
 
-    for (const tx of committed) {
+    const txsToApply = Array.from(committed)
+      .filter(tx => !applied.has(tx))
+      .sort((a, b) => (commitLSNByTx.get(a) ?? 0) - (commitLSNByTx.get(b) ?? 0));
+
+    for (const tx of txsToApply) {
       if (applied.has(tx)) continue;
 
       const txOps = ops.get(tx);
       if (txOps) {
-        await this.applyTransaction(txOps);
-        highestAppliedLSN = this.wal.getCurrentLSN();
+        await this._applyOps(txOps);
+        highestAppliedLSN = Math.max(highestAppliedLSN, maxSeenLSN);
       }
     }
 
@@ -258,9 +290,33 @@ export class LioranDB {
   /* ------------------------- TX APPLY ------------------------- */
 
   async applyTransaction(ops: TXOp[]) {
+    await this._applyOps(ops);
+  }
+
+  private async _applyOps(ops: TXOp[]): Promise<any[]> {
+    const results: any[] = [];
+
     for (const { col, op, args } of ops) {
+      if (col === DB_META_COL) {
+        results.push(await this._execDBMeta(op, args));
+        continue;
+      }
+
       const collection = this.collection(col);
-      await (collection as any)._exec(op, args);
+      results.push(await (collection as any)._exec(op, args));
+    }
+
+    return results;
+  }
+
+  private async _execDBMeta(op: string, args: any[]) {
+    switch (op) {
+      case "createIndex":
+        return this._createIndexInternal(args[0], args[1], args[2]);
+      case "compactCollection":
+        return this._compactCollectionInternal(args[0]);
+      default:
+        throw new Error(`Unknown db meta operation: ${op}`);
     }
   }
 
@@ -286,7 +342,20 @@ export class LioranDB {
       colPath,
       schema,
       schemaVersion ?? 1,
-      { readonly: this.readonlyMode }
+      {
+        readonly: this.readonlyMode,
+        batchChunkSize: this.runtimeOptions.batch?.chunkSize,
+        scheduler: this.readonlyMode
+          ? undefined
+          : {
+              write: (op: string, args: any[]) =>
+                this._scheduleWrite(name, op, args),
+              maintenance: <R>(task: () => Promise<R>) =>
+                this._scheduleMaintenance(task),
+              getChunkSize: () =>
+                Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500))
+            }
+      }
     );
 
     const metas = this.meta.indexes[name] ?? [];
@@ -318,48 +387,29 @@ export class LioranDB {
   ) {
     this.assertWritable();
 
-    const col = this.collection(collection);
-
-    const existing = this.meta.indexes[collection]?.find(i => i.field === field);
-    if (existing) return;
-
-    const index = new Index(col.dir, field, options);
-    const docs: any[] = [];
-    const flush = async () => {
-      if (docs.length === 0) return;
-      await index.bulkInsert(docs);
-      docs.length = 0;
-    };
-
-    for await (const [key, enc] of col.db.iterator()) {
-      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
-      try {
-        const doc = decryptData(enc);
-        docs.push(doc);
-        if (docs.length >= 5000) {
-          await flush();
-        }
-      } catch {}
-    }
-
-    await flush();
-
-    col.registerIndex(index);
-
-    if (!this.meta.indexes[collection]) {
-      this.meta.indexes[collection] = [];
-    }
-
-    this.meta.indexes[collection].push({ field, options });
-    this.saveMeta();
+    await this._commitTransaction(++LioranDB.TX_SEQ, [
+      {
+        tx: LioranDB.TX_SEQ,
+        col: DB_META_COL,
+        op: "createIndex",
+        args: [collection, field, options]
+      }
+    ]);
   }
 
   /* ------------------------- COMPACTION ------------------------- */
 
   async compactCollection(name: string) {
     this.assertWritable();
-    const col = this.collection(name);
-    await col.compact();
+
+    await this._commitTransaction(++LioranDB.TX_SEQ, [
+      {
+        tx: LioranDB.TX_SEQ,
+        col: DB_META_COL,
+        op: "compactCollection",
+        args: [name]
+      }
+    ], { wal: false });
   }
 
   async compactAll() {
@@ -408,9 +458,132 @@ export class LioranDB {
   /* ------------------------- SHUTDOWN ------------------------- */
 
   async close(): Promise<void> {
+    if (!this.readonlyMode) {
+      try {
+        await this.writer.close();
+      } catch {}
+      try {
+        await this.wal.close?.();
+      } catch {}
+    }
+
     for (const col of this.collections.values()) {
       try { await col.close(); } catch {}
     }
     this.collections.clear();
+  }
+
+  /* ------------------------- WRITER + WAL ------------------------- */
+
+  private async _scheduleWrite(col: string, op: string, args: any[]) {
+    this.assertWritable();
+
+    const txId = ++LioranDB.TX_SEQ;
+    const txOps: TXOp[] = [{ tx: txId, col, op, args }];
+
+    const results = await this._commitTransaction(txId, txOps);
+    return results[0];
+  }
+
+  private async _scheduleMaintenance<R>(task: () => Promise<R>): Promise<R> {
+    this.assertWritable();
+    return this.writer.run(task);
+  }
+
+  async _commitTransaction(
+    txId: number,
+    ops: TXOp[],
+    options: { wal?: boolean } = {}
+  ): Promise<any[]> {
+    this.assertWritable();
+
+    const useWAL = options.wal ?? true;
+
+    return this.writer.run(async () => {
+      return this._commitTransactionInternal(txId, ops, useWAL);
+    });
+  }
+
+  private async _commitTransactionInternal(
+    txId: number,
+    ops: TXOp[],
+    useWAL: boolean
+  ): Promise<any[]> {
+      if (useWAL) {
+        for (const op of ops) {
+          await this.wal.append({
+            tx: txId,
+            type: "op",
+            payload: op
+          } as any);
+        }
+
+        await this.wal.append({
+          tx: txId,
+          type: "commit"
+        } as any);
+      }
+
+      const results = await this._applyOps(ops);
+
+      if (useWAL) {
+        const appliedLSN = await this.wal.append({
+          tx: txId,
+          type: "applied"
+        } as any);
+
+        this.advanceCheckpoint(appliedLSN);
+      }
+
+      await this.postCommitMaintenance();
+      return results;
+  }
+
+  private async _createIndexInternal(
+    collection: string,
+    field: string,
+    options: IndexOptions = {}
+  ) {
+    const col = this.collection(collection);
+
+    const existing = this.meta.indexes[collection]?.find(i => i.field === field);
+    if (existing) return true;
+
+    const index = new Index(col.dir, field, options);
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await index.bulkInsert(docs);
+      docs.length = 0;
+    };
+
+    for await (const [key, enc] of col.db.iterator()) {
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+      try {
+        const doc = decryptData(enc);
+        docs.push(doc);
+        if (docs.length >= 5000) {
+          await flush();
+        }
+      } catch {}
+    }
+
+    await flush();
+
+    col.registerIndex(index);
+
+    if (!this.meta.indexes[collection]) {
+      this.meta.indexes[collection] = [];
+    }
+
+    this.meta.indexes[collection].push({ field, options });
+    this.saveMeta();
+    return true;
+  }
+
+  private async _compactCollectionInternal(name: string) {
+    const col = this.collection(name);
+    await (col as any)._compactInternal?.();
+    return true;
   }
 }
