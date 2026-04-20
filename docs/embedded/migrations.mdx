@@ -5,9 +5,12 @@ sidebar_position: 8
 
 Migrations exist at two levels:
 
+1) **Collection document migrations** (per-document `__v`), and  
+2) **Database schema migrations** (database `schemaVersion` string)
+
 ## 1) Collection document migrations (`__v`)
 
-Use `collection.addMigration(...)` to transform stored documents from an older `__v` to the current schema version when they are read.
+Use `collection.setSchema(schema, version)` to set the "current" document version, and `collection.addMigration(...)` to upgrade older docs when they are read.
 
 Good for:
 
@@ -15,23 +18,56 @@ Good for:
 - changing shapes
 - adding defaults
 
+### Example: rename `tier` -> `plan` (on read)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+import { z } from "zod";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+// v2 schema
+const UserV2 = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  plan: z.enum(["free", "pro"]),
+  __v: z.number().optional(),
+});
+
+users.setSchema(UserV2, 2);
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }),
+});
+
+// simulate an old stored doc (v1)
+await users.insertOne({ email: "x@y.com", tier: "pro", __v: 1 });
+
+const migrated = await users.findOne({ email: "x@y.com" });
+console.log(migrated);
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "x@y.com", plan: "pro", __v: 2, tier: "pro" }
+```
+
 ## 2) Database schema migrations (`schemaVersion`)
 
-The database stores a `schemaVersion` string in its metadata file.
+The database stores a `schemaVersion` string in its metadata file. You can register "upgrade steps" that run once and then bump the schema version.
 
-### `db.getSchemaVersion()`
+### `db.getSchemaVersion()` / `db.setSchemaVersion(v)`
 
 ```ts
 getSchemaVersion(): string
-```
-
-### `db.setSchemaVersion(v)`
-
-```ts
 setSchemaVersion(v: string): void
 ```
 
-Writable mode only.
+Writable mode only for `setSchemaVersion`.
 
 ### `db.migrate(from, to, fn)`
 
@@ -39,7 +75,7 @@ Writable mode only.
 migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>): void
 ```
 
-Registers a step; after `fn` finishes, the DB schema version is updated to `to`.
+Registers a step; after `fn` finishes, the DB schema version is set to `to`.
 
 ### `db.applyMigrations(targetVersion)`
 
@@ -47,5 +83,34 @@ Registers a step; after `fn` finishes, the DB schema version is updated to `to`.
 applyMigrations(targetVersion: string): Promise<void>
 ```
 
-Applies registered migrations up to the latest registered version.
+Applies registered migrations in order until there are no more pending steps.
 
+### Example: add an index in a migration
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+db.migrate("v1", "v2", async (db) => {
+  db.collection("users");
+  await db.createIndex("users", "email", { unique: true });
+});
+
+await db.applyMigrations("v2");
+console.log(db.getSchemaVersion());
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+v2
+```
+
+## What gets created on disk?
+
+Database migrations create two coordination files inside the database folder:
+
+- `__migration.lock` (temporary lock while a migration runs)
+- `__migration_history.json` (history of applied migrations)

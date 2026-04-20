@@ -6,11 +6,11 @@ sidebar_position: 4
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-A `Collection` stores JSON documents keyed by `_id` (string).
+A `Collection` stores JSON documents keyed by `_id` (string). It's the API you'll use most: insert, query, update, delete, aggregate.
 
 ## Document IDs (`_id`)
 
-- If you don’t provide `_id`, LioranDB generates one.
+- If you don't provide `_id`, LioranDB generates one.
 - `_id` **cannot** start with the reserved prefix `\u0000__meta__:` (used for internal metadata).
 
 ## Schema validation (optional)
@@ -21,54 +21,192 @@ A `Collection` stores JSON documents keyed by `_id` (string).
 setSchema(schema: ZodSchema<T>, version: number): void
 ```
 
-- Sets/updates the schema used to validate writes and migrated reads.
-- `version` is stored in documents as `__v`.
+- Validates writes.
+- Stores the current schema version in documents as `__v`.
+
+```ts
+import { z } from "zod";
+
+users.setSchema(
+  z.object({
+    _id: z.string().optional(),
+    email: z.string().email(),
+    __v: z.number().optional(),
+  }),
+  1
+);
+```
 
 ### `addMigration({ from, to, migrate })`
 
 ```ts
-addMigration(migration: {
-  from: number;
-  to: number;
-  migrate: (doc: any) => T;
-}): void
+addMigration(migration: { from: number; to: number; migrate: (doc: any) => T }): void
 ```
 
-- Lets you evolve document shapes over time.
-- When reading, documents are upgraded from `__v` to the current schema version.
+- Upgrades documents on read (from older `__v` to the current version).
+- Great for renames/defaults when you don't want to rewrite the whole collection immediately.
 
-## CRUD API
+```ts
+users.setSchema(UserV2, 2);
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }),
+});
+```
 
-All operations below are queued per collection to keep ordering consistent.
+## CRUD (every common function with a tiny example)
 
-- `insertOne(doc: any): Promise<T>`
-- `insertMany(docs: any[]): Promise<T[]>`
-- `find(query?: any, options?: { limit?: number; offset?: number; projection?: string[] }): Promise<T[]>`
-- `findOne(query?: any, options?: FindOptions): Promise<T | null>`
-- `updateOne(filter: any, update: any, options?: { upsert?: boolean }): Promise<T | null>`
-- `updateMany(filter: any, update: any): Promise<T[]>`
-- `deleteOne(filter: any): Promise<boolean>`
-- `deleteMany(filter: any): Promise<number>`
-- `countDocuments(filter?: any): Promise<number>`
-- `count(): Promise<number>`
+All **writes** are queued per collection to keep ordering consistent.
 
-## Aggregation API
+### `insertOne(doc)`
+
+```ts
+const inserted = await users.insertOne({ email: "a@b.com", plan: "free" });
+console.log(inserted);
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "a@b.com", plan: "free", __v: 1 }
+```
+
+### `insertMany(docs, options?)`
+
+```ts
+await users.insertMany([{ email: "a@b.com" }, { email: "c@d.com" }], { chunkSize: 500 });
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
+### `find(query?, options?)`
+
+```ts
+const list = await users.find(
+  { plan: { $in: ["free", "pro"] } },
+  { limit: 2, offset: 0, projection: ["email", "plan"] }
+);
+console.log(list);
+```
+
+```txt title="Sandbox output (example)"
+[ { email: "a@b.com", plan: "free" }, { email: "c@d.com", plan: "pro" } ]
+```
+
+### `findOne(query?, options?)`
+
+```ts
+const one = await users.findOne({ email: "a@b.com" });
+console.log(one?.email);
+```
+
+```txt title="Sandbox output (example)"
+a@b.com
+```
+
+### `updateOne(filter, update, options?)`
+
+```ts
+const updated = await users.updateOne(
+  { email: "a@b.com" },
+  { $set: { plan: "pro" }, $inc: { "stats.logins": 1 } }
+);
+console.log(updated);
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "a@b.com", plan: "pro", stats: { logins: 1 }, __v: 1 }
+```
+
+#### Upsert
+
+```ts
+const doc = await users.updateOne(
+  { email: "new@x.com" },
+  { $set: { email: "new@x.com", plan: "free" } },
+  { upsert: true }
+);
+console.log(doc);
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "new@x.com", plan: "free", __v: 1 }
+```
+
+### `updateMany(filter, update)`
+
+```ts
+const changed = await users.updateMany({ plan: "free" }, { $set: { plan: "pro" } });
+console.log(changed.length);
+```
+
+```txt title="Sandbox output (example)"
+2
+```
+
+### `deleteOne(filter)`
+
+```ts
+console.log(await users.deleteOne({ email: "a@b.com" }));
+```
+
+```txt title="Sandbox output (example)"
+true
+```
+
+### `deleteMany(filter)`
+
+```ts
+console.log(await users.deleteMany({ plan: "free" }));
+```
+
+```txt title="Sandbox output (example)"
+3
+```
+
+### `count()` / `countDocuments(filter?)`
+
+```ts
+console.log(await users.count());
+console.log(await users.countDocuments({ plan: "pro" }));
+```
+
+```txt title="Sandbox output (example)"
+10
+4
+```
+
+## Aggregation
 
 ### `aggregate(pipeline)`
 
+Supported stages: `$match`, `$project`, `$skip`, `$limit`, `$group`.
+
 ```ts
-aggregate(pipeline: any[]): Promise<any[]>
+const out = await users.aggregate([{ $group: { _id: "plan", count: { $sum: 1 } } }]);
+console.log(out);
 ```
 
-Supported stages:
+```txt title="Sandbox output (example)"
+[ { _id: "free", count: 7 }, { _id: "pro", count: 3 } ]
+```
 
-- `$match`
-- `$project`
-- `$skip`
-- `$limit`
-- `$group`
+## Maintenance
 
-## Example: CRUD
+### `compact()`
+
+Compaction rebuilds the collection to reduce fragmentation and then rebuilds indexes.
+
+```ts
+await users.compact();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
+## End-to-end example (CRUD)
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -79,19 +217,19 @@ Supported stages:
 ```ts
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
+const manager = new LioranManager({ rootPath: "./.liorandb" });
 const db = await manager.db("app");
 const items = db.collection<{ _id?: string; sku: string; qty: number }>("items");
 
-await items.insertMany([
-  { sku: "A", qty: 10 },
-  { sku: "B", qty: 2 },
-]);
-
+await items.insertMany([{ sku: "A", qty: 10 }, { sku: "B", qty: 2 }]);
 await items.updateOne({ sku: "B" }, { $inc: { qty: 1 } });
-console.log(await items.find({ qty: { $gte: 3 } }));
 
+console.log(await items.find({ qty: { $gte: 3 } }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { _id: "...", sku: "A", qty: 10, __v: 1 }, { _id: "...", sku: "B", qty: 3, __v: 1 } ]
 ```
 
 </TabItem>
@@ -100,21 +238,20 @@ await manager.close();
 ```js
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
+const manager = new LioranManager({ rootPath: "./.liorandb" });
 const db = await manager.db("app");
 const items = db.collection("items");
 
-await items.insertMany([
-  { sku: "A", qty: 10 },
-  { sku: "B", qty: 2 },
-]);
-
+await items.insertMany([{ sku: "A", qty: 10 }, { sku: "B", qty: 2 }]);
 await items.updateOne({ sku: "B" }, { $inc: { qty: 1 } });
-console.log(await items.find({ qty: { $gte: 3 } }));
 
+console.log(await items.find({ qty: { $gte: 3 } }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { _id: "...", sku: "A", qty: 10, __v: 1 }, { _id: "...", sku: "B", qty: 3, __v: 1 } ]
 ```
 
 </TabItem>
 </Tabs>
-

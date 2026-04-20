@@ -5,10 +5,30 @@ sidebar_position: 10
 
 Compaction rebuilds collection storage to remove fragmentation and then rebuilds indexes.
 
+You typically run compaction when:
+
+- the database has been running for a long time with lots of updates/deletes
+- you want to reclaim disk space
+- you want to "defragment" collections after heavy write workloads
+
 ## `db.compactCollection(name)`
 
 ```ts
 compactCollection(name: string): Promise<void>
+```
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+await db.compactCollection("users");
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
 ```
 
 ## `db.compactAll()`
@@ -17,17 +37,25 @@ compactCollection(name: string): Promise<void>
 compactAll(): Promise<void>
 ```
 
+```ts
+await db.compactAll();
+```
+
 ## `collection.compact()`
 
 ```ts
 compact(): Promise<void>
 ```
 
-The compaction engine performs:
+```ts
+const users = db.collection("users");
+await users.compact();
+```
 
-1. crash recovery checks
-2. snapshot rebuild to a temporary directory
-3. atomic directory swap
-4. reopen DB
-5. rebuild indexes
+## What compaction does (high level)
 
+1. crash recovery checks  
+2. snapshot rebuild to a temporary directory  
+3. atomic directory swap  
+4. reopen DB  
+5. rebuild indexes  

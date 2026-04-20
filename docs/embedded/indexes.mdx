@@ -6,9 +6,13 @@ sidebar_position: 6
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Indexes are created per collection field and are persisted on disk.
+Indexes are created per collection field and are persisted on disk. They speed up queries like:
 
-## Create an index
+- `{ email: "a@b.com" }`
+- `{ age: { $gte: 18 } }`
+- `{ status: { $in: ["active", "trial"] } }`
+
+## `db.createIndex(collection, field, options?)`
 
 ```ts
 createIndex(collection: string, field: string, options?: { unique?: boolean }): Promise<void>
@@ -17,6 +21,8 @@ createIndex(collection: string, field: string, options?: { unique?: boolean }): 
 - Builds the index from existing documents.
 - After creation, writes keep the index updated.
 - `unique: true` enforces uniqueness for that field.
+
+### Example: create a unique index
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -27,16 +33,19 @@ createIndex(collection: string, field: string, options?: { unique?: boolean }): 
 ```ts
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
+const manager = new LioranManager({ rootPath: "./.liorandb" });
 const db = await manager.db("app");
-
-db.collection("users"); // ensure collection exists
-await db.createIndex("users", "email", { unique: true });
-
 const users = db.collection("users");
-console.log(await users.findOne({ email: { $eq: "a@b.com" } }));
 
+await db.createIndex("users", "email", { unique: true });
+await users.insertOne({ email: "a@b.com" });
+
+console.log(await users.findOne({ email: "a@b.com" }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "a@b.com", __v: 1 }
 ```
 
 </TabItem>
@@ -45,46 +54,83 @@ await manager.close();
 ```js
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
+const manager = new LioranManager({ rootPath: "./.liorandb" });
 const db = await manager.db("app");
-
-db.collection("users");
-await db.createIndex("users", "email", { unique: true });
-
 const users = db.collection("users");
-console.log(await users.findOne({ email: { $eq: "a@b.com" } }));
 
+await db.createIndex("users", "email", { unique: true });
+await users.insertOne({ email: "a@b.com" });
+
+console.log(await users.findOne({ email: "a@b.com" }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ _id: "...", email: "a@b.com", __v: 1 }
 ```
 
 </TabItem>
 </Tabs>
 
-## How indexes are used
+### What happens on duplicates? (unique index)
+
+If you insert a second doc with the same indexed value, the write is rejected.
+
+```txt title="Sandbox output (example)"
+Error: Unique constraint violation on index "email"
+```
+
+## How LioranDB uses indexes
 
 - Query execution tries to pick **one best index** from your query.
 - If no index can be selected, a full scan is used.
 - Even with an index, documents are still re-checked against your full query to ensure correctness.
 
-Supported indexed shapes include:
+## `db.explain(collection, query?, options?)`
 
-- `{ field: value }`
-- `{ field: { $eq: value } }`
-- `{ field: { $in: [...] } }`
-- `{ field: { $gt/$gte/$lt/$lte: ... } }` (range queries)
-
-## `explain()`
-
-You can ask for query plan stats:
+Use `explain()` to see what the planner did and how much work the query performed.
 
 ```ts
-db.explain("users", { age: { $gte: 18 } })
+const plan = await db.explain("users", { age: { $gte: 18 } });
+console.log(plan);
 ```
 
-The result includes:
+```txt title="Sandbox output (example)"
+{
+  indexUsed: "age",
+  indexType: "btree",
+  scannedDocuments: 42,
+  returnedDocuments: 7,
+  executionTimeMs: 3,
+  usedFullScan: false,
+  candidateDocuments: 42
+}
+```
 
-- `indexUsed`: which field index was used (if any)
-- `scannedDocuments`: how many documents were read
-- `candidateDocuments`: how many IDs the index/full-scan produced
-- `executionTimeMs`: elapsed time in milliseconds
+### Example: compare indexed vs full scan
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await users.insertMany([
+  { email: "a@b.com", age: 21 },
+  { email: "c@d.com", age: 35 },
+  { email: "e@f.com", age: 10 },
+]);
+
+const before = await db.explain("users", { age: { $gte: 18 } });
+await db.createIndex("users", "age");
+const after = await db.explain("users", { age: { $gte: 18 } });
+
+console.log({ before: before.usedFullScan, after: after.usedFullScan });
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ before: true, after: false }
+```
 

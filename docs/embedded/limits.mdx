@@ -5,19 +5,40 @@ sidebar_position: 13
 
 ## Key limits
 
-- **Document size**: encrypted JSON must be ≤ ~5MB.
+- **Document size (encrypted)**: encrypted JSON must be ~5MB max (5,000,000 characters).
 - **Reserved keys**: document `_id` cannot start with `\u0000__meta__:`.
 
-## Performance tips
+## Performance tips (practical)
 
 - Prefer `insertMany()` over many `insertOne()` calls.
+- For streams/iterators, use `insertManyStream()` (avoids holding everything in memory).
 - Create indexes for fields you filter on frequently (`db.createIndex(...)`).
 - Use `find({ ... }, { limit, offset })` for paging.
+- Use projections to return smaller payloads: `projection: ["email", "profile.age"]`.
 - Run compaction periodically for long-lived workloads.
 
 ## Concurrency model
 
-Each collection serializes its operations through an internal queue to keep ordering consistent.
+- Each collection serializes its **writes** through an internal queue to keep ordering consistent.
+- For multi-process scenarios, use manager IPC mode (see [`IPC`](./ipc)) rather than pointing multiple writers directly at the same root directory.
 
-For multi-process scenarios, use manager IPC mode (see IPC docs) rather than pointing multiple writers directly at the same root directory.
+## Backpressure (advanced)
 
+If you're doing heavy write throughput, `LioranManager` exposes `writeQueue` options (like max queue size and behavior under memory pressure).
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  writeQueue: {
+    maxSize: 50_000,
+    mode: "wait",
+    timeoutMs: 10_000,
+  },
+  batch: { chunkSize: 500 },
+});
+
+await manager.db("app");
+await manager.close();
+```

@@ -6,11 +6,13 @@ sidebar_position: 2
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-`LioranManager` owns:
+`LioranManager` is the top-level object you create in your app. It owns:
 
 - the **root path** on disk,
 - the **encryption key** (optional),
 - and the set of **opened databases**.
+
+Think of it as a small "embedded DB server in-process", plus (optional) IPC if you run multiple Node processes.
 
 ## Constructor
 
@@ -21,11 +23,27 @@ new LioranManager(options?: LioranManagerOptions)
 ### `LioranManagerOptions`
 
 - `rootPath?: string`  
-  Base folder where database directories are stored.
+  Base folder where database directories are stored (one folder per DB name).
 - `encryptionKey?: string | Buffer`  
   Enables encryption-at-rest for documents and WAL records.
 - `ipc?: "primary" | "client" | "readonly"`  
-  Process mode for multi-process usage (see IPC docs).
+  Process mode for multi-process usage (see [`IPC`](./ipc)).
+- `writeQueue?: { ... }`  
+  Controls how the internal dedicated writer behaves under backpressure (advanced).
+- `batch?: { chunkSize?: number }`  
+  Default chunk size used by batch inserts (advanced).
+
+## "What does it create on disk?" (manager root)
+
+If `rootPath` is `./.liorandb` and you open `db("app")`, you'll get:
+
+```txt
+./.liorandb/
+  app/
+    users/            (collection folder)
+    __wal/            (write-ahead log)
+    __db_meta.json    (db metadata: indexes, schemaVersion, ...)
+```
 
 ## `db(name)`
 
@@ -35,6 +53,26 @@ db(name: string): Promise<LioranDB>
 
 - Opens (or reuses) a database named `name`.
 - In IPC `client` mode, returns a proxy that forwards operations to the primary process.
+
+### Example: open two DBs
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+const appDb = await manager.db("app");
+const analyticsDb = await manager.db("analytics");
+
+await appDb.collection("users").insertOne({ email: "a@b.com" });
+await analyticsDb.collection("events").insertOne({ name: "signup" });
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
 
 ## `snapshot(snapshotPath)`
 
@@ -46,6 +84,24 @@ snapshot(snapshotPath: string): Promise<true>
 - Not allowed in `readonly` mode.
 - In IPC client mode, the snapshot is executed by the primary process.
 
+### Example: create a snapshot
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.db("app");
+
+const ok = await manager.snapshot("./backups/app.tar.gz");
+console.log(ok);
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+true
+```
+
 ## `restore(snapshotPath)`
 
 ```ts
@@ -56,6 +112,22 @@ restore(snapshotPath: string): Promise<never>
 - **Clears the existing root directory** before restore.
 - After a successful restore, the process prints a message and exits.
 
+### Example: restore (note: process exits)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.restore("./backups/app.tar.gz");
+
+// this line never runs (restore exits the process)
+console.log("done");
+```
+
+```txt title="Sandbox output (example)"
+Restore completed. Restart required.
+```
+
 ## `close()` / `closeAll()`
 
 ```ts
@@ -63,6 +135,41 @@ close(): Promise<void>
 ```
 
 - Closes all open databases and releases the process lock (primary mode).
+
+### Example: always close in `finally`
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+try {
+  const db = await manager.db("app");
+  await db.collection("health").insertOne({ ok: true });
+} finally {
+  await manager.close();
+}
+```
+
+## IPC helpers (`isPrimary()`, `isClient()`, `isReadOnly()`)
+
+These are handy for logging/debugging in multi-process deployments.
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+console.log({
+  primary: manager.isPrimary(),
+  client: manager.isClient(),
+  readonly: manager.isReadOnly(),
+});
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ primary: true, client: false, readonly: false }
+```
 
 ## Example: project-local root + encryption
 
@@ -85,6 +192,10 @@ await db.collection("notes").insertOne({ title: "hello" });
 await manager.close();
 ```
 
+```txt title="Sandbox output (example)"
+(no output)
+```
+
 </TabItem>
 <TabItem value="js">
 
@@ -99,6 +210,10 @@ const manager = new LioranManager({
 const db = await manager.db("app");
 await db.collection("notes").insertOne({ title: "hello" });
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
 ```
 
 </TabItem>

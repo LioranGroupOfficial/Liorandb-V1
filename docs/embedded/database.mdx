@@ -8,6 +8,15 @@ import TabItem from '@theme/TabItem';
 
 `LioranDB` represents a single database directory under the manager root.
 
+It's where you:
+
+- open collections (`db.collection(...)`)
+- manage indexes (`db.createIndex(...)`, `db.explain(...)`)
+- run transactions (`db.transaction(...)`)
+- compact storage (`db.compactCollection(...)`, `db.compactAll()`)
+- rotate encryption keys (`db.rotateEncryptionKey(...)`)
+- coordinate DB-level migrations (`db.migrate(...)`, `db.applyMigrations(...)`)
+
 ## `collection(name, schema?, schemaVersion?)`
 
 ```ts
@@ -23,6 +32,24 @@ collection<T = any>(
 - `schemaVersion` (optional): stored in documents as `__v` (defaults to `1`).
 - Returns a cached `Collection` instance per `name`.
 
+### Example: open a collection
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+const users = db.collection("users");
+await users.insertOne({ email: "a@b.com" });
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
 ## Index API
 
 ### `createIndex(collection, field, options?)`
@@ -37,6 +64,25 @@ createIndex(
 
 - Builds an index for existing documents, then keeps it updated on writes.
 - `unique: true` enforces uniqueness for that field.
+
+### Example: unique index (email)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await db.createIndex("users", "email", { unique: true });
+await users.insertOne({ email: "a@b.com" });
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
 
 ### `explain(collection, query?, options?)`
 
@@ -54,6 +100,28 @@ explain(collection: string, query?: any, options?: any): Promise<{
 
 - Returns planner + execution stats for a query.
 
+### Example: see whether an index is used
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await db.createIndex("users", "age");
+await users.insertMany([{ age: 10 }, { age: 20 }, { age: 30 }]);
+
+const plan = await db.explain("users", { age: { $gte: 18 } });
+console.log({ indexUsed: plan.indexUsed, scanned: plan.scannedDocuments });
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ indexUsed: "age", scanned: 2 }
+```
+
 ## Transactions
 
 ### `transaction(fn)`
@@ -64,6 +132,27 @@ transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T>
 
 - Runs multiple operations as a single atomic commit (WAL-backed).
 - Not allowed when the manager is in readonly mode.
+
+### Example: transfer between accounts (single commit)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("bank");
+
+await db.transaction(async (tx) => {
+  const accounts = tx.collection("accounts");
+  accounts.updateOne({ id: "a" }, { $inc: { balance: -50 } }, { upsert: true });
+  accounts.updateOne({ id: "b" }, { $inc: { balance: 50 } }, { upsert: true });
+});
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
 
 ## Migrations (database-level)
 
@@ -93,12 +182,51 @@ applyMigrations(targetVersion: string): Promise<void>
 
 - Applies registered migrations up to the latest registered version.
 
+### Example: rename a collection (migration step)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+db.migrate("v1", "v2", async (db) => {
+  // example "schema change": make sure a collection exists, or move data, etc.
+  await db.collection("users").insertOne({ migratedAt: Date.now() });
+});
+
+await db.applyMigrations("v2");
+console.log(db.getSchemaVersion());
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+v2
+```
+
 ## Maintenance
 
 - `compactCollection(name: string): Promise<void>`
 - `compactAll(): Promise<void>`
 - `rotateEncryptionKey(newKey: string | Buffer): Promise<void>`
 - `close(): Promise<void>`
+
+### Example: compact a single collection
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+await db.compactCollection("users");
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
 
 ## Example: schema + collection
 
@@ -128,6 +256,10 @@ await users.insertOne({ email: "u@example.com", age: 18 });
 await manager.close();
 ```
 
+```txt title="Sandbox output (example)"
+(no output)
+```
+
 </TabItem>
 <TabItem value="js">
 
@@ -149,6 +281,10 @@ const users = db.collection("users", User, 1);
 await users.insertOne({ email: "u@example.com", age: 18 });
 
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
 ```
 
 </TabItem>

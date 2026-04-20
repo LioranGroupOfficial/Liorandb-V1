@@ -6,13 +6,24 @@ sidebar_position: 1
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Install the embedded database:
+LioranDB Embedded is a file-based JSON document database for Node.js (backed by a write-ahead log).
+
+## 1) Install
 
 ```bash
 npm i @liorandb/core
 ```
 
-Create a database, write a document, read it back:
+## 2) Your first database (hello world)
+
+This example does all the basics:
+
+- create a `LioranManager` (the "owner" of the root folder on disk)
+- open a `LioranDB` by name
+- open a `Collection`
+- write a document
+- read it back
+- close cleanly
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -39,6 +50,10 @@ console.log(found);
 await manager.close();
 ```
 
+```txt title="Sandbox output (example)"
+{ _id: "b2c6b5d8-6f3f-4d4b-8d52-2a1c6f6f9b0e", email: "a@b.com", plan: "free", __v: 1 }
+```
+
 </TabItem>
 <TabItem value="js">
 
@@ -61,6 +76,80 @@ console.log(found);
 await manager.close();
 ```
 
+```txt title="Sandbox output (example)"
+{ _id: "b2c6b5d8-6f3f-4d4b-8d52-2a1c6f6f9b0e", email: "a@b.com", plan: "free", __v: 1 }
+```
+
+</TabItem>
+</Tabs>
+
+## 3) A slightly bigger example (update + query + paging)
+
+This shows common patterns you'll use in real apps:
+
+- use `$inc` updates
+- filter with operators like `$gte`
+- page results with `{ limit, offset }`
+
+<Tabs groupId="language2" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("shop");
+const items = db.collection<{ _id?: string; sku: string; qty: number }>("items");
+
+await items.insertMany([
+  { sku: "A", qty: 10 },
+  { sku: "B", qty: 2 },
+  { sku: "C", qty: 25 },
+]);
+
+await items.updateOne({ sku: "B" }, { $inc: { qty: 5 } });
+
+const page1 = await items.find({ qty: { $gte: 5 } }, { limit: 2, offset: 0 });
+console.log(page1.map(x => ({ sku: x.sku, qty: x.qty })));
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { sku: "A", qty: 10 }, { sku: "B", qty: 7 } ]
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("shop");
+const items = db.collection("items");
+
+await items.insertMany([
+  { sku: "A", qty: 10 },
+  { sku: "B", qty: 2 },
+  { sku: "C", qty: 25 },
+]);
+
+await items.updateOne({ sku: "B" }, { $inc: { qty: 5 } });
+
+const page1 = await items.find({ qty: { $gte: 5 } }, { limit: 2, offset: 0 });
+console.log(page1.map(x => ({ sku: x.sku, qty: x.qty })));
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { sku: "A", qty: 10 }, { sku: "B", qty: 7 } ]
+```
+
 </TabItem>
 </Tabs>
 
@@ -75,4 +164,11 @@ By default, `@liorandb/core` uses:
 - `~/LioranDB/db` (created automatically)
 
 If you want a project-local folder, pass `rootPath` to `new LioranManager({ rootPath })`.
+
+## Next pages (recommended order)
+
+- [`LioranManager`](./manager): root path, snapshots, restore, IPC modes
+- [`LioranDB`](./database): indexes, transactions, compaction, encryption rotation
+- [`Collection`](./collection): CRUD, aggregation, schema + migrations
+- [`Query & update language`](./query-and-update): operators like `$gte`, `$in`, `$set`, `$inc`
 

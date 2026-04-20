@@ -12,6 +12,12 @@ Snapshots are created/restored by the `LioranManager`.
 
 Creates a `tar.gz` archive of the manager root directory.
 
+Important details:
+
+- Not allowed in `readonly` mode.
+- In IPC `client` mode, the snapshot runs in the primary process.
+- Open DBs are closed before the snapshot is created (to avoid partial state).
+
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
   { label: 'JavaScript', value: 'js' },
@@ -21,11 +27,17 @@ Creates a `tar.gz` archive of the manager root directory.
 ```ts
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
-await manager.db("app"); // open something (optional)
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.db("app");
 
-await manager.snapshot("./backups/app.tar.gz");
+const ok = await manager.snapshot("./backups/app.tar.gz");
+console.log(ok);
+
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+true
 ```
 
 </TabItem>
@@ -34,11 +46,17 @@ await manager.close();
 ```js
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
+const manager = new LioranManager({ rootPath: "./.liorandb" });
 await manager.db("app");
 
-await manager.snapshot("./backups/app.tar.gz");
+const ok = await manager.snapshot("./backups/app.tar.gz");
+console.log(ok);
+
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+true
 ```
 
 </TabItem>
@@ -52,4 +70,15 @@ Important behavior:
 
 - The root directory is removed and recreated.
 - After restore completes, the process prints `"Restore completed. Restart required."` and exits.
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.restore("./backups/app.tar.gz");
+```
+
+```txt title="Sandbox output (example)"
+Restore completed. Restart required.
+```
 

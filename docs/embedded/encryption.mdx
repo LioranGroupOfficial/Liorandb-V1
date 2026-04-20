@@ -3,26 +3,79 @@ title: Encryption & key rotation
 sidebar_position: 11
 ---
 
-LioranDB encrypts documents at rest when an encryption key is configured.
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+LioranDB encrypts documents at rest when an encryption key is configured on the manager.
 
 ## Setting the encryption key
 
 Provide `encryptionKey` when creating a `LioranManager`:
 
-- `string`: derived into a fixed-length key internally
+- `string`: hashed internally into a fixed-length key
 - `Buffer`: must be **32 bytes**
 
 If you lose the key, encrypted data cannot be decrypted.
 
-## Document size limit
+### Example: enable encryption (string key)
 
-Encrypted documents are stored as JSON and must be **≤ 5,000,000 characters** (about 5MB). Larger documents throw:
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
-- `Error: Document too large (>5MB)`
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  encryptionKey: "dev-secret-change-me",
+});
+
+const db = await manager.db("app");
+await db.collection("secrets").insertOne({ note: "hello" });
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  encryptionKey: "dev-secret-change-me",
+});
+
+const db = await manager.db("app");
+await db.collection("secrets").insertOne({ note: "hello" });
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
+</TabItem>
+</Tabs>
+
+## Document size limit (encrypted)
+
+Encrypted documents are stored as JSON and must be **at most 5,000,000 characters** (about 5MB). Larger documents throw:
+
+```txt
+Error: Document too large (>5MB)
+```
 
 ## Rotating keys
 
-`LioranDB.rotateEncryptionKey(newKey)` re-encrypts:
+`db.rotateEncryptionKey(newKey)` re-encrypts:
 
 - every collection document (all collections on disk), and
 - the WAL records
@@ -31,5 +84,23 @@ Use rotation for:
 
 - incident response
 - planned key rollover
-- changing environments (dev → prod)
+- changing environments (dev -> prod)
 
+### Example: rotate to a new key
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  encryptionKey: "old-key",
+});
+
+const db = await manager.db("app");
+await db.rotateEncryptionKey("new-key");
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+(no output)
+```

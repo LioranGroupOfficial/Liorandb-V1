@@ -3,11 +3,13 @@ title: Query & update language
 sidebar_position: 5
 ---
 
-LioranDB’s embedded query engine supports:
+LioranDB's embedded query engine uses plain JavaScript objects.
 
-## Queries
+## Query basics
 
-Queries are plain objects. Keys can be dot-paths (example: `"profile.age"`).
+- A query is usually an object: `{ field: value }`
+- Keys can be dot-paths: `"profile.age"`, `"stats.logins"`
+- Multiple keys mean "AND" (all conditions must match)
 
 ### Equality
 
@@ -15,60 +17,168 @@ Queries are plain objects. Keys can be dot-paths (example: `"profile.age"`).
 { email: "a@b.com" }
 ```
 
-### Operators
+```txt title="Sandbox output (example)"
+Matches docs where doc.email === "a@b.com"
+```
 
-For a field `x`, these operators are supported:
+### Dot-paths
+
+```js
+{ "profile.age": 21 }
+```
+
+```txt title="Sandbox output (example)"
+Matches docs where doc.profile?.age === 21
+```
+
+### Operators (for a field `x`)
+
+Supported operators:
 
 - `$gt`, `$gte`
 - `$lt`, `$lte`
 - `$ne`, `$eq`
 - `$in` (array membership)
 
-Examples:
+#### Range
 
 ```js
 { age: { $gte: 18, $lt: 65 } }
 ```
 
+```txt title="Sandbox output (example)"
+Matches 18 <= doc.age < 65
+```
+
+#### `$in`
+
 ```js
 { status: { $in: ["active", "trial"] } }
 ```
 
+```txt title="Sandbox output (example)"
+Matches docs where status is one of "active" or "trial"
+```
+
+#### Combine multiple fields (implicit AND)
+
+```js
+{ plan: "pro", "profile.age": { $gte: 18 } }
+```
+
+```txt title="Sandbox output (example)"
+Matches docs that satisfy both conditions
+```
+
 ### Functional queries
 
-You can also pass a function:
+You can also pass a function instead of an object:
 
 ```js
 (doc) => doc.qty > 0 && doc.sku?.startsWith("A")
 ```
 
+```txt title="Sandbox output (example)"
+Matches docs where qty > 0 and sku begins with "A"
+```
+
+## Find options: `limit`, `offset`, `projection`
+
+```js
+await collection.find(
+  { plan: "pro" },
+  { limit: 10, offset: 0, projection: ["email", "profile.age"] }
+)
+```
+
+- `limit`: max documents returned
+- `offset`: skip N matching docs (simple paging)
+- `projection`: include only specific fields (top-level or dot-paths)
+
+```txt title="Sandbox output (example)"
+[ { email: "a@b.com", profile: { age: 21 } }, { email: "c@d.com", profile: { age: 35 } } ]
+```
+
 ## Updates
 
-Updates can be:
+Updates can be either:
+
+1) Operator updates (contain `$` keys), or  
+2) Replacement/merge updates (no `$` keys)
 
 ### Operator updates
 
 #### `$set`
 
 ```js
-{ $set: { "profile.name": "New Name" } }
+{ $set: { "profile.name": "New Name", plan: "pro" } }
+```
+
+```txt title="Sandbox output (example)"
+Sets profile.name and plan on the matching doc(s)
 ```
 
 #### `$inc`
 
 ```js
-{ $inc: { attempts: 1 } }
+{ $inc: { attempts: 1, "stats.logins": 1 } }
 ```
 
-### Replacement/merge updates
+```txt title="Sandbox output (example)"
+Increments numeric fields by the given amount
+```
 
-If the update object contains **no** `$` keys, it’s treated as a shallow merge:
+### Replacement/merge updates (no `$` keys)
+
+If the update object contains **no** `$` keys, it's treated as a shallow merge:
 
 ```js
 { status: "active", plan: "pro" }
+```
+
+```txt title="Sandbox output (example)"
+Merges into the existing doc (top-level keys)
 ```
 
 ## Upserts
 
 `updateOne(filter, update, { upsert: true })` inserts a new document if nothing matches.
 
+```js
+await users.updateOne(
+  { email: "new@x.com" },
+  { $set: { email: "new@x.com", plan: "free" } },
+  { upsert: true }
+)
+```
+
+```txt title="Sandbox output (example)"
+Inserts a new doc when no existing doc matches the filter
+```
+
+## Complete example (query + update)
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await users.insertMany([
+  { email: "a@b.com", profile: { age: 21 }, plan: "free" },
+  { email: "c@d.com", profile: { age: 35 }, plan: "pro" },
+]);
+
+await users.updateOne(
+  { "profile.age": { $gte: 18 }, plan: { $in: ["free", "pro"] } },
+  { $inc: { "stats.logins": 1 }, $set: { active: true } }
+);
+
+console.log(await users.find({}, { projection: ["email", "stats.logins", "active"] }));
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { email: "a@b.com", stats: { logins: 1 }, active: true }, { email: "c@d.com" } ]
+```

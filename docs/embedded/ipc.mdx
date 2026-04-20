@@ -3,7 +3,7 @@ title: IPC (multi-process)
 sidebar_position: 12
 ---
 
-`LioranManager` supports multiple process modes:
+`LioranManager` supports multiple process modes so you can safely use one database root from multiple Node processes.
 
 ## Modes
 
@@ -15,8 +15,8 @@ sidebar_position: 12
 
 If you do not pass `ipc`, the manager tries to acquire a lock file:
 
-- if it succeeds → acts as `primary`
-- if it fails → acts as `client`
+- if it succeeds -> acts as `primary`
+- if it fails -> acts as `client`
 
 The lock is stored at:
 
@@ -27,4 +27,54 @@ The lock is stored at:
 - **One primary** process per root path.
 - Any additional processes should use `ipc: "client"` (or rely on auto-detect).
 - Use `ipc: "readonly"` for safe read replicas that never write.
+
+## Example: log which mode you are in
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+console.log({
+  primary: manager.isPrimary(),
+  client: manager.isClient(),
+  readonly: manager.isReadOnly(),
+});
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ primary: true, client: false, readonly: false }
+```
+
+## Example: two-process setup (primary + client)
+
+### `primary.js`
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb", ipc: "primary" });
+const db = await manager.db("app");
+await db.collection("events").insertOne({ name: "primary-ready" });
+console.log("primary ready");
+```
+
+### `client.js`
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb", ipc: "client" });
+const db = await manager.db("app");
+await db.collection("events").insertOne({ name: "client-write" });
+console.log("client wrote");
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+primary ready
+client wrote
+```
 

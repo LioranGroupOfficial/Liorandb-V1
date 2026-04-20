@@ -6,7 +6,7 @@ sidebar_position: 7
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Transactions group multiple operations into a single commit.
+Transactions group multiple operations into a single atomic commit (WAL-backed).
 
 ## `db.transaction(fn)`
 
@@ -14,12 +14,13 @@ Transactions group multiple operations into a single commit.
 transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T>
 ```
 
-- Runs `fn(tx)`, records operations to the write-ahead log (WAL), then commits.
+- Runs `fn(tx)`, records operations, then commits them as one unit.
 - If the manager/db is in readonly mode, transactions are rejected.
+- Inside a transaction, `tx.collection("<name>")` is a **transaction recorder**:
+  - call collection methods normally
+  - don't rely on return values inside the transaction (the calls are recorded)
 
-### What you can do inside a transaction
-
-Inside `fn`, use `tx.collection("<name>")` and then call the same collection operations you’d use normally.
+## Example: transfer between accounts (single commit)
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -30,19 +31,25 @@ Inside `fn`, use `tx.collection("<name>")` and then call the same collection ope
 ```ts
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
-const db = await manager.db("app");
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("bank");
 
 await db.transaction(async (tx) => {
   const accounts = tx.collection<{ _id?: string; id: string; balance: number }>("accounts");
 
-  await accounts.updateOne({ id: "a" }, { $inc: { balance: -50 } }, { upsert: true });
-  await accounts.updateOne({ id: "b" }, { $inc: { balance: 50 } }, { upsert: true });
+  accounts.updateOne({ id: "a" }, { $inc: { balance: -50 } }, { upsert: true });
+  accounts.updateOne({ id: "b" }, { $inc: { balance: 50 } }, { upsert: true });
 
   return true;
 });
 
+const accounts = db.collection("accounts");
+console.log(await accounts.find({}, { projection: ["id", "balance"] }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { id: "a", balance: -50 }, { id: "b", balance: 50 } ]
 ```
 
 </TabItem>
@@ -51,21 +58,31 @@ await manager.close();
 ```js
 import { LioranManager } from "@liorandb/core";
 
-const manager = new LioranManager({ rootPath: "./data" });
-const db = await manager.db("app");
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("bank");
 
 await db.transaction(async (tx) => {
   const accounts = tx.collection("accounts");
 
-  await accounts.updateOne({ id: "a" }, { $inc: { balance: -50 } }, { upsert: true });
-  await accounts.updateOne({ id: "b" }, { $inc: { balance: 50 } }, { upsert: true });
+  accounts.updateOne({ id: "a" }, { $inc: { balance: -50 } }, { upsert: true });
+  accounts.updateOne({ id: "b" }, { $inc: { balance: 50 } }, { upsert: true });
 
   return true;
 });
 
+const accounts = db.collection("accounts");
+console.log(await accounts.find({}, { projection: ["id", "balance"] }));
 await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+[ { id: "a", balance: -50 }, { id: "b", balance: 50 } ]
 ```
 
 </TabItem>
 </Tabs>
 
+## When should you use transactions?
+
+- Updating multiple collections where you want "all-or-nothing"
+- Multi-step updates to a single collection where partial state would be harmful
