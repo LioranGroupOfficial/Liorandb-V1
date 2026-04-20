@@ -13,7 +13,7 @@
       "@/*": ["src/*"]
     },
 
-    "ignoreDeprecations": "6.0",  // Silences node10 deprecation warning
+    // "ignoreDeprecations": "6.0",  // Silences node10 deprecation warning
 
     "declaration": true,
     "strict": true,
