@@ -162,3 +162,4 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 build
+__tests__

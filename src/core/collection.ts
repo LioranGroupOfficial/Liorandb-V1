@@ -235,13 +235,7 @@ export class Collection<T = any> {
     this.assertWritable();
 
     return this._enqueue(async () => {
-      try { await this.db.close(); } catch {}
-
       await compactCollectionEngine(this);
-
-      this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
-
-      await rebuildIndexes(this);
     });
   }
 

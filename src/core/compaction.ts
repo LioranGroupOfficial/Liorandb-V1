@@ -60,6 +60,10 @@ async function snapshotRebuild(col: Collection, tmpDir: string) {
     valueEncoding: "utf8"
   });
 
+  // Iterators require an open handle; compaction may be called before any other op.
+  await tmpDB.open();
+  await col.db.open();
+
   for await (const [key, val] of col.db.iterator()) {
     if (key.startsWith(COLLECTION_META_KEY_PREFIX)) continue;
     if (val !== undefined) {
@@ -131,6 +135,7 @@ async function reopenCollectionDB(col: Collection) {
   col.db = new ClassicLevel(col.dir, {
     valueEncoding: "utf8"
   });
+  await col.db.open();
 }
 
 /* ---------------------------------------------------------
@@ -138,6 +143,8 @@ async function reopenCollectionDB(col: Collection) {
 --------------------------------------------------------- */
 
 export async function rebuildIndexes(col: Collection) {
+  // Rebuild may run right after a reopen; ensure the handle is open for iterators.
+  await col.db.open();
   const indexRoot = path.join(col.dir, INDEX_DIR);
 
   const oldIndexes = new Map(col["indexes"]);
