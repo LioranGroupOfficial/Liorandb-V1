@@ -1,9 +1,14 @@
 {
   "name": "@liorandb/core",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "LioranDB Core Module – Lightweight, local-first, peer-to-peer database management for Node.js.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --dts --format esm --tsconfig tsconfig.json",
     "prepublishOnly": "npm run build"
