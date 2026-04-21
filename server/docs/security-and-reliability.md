@@ -58,3 +58,29 @@ Compaction rebuilds collection storage and then rebuilds registered indexes.
 ## Important Caveat
 
 Indexes are currently stored separately from encrypted documents and are not encrypted at rest. If you need field-level secrecy for indexed values too, that needs a separate design pass.
+
+## HTTP Hardening (Host Server)
+
+The HTTP host includes basic production protections:
+
+- rate limiting (global + auth-specific)
+- concurrency limiting
+- JSON body size limits
+- security headers (CSP for `/dashboard/`)
+
+See `server/README.md` for environment variables.
+
+## Snapshots (Backups)
+
+The host can generate snapshots of the DB root using the core `LioranManager.snapshot()` (tar.gz).
+
+Defaults:
+
+- every 1 hour
+- stored in `./snapshots` (relative to the `server` working directory)
+- retention: 48 hours
+
+Admin endpoints:
+
+- `GET /maintenance/snapshots`
+- `POST /maintenance/snapshots`

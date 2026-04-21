@@ -8,13 +8,16 @@ import {
 } from "../controllers/collection.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
+import { userCorsMiddleware } from "../middleware/userCors.middleware";
 
 const router = Router({ mergeParams: true });
 
-router.get("/", authMiddleware, listCollections);
-router.post("/", authMiddleware, createCollection);
-router.delete("/:col", authMiddleware, deleteCollection);
-router.patch("/:col/rename", authMiddleware, renameCollection);
-router.get("/:col/stats", authMiddleware, collectionStats);
+router.use(authMiddleware, userCorsMiddleware);
+
+router.get("/", listCollections);
+router.post("/", createCollection);
+router.delete("/:col", deleteCollection);
+router.patch("/:col/rename", renameCollection);
+router.get("/:col/stats", collectionStats);
 
 export default router;

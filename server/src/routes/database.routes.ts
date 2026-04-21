@@ -12,18 +12,21 @@ import {
   upsertDatabaseCredentials,
 } from "../controllers/database.controller";
 import { authMiddleware } from "../middleware/auth.middleware";
+import { userCorsMiddleware } from "../middleware/userCors.middleware";
 
 const router = Router();
 
-router.get("/", authMiddleware, listDatabases);
-router.get("/count", authMiddleware, countDatabases);
-router.get("/user/:userId", authMiddleware, listDatabasesByUser);
-router.post("/", authMiddleware, createDatabase);
-router.delete("/:db", authMiddleware, deleteDatabase);
-router.patch("/:db/rename", authMiddleware, renameDatabase);
-router.get("/:db/stats", authMiddleware, databaseStats);
-router.get("/:db/credentials", authMiddleware, getDatabaseCredentials);
-router.put("/:db/credentials", authMiddleware, upsertDatabaseCredentials);
-router.get("/:db/connection-string", authMiddleware, generateDatabaseConnectionString);
+router.use(authMiddleware, userCorsMiddleware);
+
+router.get("/", listDatabases);
+router.get("/count", countDatabases);
+router.get("/user/:userId", listDatabasesByUser);
+router.post("/", createDatabase);
+router.delete("/:db", deleteDatabase);
+router.patch("/:db/rename", renameDatabase);
+router.get("/:db/stats", databaseStats);
+router.get("/:db/credentials", getDatabaseCredentials);
+router.put("/:db/credentials", upsertDatabaseCredentials);
+router.get("/:db/connection-string", generateDatabaseConnectionString);
 
 export default router;

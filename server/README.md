@@ -92,6 +92,56 @@ Server default URL:
 http://localhost:4000
 ```
 
+## Dashboard
+
+Built-in admin UI (served by the same server):
+
+```text
+http://localhost:4000/dashboard/
+```
+
+Features:
+
+- Login / logout
+- List databases + collections
+- Run `find`, `aggregate`, `insert`, `updateMany`, `deleteMany`, `count`, `explain`
+- Browse markdown docs (`/docs/*`)
+- Trigger and list snapshots (admin-only)
+
+## Production Hardening
+
+The server ships with:
+
+- JSON body size limits (`LIORANDB_BODY_LIMIT`, default `1mb`)
+- Security headers (CSP for `/dashboard/`, HSTS only when request is HTTPS)
+- Concurrency limiting (`LIORANDB_MAX_INFLIGHT_GLOBAL`, `LIORANDB_MAX_INFLIGHT_PER_IP`)
+- IP rate limiting (`LIORANDB_RATE_LIMIT_*`) and stricter auth rate limiting (`LIORANDB_AUTH_RATE_LIMIT_*`)
+- Per-user allowed browser origins (`PUT /auth/me/cors`)
+
+If you run behind a reverse proxy/load balancer, set:
+
+```text
+LIORANDB_TRUST_PROXY=1
+```
+
+## Snapshots (Backups)
+
+Hourly snapshots are enabled by default.
+
+Environment variables:
+
+```text
+LIORANDB_SNAPSHOT_ENABLED=1
+LIORANDB_SNAPSHOT_INTERVAL_MS=3600000
+LIORANDB_SNAPSHOT_DIR=./snapshots
+LIORANDB_SNAPSHOT_RETENTION_HOURS=48
+```
+
+Admin API:
+
+- `GET /maintenance/snapshots`
+- `POST /maintenance/snapshots`
+
 ## Main API Flow
 
 ### 1. Super-admin login with `secret.key`

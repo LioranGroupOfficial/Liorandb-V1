@@ -8,6 +8,8 @@ export interface AuthUser {
   role: AuthRole;
   externalUserId?: string;
   passwordHash?: string;
+  corsOrigins?: string[];
+  corsUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
   createdBy: string;

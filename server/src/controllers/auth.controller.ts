@@ -10,7 +10,8 @@ import {
   findUserById,
   getRequestAuth,
   issueUserToken,
-  listUsers
+  listUsers,
+  setUserCorsOrigins
 } from "../utils/auth";
 import { JWT_SECRET } from "../utils/token";
 
@@ -165,4 +166,58 @@ export const issueManagedUserToken = async (req: Request, res: Response) => {
     user: buildAuthTokenPayload(user),
     token: issueUserToken(user),
   });
+};
+
+export const updateMyCors = async (req: Request, res: Response) => {
+  const auth = getRequestAuth(req);
+  if (!auth || auth.authType !== "jwt") {
+    return res.status(401).json({ error: "jwt auth required" });
+  }
+
+  if (auth.userId === "super-admin") {
+    return res.status(400).json({ error: "super-admin does not have user settings" });
+  }
+
+  const origins = (req.body as any)?.origins;
+  if (!Array.isArray(origins)) {
+    return res.status(400).json({ error: "origins array required" });
+  }
+
+  try {
+    const updated = await setUserCorsOrigins({
+      actor: auth,
+      targetUserId: auth.userId,
+      origins,
+    });
+    return res.json({ ok: true, userId: updated.userId, corsOrigins: updated.corsOrigins });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "server error";
+    const status = message === "forbidden" ? 403 : 400;
+    return res.status(status).json({ error: message });
+  }
+};
+
+export const updateUserCors = async (req: Request, res: Response) => {
+  const auth = getRequestAuth(req);
+  if (!auth || auth.authType !== "jwt" || (auth.role !== "admin" && auth.role !== "super_admin")) {
+    return res.status(403).json({ error: "admin access required" });
+  }
+
+  const origins = (req.body as any)?.origins;
+  if (!Array.isArray(origins)) {
+    return res.status(400).json({ error: "origins array required" });
+  }
+
+  try {
+    const updated = await setUserCorsOrigins({
+      actor: auth,
+      targetUserId: req.params.userId,
+      origins,
+    });
+    return res.json({ ok: true, userId: updated.userId, corsOrigins: updated.corsOrigins });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "server error";
+    const status = message === "forbidden" ? 403 : 400;
+    return res.status(status).json({ error: message });
+  }
 };

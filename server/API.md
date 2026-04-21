@@ -8,6 +8,9 @@ Public routes:
 
 - `GET /`
 - `GET /health`
+- `GET /docs`
+- `GET /docs/:id`
+- `GET /dashboard/`
 - `POST /auth/login`
 - `POST /auth/super-admin/login`
 
@@ -157,6 +160,25 @@ Success response:
   }
 }
 ```
+
+### `PUT /auth/me/cors`
+
+Set per-user allowed browser origins for this JWT identity. If set, requests with an `Origin` header that is not in the list are rejected with `403`.
+
+Body:
+
+```json
+{ "origins": ["https://app.example.com"] }
+```
+
+Notes:
+
+- Send `[]` to clear the restriction.
+- Send `["*"]` to allow any origin for this user.
+
+### `PUT /auth/users/:userId/cors`
+
+Admin-only version of the same setting.
 
 ### `GET /auth/users`
 
@@ -645,9 +667,8 @@ Body:
 
 ```json
 {
-  "query": {
-    "age": { "$gt": 18 }
-  }
+  "query": { "age": { "$gt": 18 } },
+  "options": { "limit": 50, "offset": 0, "projection": ["name", "age"] }
 }
 ```
 
@@ -659,6 +680,25 @@ Response:
     { "_id": "<id>", "name": "John", "age": 20 }
   ]
 }
+```
+
+### `POST /db/:db/collections/:col/aggregate`
+
+Body:
+
+```json
+{
+  "pipeline": [
+    { "$match": { "age": { "$gte": 18 } } },
+    { "$limit": 10 }
+  ]
+}
+```
+
+Response:
+
+```json
+{ "results": [] }
 ```
 
 ### `PATCH /db/:db/collections/:col/updateMany`
@@ -676,7 +716,8 @@ Response:
 
 ```json
 {
-  "updated": 3
+  "updated": 3,
+  "docs": []
 }
 ```
 
@@ -715,6 +756,49 @@ Response:
   "count": 100
 }
 ```
+
+### `POST /db/:db/collections/:col/explain`
+
+Return an execution plan for a query (index used vs full scan).
+
+Body:
+
+```json
+{
+  "query": { "age": { "$gte": 18 } },
+  "options": { "limit": 50, "offset": 0 }
+}
+```
+
+Response:
+
+```json
+{ "explain": { "indexUsed": null } }
+```
+
+## Docs
+
+### `GET /docs`
+
+List built-in markdown docs (used by `/dashboard/`).
+
+### `GET /docs/:id`
+
+Fetch a single doc by id (returns JSON with `content`).
+
+## Maintenance (Admin)
+
+### `GET /maintenance/status`
+
+Return snapshot configuration and current running state.
+
+### `GET /maintenance/snapshots`
+
+List snapshot files.
+
+### `POST /maintenance/snapshots`
+
+Trigger a snapshot immediately.
 
 ## Example Flow
 

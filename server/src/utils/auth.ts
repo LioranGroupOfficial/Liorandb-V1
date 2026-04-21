@@ -73,12 +73,80 @@ export async function createManagedUser(input: {
     role: input.role,
     externalUserId: input.externalUserId,
     passwordHash,
+    corsOrigins: undefined,
+    corsUpdatedAt: undefined,
     createdAt,
     updatedAt: createdAt,
     createdBy: input.createdBy,
   } as AuthUser) as AuthUser;
 
   return created;
+}
+
+function isValidOrigin(origin: string) {
+  if (origin === "*") return true;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (u.pathname !== "/" || u.search || u.hash) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function setUserCorsOrigins(input: {
+  actor: RequestAuthContext;
+  targetUserId: string;
+  origins: string[];
+}) {
+  const users = await getAuthCollection();
+  const target = await users.findOne({ userId: input.targetUserId }) as AuthUser | null;
+  if (!target) {
+    throw new Error("user not found");
+  }
+
+  const canEditSelf = input.actor.authType === "jwt" && input.actor.userId === target.userId;
+  const canEditOthers = input.actor.authType === "jwt" && isAdminRole(input.actor.role);
+
+  if (!canEditSelf && !canEditOthers) {
+    throw new Error("forbidden");
+  }
+
+  const unique = Array.from(new Set(
+    (input.origins || [])
+      .map((o) => (typeof o === "string" ? o.trim() : ""))
+      .filter(Boolean)
+  ));
+
+  if (unique.length > 50) {
+    throw new Error("too many origins");
+  }
+
+  for (const origin of unique) {
+    if (!isValidOrigin(origin)) {
+      throw new Error(`invalid origin: ${origin}`);
+    }
+  }
+
+  const updatedAt = new Date().toISOString();
+  const updated = {
+    ...target,
+    corsOrigins: unique.length ? unique : undefined,
+    corsUpdatedAt: unique.length ? updatedAt : undefined,
+    updatedAt,
+  } as AuthUser;
+
+  // Replace record (simple, consistent with existing patterns)
+  await users.deleteMany({ userId: target.userId });
+  await users.insertOne(updated as AuthUser);
+
+  return {
+    userId: updated.userId,
+    corsOrigins: updated.corsOrigins || [],
+    corsUpdatedAt: updated.corsUpdatedAt || null,
+    updatedAt: updated.updatedAt,
+  };
 }
 
 export function buildAuthTokenPayload(user: Pick<AuthUser, "userId" | "username" | "role" | "externalUserId">) {
