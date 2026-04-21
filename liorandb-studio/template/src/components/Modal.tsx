@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -25,40 +25,38 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-slate-900 rounded-lg border border-slate-800 w-full max-w-md max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950">
+        <div className="flex items-center justify-between border-b border-slate-200 p-4 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-800 rounded transition text-slate-400"
+            className="rounded-md p-1 text-slate-500 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-900"
+            aria-label="Close modal"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">{children}</div>
+        <div className="max-h-[70vh] flex-1 overflow-y-auto p-4">{children}</div>
 
-        {/* Footer */}
-        <div className="flex gap-2 p-4 border-t border-slate-800">
+        <div className="flex gap-2 border-t border-slate-200 p-4 dark:border-slate-800">
           <button
             onClick={onClose}
             disabled={isLoading}
-            className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded transition disabled:opacity-50"
+            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
           >
             Cancel
           </button>
-          {onConfirm && (
+          {onConfirm ? (
             <button
               onClick={onConfirm}
               disabled={isLoading}
-              className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded transition disabled:opacity-50 font-medium"
+              className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
             >
               {isLoading ? 'Loading...' : confirmText}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -71,6 +69,7 @@ interface InputModalProps {
   label: string;
   placeholder?: string;
   defaultValue?: string;
+  confirmText?: string;
   onClose: () => void;
   onConfirm: (value: string) => Promise<void>;
 }
@@ -81,6 +80,7 @@ export function InputModal({
   label,
   placeholder,
   defaultValue = '',
+  confirmText,
   onClose,
   onConfirm,
 }: InputModalProps) {
@@ -109,24 +109,23 @@ export function InputModal({
       title={title}
       onClose={onClose}
       onConfirm={handleConfirm}
+      confirmText={confirmText}
       isLoading={isLoading}
     >
-      <div className="space-y-4">
-        <label className="block">
-          <span className="block text-sm font-medium text-slate-300 mb-2">{label}</span>
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-            disabled={isLoading}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleConfirm();
-            }}
-          />
-        </label>
-      </div>
+      <label className="block">
+        <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:opacity-60 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
+          disabled={isLoading}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleConfirm();
+          }}
+        />
+      </label>
     </Modal>
   );
 }
@@ -135,14 +134,16 @@ interface JsonInputModalProps {
   isOpen: boolean;
   title: string;
   defaultValue?: string;
+  confirmText?: string;
   onClose: () => void;
-  onConfirm: (value: Record<string, any>) => Promise<void>;
+  onConfirm: (value: Record<string, unknown>) => Promise<void>;
 }
 
 export function JsonInputModal({
   isOpen,
   title,
   defaultValue = '{}',
+  confirmText,
   onClose,
   onConfirm,
 }: JsonInputModalProps) {
@@ -158,13 +159,13 @@ export function JsonInputModal({
   const handleConfirm = async () => {
     try {
       setError('');
-      const parsed = JSON.parse(value);
+      const parsed = JSON.parse(value) as Record<string, unknown>;
       setIsLoading(true);
       await onConfirm(parsed);
       setValue('{}');
       onClose();
     } catch (err) {
-      setError(`Invalid JSON: ${err}`);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -176,17 +177,19 @@ export function JsonInputModal({
       title={title}
       onClose={onClose}
       onConfirm={handleConfirm}
+      confirmText={confirmText}
       isLoading={isLoading}
     >
       <div className="space-y-3">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="w-full h-64 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-100 font-mono text-sm placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none"
+          className="h-64 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:opacity-60 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
           disabled={isLoading}
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error ? <p className="text-sm text-red-600 dark:text-red-300">Invalid JSON: {error}</p> : null}
       </div>
     </Modal>
   );
 }
+

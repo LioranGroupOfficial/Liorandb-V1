@@ -32,12 +32,12 @@ export interface Collection {
 }
 
 export interface Document {
-  _id?: string | Record<string, unknown>;
+  _id?: string;
   [key: string]: unknown;
 }
 
 export interface StoredDocument extends Document {
-  _id: string | Record<string, unknown>;
+  _id: string;
 }
 
 export interface QueryResult {

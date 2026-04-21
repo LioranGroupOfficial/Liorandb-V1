@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Database, Plus, Table2, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, Database, Plus, Table2, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
 import { formatCompactNumber } from '@/lib/utils';
@@ -26,23 +26,41 @@ export function Sidebar({
   const { databases, currentDatabase, selectedCollection, collections } = useAppStore();
   const { addToast } = useToast();
 
+  useEffect(() => {
+    if (!currentDatabase) return;
+    setExpandedDbs((current) => {
+      const next = new Set(current);
+      next.add(currentDatabase);
+      return next;
+    });
+  }, [currentDatabase]);
+
   const totalCollections = useMemo(
     () => databases.reduce((sum, db) => sum + (db.collections ?? collections[db.name]?.length ?? 0), 0),
     [collections, databases]
   );
 
-  function toggleDatabase(dbName: string) {
+  function handleDatabaseSelect(dbName: string) {
+    onDatabaseSelect(dbName);
     setExpandedDbs((current) => {
       const next = new Set(current);
-
-      if (next.has(dbName)) {
-        next.delete(dbName);
-      } else {
-        next.add(dbName);
-      }
-
+      next.add(dbName);
       return next;
     });
+  }
+
+  function handleDatabaseChevronClick(dbName: string) {
+    if (expandedDbs.has(dbName)) {
+      setExpandedDbs((current) => {
+        const next = new Set(current);
+        next.delete(dbName);
+        return next;
+      });
+      return;
+    }
+
+    // Expand should also refresh + load collections via the Dashboard effect.
+    handleDatabaseSelect(dbName);
   }
 
   async function handleDeleteDatabase(dbName: string) {
@@ -91,31 +109,30 @@ export function Sidebar({
   }
 
   return (
-    <aside className="glass-panel min-h-0 w-[320px] rounded-[28px] p-4">
-      <div className="mb-4 rounded-[24px] border border-white/8 bg-black/20 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Explorer</p>
-            <h2 className="mt-1 text-xl font-semibold text-white">Databases</h2>
-          </div>
-          <button
-            onClick={onCreateDatabase}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[var(--accent)] transition hover:bg-white/10"
-            title="Create database"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+    <aside className="min-h-0 w-[300px] shrink-0 border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 md:w-[320px]">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Explorer</p>
+          <h2 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">Databases</h2>
         </div>
+        <button
+          onClick={onCreateDatabase}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+          title="Create database"
+          aria-label="Create database"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <MetricCard label="Databases" value={formatCompactNumber(databases.length)} />
-          <MetricCard label="Collections" value={formatCompactNumber(totalCollections)} />
-        </div>
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <MetricCard label="Databases" value={formatCompactNumber(databases.length)} />
+        <MetricCard label="Collections" value={formatCompactNumber(totalCollections)} />
       </div>
 
       <div className="min-h-0 overflow-y-auto pr-1">
         {databases.length === 0 ? (
-          <div className="rounded-[24px] border border-dashed border-white/10 bg-black/10 p-6 text-center text-sm text-[var(--muted)]">
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600 dark:border-slate-800 dark:bg-black dark:text-slate-400">
             Create your first database to unlock the collection explorer.
           </div>
         ) : (
@@ -123,55 +140,60 @@ export function Sidebar({
             {databases.map((db) => {
               const isExpanded = expandedDbs.has(db.name);
               const dbCollections = collections[db.name] ?? [];
+              const isActiveDb = currentDatabase === db.name;
 
               return (
                 <section
                   key={db.name}
-                  className={`rounded-[24px] border p-2 transition ${
-                    currentDatabase === db.name
-                      ? 'border-[var(--accent)]/30 bg-[var(--accent)]/8'
-                      : 'border-white/8 bg-black/15'
+                  className={`rounded-lg border p-2 transition ${
+                    isActiveDb
+                      ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => toggleDatabase(db.name)}
-                      className="flex h-9 w-9 items-center justify-center rounded-2xl text-[var(--muted)] transition hover:bg-white/6 hover:text-white"
+                      onClick={() => handleDatabaseChevronClick(db.name)}
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                      aria-label={isExpanded ? 'Collapse database' : 'Expand database'}
                     >
-                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      <ChevronDown className={`h-4 w-4 transition ${isExpanded ? '' : '-rotate-90'}`} />
                     </button>
-                    <button
-                      onClick={() => onDatabaseSelect(db.name)}
-                      className="min-w-0 flex-1 text-left"
-                    >
+
+                    <button onClick={() => handleDatabaseSelect(db.name)} className="min-w-0 flex-1 text-left">
                       <div className="flex items-center gap-2">
-                        <Database className="h-4 w-4 text-[var(--accent)]" />
-                        <span className="truncate text-sm font-medium text-white">{db.name}</span>
+                        <Database className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                        <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {db.name}
+                        </span>
                       </div>
-                      <div className="mt-1 text-xs text-[var(--muted)]">
-                        {(db.collections ?? dbCollections.length)} collections
-                        {' · '}
-                        {formatCompactNumber(db.documents ?? 0)} docs
+                      <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                        {(db.collections ?? dbCollections.length)} collections · {formatCompactNumber(db.documents ?? 0)}{' '}
+                        docs
                       </div>
                     </button>
+
                     <button
                       onClick={() => handleDeleteDatabase(db.name)}
                       disabled={isWorking}
-                      className="flex h-9 w-9 items-center justify-center rounded-2xl text-[var(--muted)] transition hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] disabled:opacity-50"
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                      title="Delete database"
+                      aria-label="Delete database"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
 
                   {isExpanded ? (
-                    <div className="mt-2 space-y-1.5 pl-3">
+                    <div className="mt-2 space-y-1.5 pl-6">
                       {dbCollections.map((collection: Collection) => (
                         <div
                           key={collection.name}
-                          className={`flex items-center gap-2 rounded-2xl px-3 py-2 transition ${
+                          className={`flex items-center gap-2 rounded-md px-2 py-2 transition ${
                             currentDatabase === db.name && selectedCollection === collection.name
-                              ? 'bg-[var(--accent-secondary)]/14 text-white'
-                              : 'text-slate-300 hover:bg-white/5'
+                              ? 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                              : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900'
                           }`}
                         >
                           <button
@@ -179,17 +201,20 @@ export function Sidebar({
                             className="min-w-0 flex-1 text-left"
                           >
                             <div className="flex items-center gap-2">
-                              <Table2 className="h-4 w-4 text-[var(--accent-secondary)]" />
+                              <Table2 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                               <span className="truncate text-sm">{collection.name}</span>
                             </div>
-                            <div className="mt-1 text-xs text-[var(--muted)]">
+                            <div className="mt-1 text-xs text-slate-500 dark:text-slate-500">
                               {formatCompactNumber(collection.count ?? 0)} docs
                             </div>
                           </button>
+
                           <button
                             onClick={() => handleDeleteCollection(db.name, collection.name)}
                             disabled={isWorking}
-                            className="flex h-8 w-8 items-center justify-center rounded-xl text-[var(--muted)] transition hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] disabled:opacity-50"
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                            title="Delete collection"
+                            aria-label="Delete collection"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -198,10 +223,10 @@ export function Sidebar({
 
                       <button
                         onClick={() => {
-                          useAppStore.setState({ currentDatabase: db.name });
+                          handleDatabaseSelect(db.name);
                           onCreateCollection();
                         }}
-                        className="mt-1 flex w-full items-center gap-2 rounded-2xl border border-dashed border-white/10 px-3 py-2 text-sm text-[var(--muted)] transition hover:border-[var(--accent)]/30 hover:bg-white/5 hover:text-white"
+                        className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed border-slate-200 bg-transparent px-2 py-2 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-900"
                       >
                         <Plus className="h-4 w-4" />
                         New collection
@@ -220,9 +245,9 @@ export function Sidebar({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-white">{value}</p>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-black">
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{value}</p>
     </div>
   );
 }

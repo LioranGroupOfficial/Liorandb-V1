@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DatabaseZap, FolderPlus, Plus, TableProperties } from 'lucide-react';
 import { useAppStore } from '@/store';
@@ -16,6 +16,7 @@ import { Document } from '@/types';
 export default function DashboardPage() {
   const router = useRouter();
   const { addToast } = useToast();
+
   const {
     isLoggedIn,
     currentDatabase,
@@ -25,6 +26,7 @@ export default function DashboardPage() {
     setSelectedCollection,
     setDatabases,
     setCollections,
+    setLoading,
   } = useAppStore();
 
   const [createDbModal, setCreateDbModal] = useState(false);
@@ -32,6 +34,30 @@ export default function DashboardPage() {
   const [addDocModal, setAddDocModal] = useState(false);
   const [editDocModal, setEditDocModal] = useState(false);
   const [editingDoc, setEditingDoc] = useState<Document | null>(null);
+
+  const loadDatabases = useCallback(async () => {
+    try {
+      setLoading(true);
+      const databases = await LioranDBService.listDatabases();
+      setDatabases(databases);
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to load databases', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast, setDatabases, setLoading]);
+
+  const loadCollections = useCallback(
+    async (dbName: string) => {
+      try {
+        const collections = await LioranDBService.listCollections(dbName);
+        setCollections(dbName, collections);
+      } catch (error) {
+        addToast(error instanceof Error ? error.message : 'Failed to load collections', 'error');
+      }
+    },
+    [addToast, setCollections]
+  );
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -43,34 +69,13 @@ export default function DashboardPage() {
     if (isLoggedIn) {
       void loadDatabases();
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, loadDatabases]);
 
   useEffect(() => {
     if (currentDatabase) {
       void loadCollections(currentDatabase);
     }
-  }, [currentDatabase]);
-
-  async function loadDatabases() {
-    try {
-      useAppStore.getState().setLoading(true);
-      const databases = await LioranDBService.listDatabases();
-      setDatabases(databases);
-    } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to load databases', 'error');
-    } finally {
-      useAppStore.getState().setLoading(false);
-    }
-  }
-
-  async function loadCollections(dbName: string) {
-    try {
-      const collections = await LioranDBService.listCollections(dbName);
-      setCollections(dbName, collections);
-    } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to load collections', 'error');
-    }
-  }
+  }, [currentDatabase, loadCollections]);
 
   async function handleCreateDatabase(name: string) {
     await LioranDBService.createDatabase(name);
@@ -91,7 +96,7 @@ export default function DashboardPage() {
   async function handleAddDocument(doc: Record<string, unknown>) {
     if (!currentDatabase || !selectedCollection) return;
 
-    await LioranDBService.insertOne(currentDatabase, selectedCollection, doc);
+    await LioranDBService.insertOne(currentDatabase, selectedCollection, doc as unknown as Document);
     addToast('Document inserted', 'success');
     setAddDocModal(false);
     window.dispatchEvent(new CustomEvent('liorandb:reload-documents'));
@@ -100,12 +105,7 @@ export default function DashboardPage() {
   async function handleEditDocument(doc: Record<string, unknown>) {
     if (!currentDatabase || !selectedCollection || !editingDoc) return;
 
-    await LioranDBService.updateMany(
-      currentDatabase,
-      selectedCollection,
-      { _id: editingDoc._id },
-      { $set: doc }
-    );
+    await LioranDBService.updateMany(currentDatabase, selectedCollection, { _id: editingDoc._id }, { $set: doc });
 
     addToast('Document updated', 'success');
     setEditDocModal(false);
@@ -120,10 +120,10 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden px-3 py-3 md:px-4">
+    <div className="flex h-screen flex-col overflow-hidden">
       <Navbar onLogout={handleLogout} />
 
-      <div className="mt-3 flex min-h-0 flex-1 gap-3">
+      <div className="flex min-h-0 flex-1">
         <Sidebar
           onDatabaseSelect={setCurrentDatabase}
           onCollectionSelect={(db, col) => {
@@ -134,10 +134,10 @@ export default function DashboardPage() {
           onCreateCollection={() => setCreateColModal(true)}
         />
 
-        <main className="min-h-0 flex-1">
+        <main className="min-h-0 flex-1 bg-slate-100 p-3 dark:bg-black md:p-4">
           {!currentDatabase ? (
             <EmptyState
-              icon={<DatabaseZap className="h-10 w-10 text-[var(--accent)]" />}
+              icon={<DatabaseZap className="h-10 w-10 text-emerald-600 dark:text-emerald-400" />}
               title="Start with a database"
               description="Create a database on the left and the studio will build the rest of the workspace around it."
               actionLabel="Create database"
@@ -145,7 +145,7 @@ export default function DashboardPage() {
             />
           ) : !selectedCollection ? (
             <EmptyState
-              icon={<TableProperties className="h-10 w-10 text-[var(--accent-secondary)]" />}
+              icon={<TableProperties className="h-10 w-10 text-sky-600 dark:text-sky-400" />}
               title={`Inside ${currentDatabase}`}
               description="Pick a collection from the explorer or create a new one to inspect documents and run filters."
               actionLabel="Create collection"
@@ -224,16 +224,16 @@ function EmptyState({
   onAction: () => void;
 }) {
   return (
-    <div className="glass-panel flex h-full items-center justify-center rounded-[28px] p-6">
+    <div className="flex h-full items-center justify-center rounded-xl border border-slate-200 bg-white p-6 text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
       <div className="max-w-xl text-center">
-        <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-[28px] border border-white/10 bg-white/5">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-black">
           {icon}
         </div>
-        <h2 className="text-3xl font-semibold text-white">{title}</h2>
-        <p className="mt-3 text-sm leading-7 text-[var(--muted)] md:text-base">{description}</p>
+        <h2 className="text-2xl font-semibold">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400 md:text-base">{description}</p>
         <button
           onClick={onAction}
-          className="mt-6 inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-medium text-white transition hover:border-white/20 hover:bg-white/10"
+          className="mt-5 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
         >
           {actionLabel.includes('database') ? <FolderPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {actionLabel}
@@ -242,3 +242,4 @@ function EmptyState({
     </div>
   );
 }
+

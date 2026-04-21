@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, Copy } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Copy, Edit2, Plus, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
 import { Document } from '@/types';
-import { formatJSON, copyToClipboard } from '@/lib/utils';
+import { copyToClipboard, formatJSON } from '@/lib/utils';
 import { useToast } from './Toast';
 import { JsonViewer } from './JsonViewer';
 
@@ -21,8 +21,8 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
 
   useEffect(() => {
     if (!currentDatabase || !selectedCollection) return;
-
-    loadDocuments();
+    void loadDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDatabase, selectedCollection]);
 
   async function loadDocuments() {
@@ -30,15 +30,10 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
 
     try {
       useAppStore.setState({ isLoading: true });
-      const { documents: docs } = await LioranDBService.find(
-        currentDatabase,
-        selectedCollection,
-        {},
-        100
-      );
+      const { documents: docs } = await LioranDBService.find(currentDatabase, selectedCollection, {}, 100);
       useAppStore.setState({ documents: docs });
     } catch (error) {
-      addToast(`Error loading documents: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Failed to load documents', 'error');
     } finally {
       useAppStore.setState({ isLoading: false });
     }
@@ -50,12 +45,11 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
 
     try {
       useAppStore.setState({ isLoading: true });
-      const _id = doc._id;
-      await LioranDBService.deleteMany(currentDatabase, selectedCollection, { _id });
+      await LioranDBService.deleteMany(currentDatabase, selectedCollection, { _id: doc._id });
       await loadDocuments();
       addToast('Document deleted', 'success');
     } catch (error) {
-      addToast(`Error deleting document: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Failed to delete document', 'error');
     } finally {
       useAppStore.setState({ isLoading: false });
     }
@@ -65,45 +59,44 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
     try {
       await copyToClipboard(formatJSON(doc));
       addToast('Copied to clipboard', 'success');
-    } catch (error) {
+    } catch {
       addToast('Failed to copy', 'error');
     }
   }
 
   if (!currentDatabase || !selectedCollection) {
     return (
-      <div className="flex items-center justify-center h-full text-slate-400">
+      <div className="flex h-full items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
         <p>Select a collection to view documents</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-slate-100">
-          Documents ({documents.length})
+    <div className="flex h-full flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          Documents <span className="text-slate-500 dark:text-slate-400">({documents.length})</span>
         </h3>
 
         <div className="flex items-center gap-3">
-          <div className="flex gap-1 bg-slate-900 rounded p-1">
+          <div className="flex gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
             <button
               onClick={() => setViewMode('table')}
-              className={`px-3 py-1 rounded text-sm transition ${
+              className={`rounded-md px-3 py-1 text-sm transition ${
                 viewMode === 'table'
                   ? 'bg-emerald-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               Table
             </button>
             <button
               onClick={() => setViewMode('json')}
-              className={`px-3 py-1 rounded text-sm transition ${
+              className={`rounded-md px-3 py-1 text-sm transition ${
                 viewMode === 'json'
                   ? 'bg-emerald-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               JSON
@@ -113,7 +106,7 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
           <button
             onClick={onAddDocument}
             disabled={isLoading}
-            className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded transition disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-white transition hover:bg-emerald-700 disabled:opacity-50"
           >
             <Plus size={16} />
             <span className="text-sm">Add Document</span>
@@ -121,30 +114,19 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-auto">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full text-slate-400">
+          <div className="flex h-full items-center justify-center text-slate-600 dark:text-slate-400">
             <p>Loading documents...</p>
           </div>
         ) : documents.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400">
+          <div className="flex h-full items-center justify-center text-slate-600 dark:text-slate-400">
             <p>No documents in this collection</p>
           </div>
         ) : viewMode === 'table' ? (
-          <DocumentTable
-            documents={documents}
-            onEdit={onEditDocument}
-            onDelete={handleDelete}
-            onCopy={handleCopy}
-          />
+          <DocumentTable documents={documents} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
         ) : (
-          <JsonViewMode
-            documents={documents}
-            onEdit={onEditDocument}
-            onDelete={handleDelete}
-            onCopy={handleCopy}
-          />
+          <JsonViewMode documents={documents} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
         )}
       </div>
     </div>
@@ -162,26 +144,26 @@ function DocumentTable({
   onDelete: (doc: Document) => void;
   onCopy: (doc: Document) => void;
 }) {
-  if (documents.length === 0) return null;
-
-  const keys = Array.from(
-    new Set(documents.flatMap((doc) => Object.keys(doc)))
-  ).slice(0, 5); // Show first 5 columns
+  const keys = useMemo(() => {
+    const sample = documents[0] ?? {};
+    const allKeys = Object.keys(sample);
+    const ordered = allKeys.includes('_id')
+      ? ['_id', ...allKeys.filter((key) => key !== '_id')]
+      : allKeys;
+    return ordered.slice(0, 5);
+  }, [documents]);
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
         <thead>
-          <tr className="border-b border-slate-800 bg-slate-900">
+          <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
             {keys.map((key) => (
-              <th
-                key={key}
-                className="px-4 py-3 text-left text-sm font-medium text-slate-300 truncate"
-              >
+              <th key={key} className="truncate px-4 py-3 text-left text-sm font-medium text-slate-700 dark:text-slate-300">
                 {key}
               </th>
             ))}
-            <th className="px-4 py-3 text-left text-sm font-medium text-slate-300 w-24">
+            <th className="w-24 px-4 py-3 text-left text-sm font-medium text-slate-700 dark:text-slate-300">
               Actions
             </th>
           </tr>
@@ -190,37 +172,34 @@ function DocumentTable({
           {documents.map((doc, idx) => (
             <tr
               key={idx}
-              className="border-b border-slate-800 hover:bg-slate-900/50 transition"
+              className="border-b border-slate-200 transition hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900/50"
             >
               {keys.map((key) => (
-                <td
-                  key={key}
-                  className="px-4 py-3 text-sm text-slate-300 truncate"
-                >
-                  {formatCellValue(doc[key])}
+                <td key={key} className="truncate px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
+                  {formatCellValue((doc as Record<string, unknown>)[key])}
                 </td>
               ))}
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
-                  {onEdit && (
+                  {onEdit ? (
                     <button
                       onClick={() => onEdit(doc)}
-                      className="p-1 hover:bg-slate-800 rounded transition text-slate-400 hover:text-amber-400"
+                      className="rounded p-1 text-slate-500 transition hover:bg-slate-100 hover:text-amber-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-amber-300"
                       title="Edit"
                     >
                       <Edit2 size={14} />
                     </button>
-                  )}
+                  ) : null}
                   <button
                     onClick={() => onCopy(doc)}
-                    className="p-1 hover:bg-slate-800 rounded transition text-slate-400 hover:text-cyan-400"
+                    className="rounded p-1 text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-sky-300"
                     title="Copy"
                   >
                     <Copy size={14} />
                   </button>
                   <button
                     onClick={() => onDelete(doc)}
-                    className="p-1 hover:bg-slate-800 rounded transition text-slate-400 hover:text-red-400"
+                    className="rounded p-1 text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-300"
                     title="Delete"
                   >
                     <Trash2 size={14} />
@@ -251,63 +230,62 @@ function JsonViewMode({
   return (
     <div className="space-y-2 p-4">
       {documents.map((doc, idx) => (
-        <div
-          key={idx}
-          className="bg-slate-900 rounded border border-slate-800 overflow-hidden"
-        >
-          <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-800/50 transition">
+        <div key={idx} className="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between px-4 py-3 transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
             <button
               onClick={() => {
                 const next = new Set(expandedDocs);
-                next.has(idx) ? next.delete(idx) : next.add(idx);
+                if (next.has(idx)) next.delete(idx);
+                else next.add(idx);
                 setExpandedDocs(next);
               }}
-              className="text-slate-400 hover:text-slate-200"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+              title={expandedDocs.has(idx) ? 'Collapse' : 'Expand'}
+              aria-label={expandedDocs.has(idx) ? 'Collapse document' : 'Expand document'}
             >
-              {expandedDocs.has(idx) ? '▼' : '▶'}
+              {expandedDocs.has(idx) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
-            <span className="flex-1 text-sm text-slate-300 ml-2 font-mono">
-              Document {idx + 1}
-            </span>
+            <span className="ml-2 flex-1 font-mono text-sm text-slate-700 dark:text-slate-200">Document {idx + 1}</span>
             <div className="flex items-center gap-2">
-              {onEdit && (
+              {onEdit ? (
                 <button
                   onClick={() => onEdit(doc)}
-                  className="p-1 hover:bg-slate-700 rounded transition text-slate-400 hover:text-amber-400"
+                  className="rounded p-1 text-slate-500 transition hover:bg-slate-100 hover:text-amber-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-amber-300"
                   title="Edit"
                 >
                   <Edit2 size={14} />
                 </button>
-              )}
+              ) : null}
               <button
                 onClick={() => onCopy(doc)}
-                className="p-1 hover:bg-slate-700 rounded transition text-slate-400 hover:text-cyan-400"
+                className="rounded p-1 text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-sky-300"
                 title="Copy"
               >
                 <Copy size={14} />
               </button>
               <button
                 onClick={() => onDelete(doc)}
-                className="p-1 hover:bg-slate-700 rounded transition text-slate-400 hover:text-red-400"
+                className="rounded p-1 text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-300"
                 title="Delete"
               >
                 <Trash2 size={14} />
               </button>
             </div>
           </div>
-          {expandedDocs.has(idx) && (
-            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800">
+          {expandedDocs.has(idx) ? (
+            <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
               <JsonViewer data={doc} />
             </div>
-          )}
+          ) : null}
         </div>
       ))}
     </div>
   );
 }
 
-function formatCellValue(value: any): string {
+function formatCellValue(value: unknown): string {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'object') return JSON.stringify(value).slice(0, 50) + '...';
+  if (typeof value === 'object') return `${JSON.stringify(value).slice(0, 50)}...`;
   return String(value).slice(0, 50);
 }
+

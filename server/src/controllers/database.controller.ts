@@ -27,6 +27,10 @@ export const listDatabases = async (req: Request, res: Response) => {
     const databases = await resolveDatabaseListForAuth(auth);
     const host = getRequestHost(req);
 
+    console.log({
+      databases: databases.map((record) => buildDatabaseResponse(record, host)),
+    })
+
     res.json({
       databases: databases.map((record) => buildDatabaseResponse(record, host)),
     });

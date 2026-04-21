@@ -1,26 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #08111f;
-  --background-elevated: rgba(9, 18, 32, 0.86);
-  --foreground: #e5f0ff;
-  --muted: #8fa4c2;
-  --line: rgba(154, 181, 215, 0.14);
-  --line-strong: rgba(154, 181, 215, 0.24);
-  --surface: rgba(12, 24, 42, 0.76);
-  --surface-strong: rgba(16, 31, 53, 0.95);
-  --accent: #1ed2a1;
-  --accent-strong: #0fa678;
-  --accent-secondary: #4fd1ff;
-  --danger: #ff6b7a;
-  --warning: #ffc75a;
+  --background: #f1f5f9;
+  --background-elevated: #f8fafc;
+  --foreground: #0f172a;
+  --muted: #475569;
+  --line: rgba(15, 23, 42, 0.12);
+  --line-strong: rgba(15, 23, 42, 0.18);
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --accent: #059669;
+  --accent-strong: #047857;
+  --accent-secondary: #0284c7;
+  --danger: #dc2626;
+  --warning: #d97706;
+}
+
+html.dark {
+  --background: #000000;
+  --background-elevated: #050505;
+  --foreground: #e5e7eb;
+  --muted: #94a3b8;
+  --line: rgba(148, 163, 184, 0.22);
+  --line-strong: rgba(148, 163, 184, 0.3);
+  --surface: #0b0b0b;
+  --surface-strong: #111111;
+  --accent: #34d399;
+  --accent-strong: #10b981;
+  --accent-secondary: #38bdf8;
+  --danger: #fb7185;
+  --warning: #fbbf24;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-space-grotesk);
-  --font-mono: var(--font-ibm-plex-mono);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+    "Liberation Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 * {
@@ -31,15 +48,16 @@ html,
 body {
   min-height: 100%;
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(79, 209, 255, 0.14), transparent 28%),
-    radial-gradient(circle at 85% 15%, rgba(30, 210, 161, 0.12), transparent 24%),
-    linear-gradient(180deg, #07101c 0%, #08111f 42%, #0a1525 100%);
+  background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-space-grotesk), sans-serif;
+  font-family: var(--font-sans);
 }
 
 html {
+  color-scheme: light;
+}
+
+html.dark {
   color-scheme: dark;
 }
 
@@ -63,8 +81,8 @@ button {
 }
 
 ::selection {
-  background: rgba(79, 209, 255, 0.25);
-  color: #f8fbff;
+  background: rgba(5, 150, 105, 0.25);
+  color: var(--foreground);
 }
 
 ::-webkit-scrollbar {
@@ -91,16 +109,12 @@ button {
 .glass-panel {
   background: var(--surface);
   border: 1px solid var(--line);
-  backdrop-filter: blur(18px);
-  box-shadow:
-    0 24px 60px rgba(3, 10, 24, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
 }
 
 .glass-panel-strong {
   background: var(--surface-strong);
   border: 1px solid var(--line-strong);
-  backdrop-filter: blur(24px);
 }
 
 .subtle-grid {

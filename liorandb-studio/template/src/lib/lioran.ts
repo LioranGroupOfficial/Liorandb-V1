@@ -89,21 +89,22 @@ export class LioranDBService {
 
     const dbs = await this.client.listDatabases();
     const stats = await Promise.allSettled(
-      dbs.map(async (name) => this.client!.databaseStats(name))
+      dbs.map(async (name) => this.client!.databaseStats(String(name)))
     );
 
     return dbs.map((name, index) => {
       const stat = stats[index];
+      const dbName = String(name);
 
       if (stat.status === 'fulfilled') {
         return {
-          name,
+          name: dbName,
           collections: stat.value.collections,
           documents: stat.value.documents,
         };
       }
 
-      return { name };
+      return { name: dbName };
     });
   }
 
@@ -115,11 +116,6 @@ export class LioranDBService {
   static async dropDatabase(name: string): Promise<void> {
     if (!this.client) throw new Error('Client not connected');
     await this.client.dropDatabase(name);
-  }
-
-  static async renameDatabase(oldName: string, newName: string): Promise<void> {
-    if (!this.client) throw new Error('Client not connected');
-    await this.client.renameDatabase(oldName, newName);
   }
 
   static async listCollections(dbName: string): Promise<Collection[]> {
@@ -251,11 +247,11 @@ export class LioranDBService {
 
   static async stats(dbName: string, collectionName: string): Promise<Record<string, unknown>> {
     if (!this.client) throw new Error('Client not connected');
-    return this.client.db(dbName).collection(collectionName).stats();
+    return this.client.db(dbName).collection(collectionName).stats() as unknown as Record<string, unknown>;
   }
 
   static async databaseStats(dbName: string): Promise<Record<string, unknown>> {
     if (!this.client) throw new Error('Client not connected');
-    return this.client.databaseStats(dbName);
+    return this.client.databaseStats(dbName) as unknown as Record<string, unknown>;
   }
 }

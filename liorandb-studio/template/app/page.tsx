@@ -17,13 +17,13 @@ export default function Home() {
   }, [loadFromStorage, router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-8">
-      <div className="glass-panel animate-fade-up w-full max-w-md rounded-[28px] p-8 text-center">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-          <DatabaseZap className="h-8 w-8 text-[var(--accent)]" />
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-8 text-slate-900 dark:bg-black dark:text-slate-100">
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-950">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-black">
+          <DatabaseZap className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
         </div>
-        <h1 className="text-2xl font-semibold text-white">Preparing LioranDB Studio</h1>
-        <p className="mt-3 text-sm text-[var(--muted)]">
+        <h1 className="text-2xl font-semibold">Preparing LioranDB Studio</h1>
+        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
           Restoring your workspace and reconnecting to the selected host.
         </p>
       </div>

@@ -1,16 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Play, Copy } from 'lucide-react';
+import { Copy, Play } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
+import { copyToClipboard, formatJSON } from '@/lib/utils';
 import { useToast } from './Toast';
-import { formatJSON, copyToClipboard } from '@/lib/utils';
 import { JsonViewer } from './JsonViewer';
 
-interface QueryEditorProps {}
-
-export function QueryEditor({}: QueryEditorProps) {
+export function QueryEditor() {
   const { currentDatabase, selectedCollection, queryResults, isLoading } = useAppStore();
   const { addToast } = useToast();
 
@@ -25,9 +23,9 @@ export function QueryEditor({}: QueryEditorProps) {
     }
 
     try {
-      let filterObj: Record<string, any> = {};
+      let filterObj: Record<string, unknown> = {};
       try {
-        filterObj = JSON.parse(filter);
+        filterObj = JSON.parse(filter) as Record<string, unknown>;
       } catch {
         addToast('Invalid JSON filter', 'error');
         return;
@@ -36,12 +34,7 @@ export function QueryEditor({}: QueryEditorProps) {
       useAppStore.setState({ isLoading: true });
 
       const startTime = performance.now();
-      const { documents, count } = await LioranDBService.find(
-        currentDatabase,
-        selectedCollection,
-        filterObj,
-        100
-      );
+      const { documents, count } = await LioranDBService.find(currentDatabase, selectedCollection, filterObj, 100);
       const executionTime = Math.round(performance.now() - startTime);
 
       useAppStore.setState({
@@ -49,12 +42,13 @@ export function QueryEditor({}: QueryEditorProps) {
           data: documents,
           count,
           executionTime,
+          filter: filterObj,
         },
       });
 
       addToast(`Query executed in ${executionTime}ms`, 'success');
     } catch (error) {
-      addToast(`Query error: ${error}`, 'error');
+      addToast(error instanceof Error ? error.message : 'Query failed', 'error');
     } finally {
       useAppStore.setState({ isLoading: false });
     }
@@ -71,30 +65,30 @@ export function QueryEditor({}: QueryEditorProps) {
   }
 
   return (
-    <div className="flex flex-col h-full gap-4 p-4">
-      {/* Query Editor */}
-      <div className="flex-1 flex flex-col gap-2">
+    <div className="flex h-full flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex flex-1 flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-100">Query</h3>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Query</h3>
           <div className="flex gap-2">
             <button
               onClick={() => setQueryMode('find')}
-              className={`px-2 py-1 text-xs rounded transition ${
+              className={`rounded-md px-2 py-1 text-xs transition ${
                 queryMode === 'find'
                   ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               Find
             </button>
             <button
               onClick={() => setQueryMode('aggregate')}
-              className={`px-2 py-1 text-xs rounded transition ${
+              className={`rounded-md px-2 py-1 text-xs transition ${
                 queryMode === 'aggregate'
                   ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
               disabled
+              title="Aggregate support coming soon"
             >
               Aggregate (Soon)
             </button>
@@ -105,54 +99,53 @@ export function QueryEditor({}: QueryEditorProps) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder='{"field": "value"}'
-          className="flex-1 bg-slate-900 border border-slate-800 rounded font-mono text-sm text-slate-100 p-3 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none"
+          className="flex-1 resize-none rounded-lg border border-slate-200 bg-white p-3 font-mono text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100"
         />
 
         <button
           onClick={executeQuery}
           disabled={isLoading || !currentDatabase || !selectedCollection}
-          className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded py-2 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2 font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Play size={16} />
           <span>Execute Query</span>
         </button>
       </div>
 
-      {/* Results */}
-      {queryResults && (
-        <div className="flex-1 flex flex-col gap-2 border-t border-slate-800 pt-4">
+      {queryResults ? (
+        <div className="flex flex-1 flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h3 className="text-sm font-semibold text-slate-100">Results</h3>
-              <span className="text-xs text-slate-400">
-                {queryResults.count} documents • {queryResults.executionTime}ms
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Results</h3>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {queryResults.count} documents · {queryResults.executionTime}ms
               </span>
             </div>
 
             <div className="flex gap-2">
               <button
                 onClick={() => setResultMode('json')}
-                className={`px-2 py-1 text-xs rounded transition ${
+                className={`rounded-md px-2 py-1 text-xs transition ${
                   resultMode === 'json'
                     ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    : 'bg-slate-100 text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 JSON
               </button>
               <button
                 onClick={() => setResultMode('count')}
-                className={`px-2 py-1 text-xs rounded transition ${
+                className={`rounded-md px-2 py-1 text-xs transition ${
                   resultMode === 'count'
                     ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    : 'bg-slate-100 text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 Count
               </button>
               <button
                 onClick={copyResults}
-                className="px-2 py-1 text-xs rounded bg-slate-800 text-slate-400 hover:text-slate-200 transition flex items-center gap-1"
+                className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 transition hover:text-slate-900 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
               >
                 <Copy size={12} />
                 Copy
@@ -160,21 +153,21 @@ export function QueryEditor({}: QueryEditorProps) {
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto bg-slate-900 rounded border border-slate-800 p-3">
+          <div className="flex-1 overflow-auto rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-black">
             {resultMode === 'count' ? (
-              <div className="text-center text-slate-300">
-                <div className="text-4xl font-bold text-emerald-400 mb-2">
+              <div className="text-center text-slate-700 dark:text-slate-300">
+                <div className="mb-2 text-4xl font-bold text-emerald-600 dark:text-emerald-400">
                   {queryResults.count}
                 </div>
-                <p className="text-slate-400">documents matched</p>
+                <p className="text-slate-500 dark:text-slate-400">documents matched</p>
               </div>
             ) : (
-              <div className="font-mono text-xs space-y-2">
+              <div className="space-y-2 font-mono text-xs">
                 {queryResults.data.length === 0 ? (
-                  <p className="text-slate-400">No results</p>
+                  <p className="text-slate-500 dark:text-slate-400">No results</p>
                 ) : (
                   queryResults.data.map((doc, idx) => (
-                    <div key={idx} className="text-cyan-400">
+                    <div key={idx} className="text-slate-900 dark:text-slate-100">
                       <JsonViewer data={doc} collapsed={true} />
                     </div>
                   ))
@@ -183,7 +176,7 @@ export function QueryEditor({}: QueryEditorProps) {
             )}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

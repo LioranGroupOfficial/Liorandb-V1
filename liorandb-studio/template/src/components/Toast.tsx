@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useState, useCallback } from 'react';
+import React, { createContext, useCallback, useState } from 'react';
+import { X } from 'lucide-react';
 
 export interface Toast {
   id: string;
@@ -20,21 +21,21 @@ export const ToastContext = createContext<ToastContextType | undefined>(undefine
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
+
   const addToast = useCallback(
     (message: string, type: Toast['type'], duration = 3000) => {
-      const id = Math.random().toString(36).substr(2, 9);
+      const id = Math.random().toString(36).slice(2, 11);
       setToasts((prev) => [...prev, { id, message, type, duration }]);
 
       if (duration > 0) {
         setTimeout(() => removeToast(id), duration);
       }
     },
-    []
+    [removeToast]
   );
-
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  }, []);
 
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
@@ -53,13 +54,13 @@ function ToastContainer() {
   return (
     <div className="fixed bottom-4 right-4 z-50 space-y-2">
       {toasts.map((toast) => (
-        <Toast key={toast.id} toast={toast} onClose={() => removeToast(toast.id)} />
+        <ToastItem key={toast.id} toast={toast} onClose={() => removeToast(toast.id)} />
       ))}
     </div>
   );
 }
 
-function Toast({ toast, onClose }: { toast: Toast; onClose: () => void }) {
+function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const bgColor = {
     success: 'bg-emerald-600',
     error: 'bg-red-600',
@@ -68,15 +69,14 @@ function Toast({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   }[toast.type];
 
   return (
-    <div
-      className={`${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300`}
-    >
-      <span className="flex-1">{toast.message}</span>
+    <div className={`${bgColor} flex items-center gap-3 rounded-lg px-4 py-3 text-white shadow-lg`}>
+      <span className="flex-1 text-sm">{toast.message}</span>
       <button
         onClick={onClose}
-        className="text-white hover:opacity-80 transition"
+        className="rounded p-1 text-white/90 transition hover:bg-white/10 hover:text-white"
+        aria-label="Close toast"
       >
-        ✕
+        <X className="h-4 w-4" />
       </button>
     </div>
   );
@@ -89,3 +89,4 @@ export function useToast() {
   }
   return context;
 }
+

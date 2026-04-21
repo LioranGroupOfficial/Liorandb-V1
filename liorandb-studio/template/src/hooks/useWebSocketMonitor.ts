@@ -15,9 +15,11 @@ export function useWebSocketMonitor(): WebSocketMonitorState {
 
   const messageCountRef = useRef(0);
   const latenciesRef = useRef<number[]>([]);
-  const lastCountResetRef = useRef(Date.now());
+  const lastCountResetRef = useRef(0);
 
   useEffect(() => {
+    lastCountResetRef.current = Date.now();
+
     // Simulate WebSocket activity
     const interval = setInterval(() => {
       const now = Date.now();

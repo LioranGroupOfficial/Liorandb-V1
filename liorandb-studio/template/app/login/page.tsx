@@ -2,28 +2,30 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Database, KeyRound, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowRight, Database, Moon, Sun } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
 import { formatConnectionUri, formatHttpUri, parseConnectionUri } from '@/lib/utils';
 import { useToast } from '@/components/Toast';
+import { useThemeStore } from '@/store/theme';
 
-type LoginMode = 'uri' | 'credentials' | 'token';
+type LoginMode = 'credentials' | 'uri' | 'token';
 
 export default function LoginPage() {
   const router = useRouter();
   const { addToast } = useToast();
   const { setLoggedIn } = useAppStore();
+  const { theme, toggleTheme } = useThemeStore();
 
   const [mode, setMode] = useState<LoginMode>('credentials');
   const [isLoading, setIsLoading] = useState(false);
 
-  const [uri, setUri] = useState('lioran://admin:password123@localhost:4000');
+  const [uri, setUri] = useState('lioran://admin:admin@localhost:4000');
   const [host, setHost] = useState('localhost');
   const [port, setPort] = useState('4000');
   const [protocol, setProtocol] = useState<'http' | 'https'>('http');
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState('admin');
   const [tokenUri, setTokenUri] = useState('http://localhost:4000');
   const [token, setToken] = useState('');
 
@@ -34,6 +36,7 @@ export default function LoginPage() {
     if (savedUri && savedToken) {
       void restoreSession(savedUri, savedToken);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function restoreSession(savedUri: string, savedToken: string) {
@@ -106,63 +109,48 @@ export default function LoginPage() {
     }
   }
 
+  const isSubmitDisabled =
+    isLoading ||
+    (mode === 'credentials' && (!host || !port || !username || !password)) ||
+    (mode === 'uri' && !uri) ||
+    (mode === 'token' && (!tokenUri || !token));
+
   return (
-    <main className="relative min-h-screen overflow-auto p-4 md:p-8">
-      <div className="subtle-grid absolute inset-0 opacity-30" />
-      <div className="relative mx-auto grid min-h-[calc(100vh-2rem)] max-w-7xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="glass-panel animate-fade-up flex flex-col justify-between rounded-[32px] p-8 lg:p-12">
-          <div>
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
-              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-              LioranDB Studio Template
+    <main className="min-h-screen bg-slate-100 p-4 text-slate-900 dark:bg-black dark:text-slate-100 md:p-8">
+      <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-xl items-center justify-center md:min-h-[calc(100vh-4rem)]">
+        <div className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950 md:p-8">
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-black">
+                <Database className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold">LioranDB Studio</h1>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Connect to a LioranDB host</p>
+              </div>
             </div>
-            <h1 className="max-w-2xl text-4xl font-semibold leading-tight text-white md:text-6xl">
-              A sharper database cockpit for LioranDB.
-            </h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-[var(--muted)] md:text-lg">
-              Connect with the new <code className="rounded bg-white/5 px-2 py-1 font-mono text-sm">@liorandb/driver</code>,
-              authenticate cleanly, and browse collections from a workspace designed to feel closer to modern MongoDB tools.
-            </p>
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+              title="Toggle theme"
+              aria-label="Toggle theme"
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           </div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            <FeatureCard
-              icon={<KeyRound className="h-5 w-5 text-[var(--accent)]" />}
-              title="Real auth flow"
-              description="URI login, username/password, or existing JWT token reuse."
-            />
-            <FeatureCard
-              icon={<Database className="h-5 w-5 text-[var(--accent-secondary)]" />}
-              title="Explorer-first UX"
-              description="Browse databases, collections, document previews, and query results in one flow."
-            />
-            <FeatureCard
-              icon={<ShieldCheck className="h-5 w-5 text-[var(--warning)]" />}
-              title="Developer friendly"
-              description="Cleaner defaults, stronger validation, and faster onboarding to a running host."
-            />
-          </div>
-        </section>
-
-        <section className="glass-panel-strong animate-fade-up rounded-[32px] p-6 md:p-8">
-          <div className="mb-6">
-            <h2 className="text-2xl font-semibold text-white">Connect to your host</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              Start with credentials for local development, use a <code className="font-mono">lioran://</code> URI for one-step login,
-              or attach an existing JWT for hosted sessions.
-            </p>
-          </div>
-
-          <div className="mb-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/8 bg-black/20 p-1">
-            {(['credentials', 'uri', 'token'] as LoginMode[]).map((item) => (
+          <div className="mb-6 flex gap-2 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+            {(['credentials', 'uri', 'token'] as const).map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => setMode(item)}
-                className={`rounded-xl px-3 py-2 text-sm transition ${
+                className={`flex-1 rounded-md px-3 py-2 text-sm transition ${
                   mode === item
-                    ? 'bg-white text-slate-950'
-                    : 'text-[var(--muted)] hover:bg-white/6 hover:text-white'
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-black dark:text-slate-100'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 {item === 'credentials' ? 'Credentials' : item === 'uri' ? 'URI' : 'Token'}
@@ -171,14 +159,14 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">
-            {mode === 'credentials' && (
+            {mode === 'credentials' ? (
               <>
-                <div className="grid gap-4 sm:grid-cols-[120px_1fr_120px]">
+                <div className="grid gap-4 sm:grid-cols-[130px_1fr_120px]">
                   <Field label="Protocol">
                     <select
                       value={protocol}
                       onChange={(event) => setProtocol(event.target.value as 'http' | 'https')}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-[var(--accent)]"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100"
                     >
                       <option value="http">http</option>
                       <option value="https">https</option>
@@ -188,7 +176,7 @@ export default function LoginPage() {
                     <input
                       value={host}
                       onChange={(event) => setHost(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
                       placeholder="localhost"
                     />
                   </Field>
@@ -196,7 +184,7 @@ export default function LoginPage() {
                     <input
                       value={port}
                       onChange={(event) => setPort(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
                       placeholder="4000"
                     />
                   </Field>
@@ -207,7 +195,7 @@ export default function LoginPage() {
                     <input
                       value={username}
                       onChange={(event) => setUsername(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
                       placeholder="admin"
                     />
                   </Field>
@@ -216,32 +204,32 @@ export default function LoginPage() {
                       type="password"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
-                      placeholder="password123"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
+                      placeholder="admin"
                     />
                   </Field>
                 </div>
               </>
-            )}
+            ) : null}
 
-            {mode === 'uri' && (
+            {mode === 'uri' ? (
               <Field label="Connection URI">
                 <input
                   value={uri}
                   onChange={(event) => setUri(event.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
-                  placeholder="lioran://admin:password123@localhost:4000"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
+                  placeholder="lioran://admin:admin@localhost:4000"
                 />
               </Field>
-            )}
+            ) : null}
 
-            {mode === 'token' && (
+            {mode === 'token' ? (
               <>
                 <Field label="Base URL">
                   <input
                     value={tokenUri}
                     onChange={(event) => setTokenUri(event.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
                     placeholder="http://localhost:4000"
                   />
                 </Field>
@@ -249,69 +237,38 @@ export default function LoginPage() {
                   <textarea
                     value={token}
                     onChange={(event) => setToken(event.target.value)}
-                    className="min-h-32 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[var(--accent)]"
+                    className="min-h-32 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 dark:placeholder:text-slate-600"
                     placeholder="eyJhbGciOi..."
                   />
                 </Field>
               </>
-            )}
+            ) : null}
 
             <button
               type="submit"
-              disabled={
-                isLoading ||
-                (mode === 'credentials' && (!host || !port || !username || !password)) ||
-                (mode === 'uri' && !uri) ||
-                (mode === 'token' && (!tokenUri || !token))
-              }
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,var(--accent),var(--accent-secondary))] px-4 py-3 font-medium text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitDisabled}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span>{isLoading ? 'Connecting...' : 'Open Studio'}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
 
-          <div className="mt-6 rounded-2xl border border-white/8 bg-black/20 p-4 text-sm text-[var(--muted)]">
-            First-time host setup:
-            <div className="mt-2 rounded-xl bg-black/30 p-3 font-mono text-xs text-slate-200">
-              ldb-cli 'admin.create("admin","password123")'
-            </div>
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-black dark:text-slate-300">
+            Default host user (first run): <span className="font-mono">admin / admin</span>
           </div>
-        </section>
+        </div>
       </div>
     </main>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
+      <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
       {children}
     </label>
   );
 }
 
-function FeatureCard({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="rounded-[24px] border border-white/8 bg-black/20 p-5">
-      <div className="mb-4 inline-flex rounded-2xl border border-white/10 bg-white/5 p-3">{icon}</div>
-      <h3 className="text-base font-semibold text-white">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{description}</p>
-    </div>
-  );
-}
