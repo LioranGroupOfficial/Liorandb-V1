@@ -164,3 +164,4 @@ save_src_tree.py
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 ./__tests__
+__tests__
