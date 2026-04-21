@@ -5,6 +5,7 @@ import { LioranDB } from "./core/database.js";
 import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
 import { LifecycleManager } from "./utils/lifecycle.js";
+import { LiorandbError, asLiorandbError } from "./utils/errors.js";
 
 /* ---------------- PROCESS MODE ---------------- */
 
@@ -170,34 +171,43 @@ export class LioranManager {
   }
 
   async openDatabase(name: string): Promise<LioranDB> {
-    this._assertOpen();
+    try {
+      this._assertOpen();
 
-    if (this.openDBs.has(name)) {
-      return this.openDBs.get(name)!;
+      if (this.openDBs.has(name)) {
+        return this.openDBs.get(name)!;
+      }
+
+      const dbPath = path.join(this.rootPath, name);
+      await fs.promises.mkdir(dbPath, { recursive: true });
+
+      const db = new LioranDB(dbPath, name, this, {
+        writeQueue: this.options.writeQueue,
+        batch: this.options.batch
+      });
+      await db.ready;
+      this.openDBs.set(name, db);
+      return db;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to open database",
+        details: { db: name, rootPath: this.rootPath }
+      });
     }
-
-    const dbPath = path.join(this.rootPath, name);
-    await fs.promises.mkdir(dbPath, { recursive: true });
-
-    const db = new LioranDB(dbPath, name, this, {
-      writeQueue: this.options.writeQueue,
-      batch: this.options.batch
-    });
-    await db.ready;
-    this.openDBs.set(name, db);
-    return db;
   }
 
   /* ---------------- SNAPSHOT ---------------- */
 
   async snapshot(snapshotPath: string) {
+    try {
     if (this.mode === ProcessMode.CLIENT) {
       const queue = await this.getQueue();
       return queue.exec("snapshot", { path: snapshotPath });
     }
 
     if (this.mode === ProcessMode.READONLY) {
-      throw new Error("Snapshot not allowed in readonly mode");
+      throw new LiorandbError("READONLY_MODE", "Snapshot not allowed in readonly mode");
     }
 
     for (const db of this.openDBs.values()) {
@@ -221,18 +231,26 @@ export class LioranManager {
     );
 
     return true;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Snapshot failed",
+        details: { snapshotPath }
+      });
+    }
   }
 
   /* ---------------- RESTORE ---------------- */
 
   async restore(snapshotPath: string) {
+    try {
     if (this.mode === ProcessMode.CLIENT) {
       const queue = await this.getQueue();
       return queue.exec("restore", { path: snapshotPath });
     }
 
     if (this.mode === ProcessMode.READONLY) {
-      throw new Error("Restore not allowed in readonly mode");
+      throw new LiorandbError("READONLY_MODE", "Restore not allowed in readonly mode");
     }
 
     await this.closeAll();
@@ -249,6 +267,13 @@ export class LioranManager {
 
     console.log("Restore completed. Restart required.");
     process.exit(0);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Restore failed",
+        details: { snapshotPath }
+      });
+    }
   }
 
   /* ---------------- SHUTDOWN ---------------- */
@@ -308,7 +333,7 @@ export class LioranManager {
 
   private _assertOpen() {
     if (this.closed) {
-      throw new Error("LioranManager is closed");
+      throw new LiorandbError("CLOSED", "LioranManager is closed");
     }
   }
 }

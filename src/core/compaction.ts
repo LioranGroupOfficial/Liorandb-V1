@@ -4,6 +4,7 @@ import { ClassicLevel } from "classic-level";
 import { Collection } from "./collection.js";
 import { Index } from "./index.js";
 import { decryptData } from "../utils/encryption.js";
+import { asLiorandbError } from "../utils/errors.js";
 
 /* ---------------------------------------------------------
    CONSTANTS
@@ -91,7 +92,11 @@ async function atomicSwap(base: string, tmp: string, old: string) {
     if (fs.existsSync(old)) {
       fs.renameSync(old, base);
     }
-    throw err;
+    throw asLiorandbError(err, {
+      code: "IO_ERROR",
+      message: "Compaction atomic swap failed",
+      details: { base, tmp, old }
+    });
   }
 }
 

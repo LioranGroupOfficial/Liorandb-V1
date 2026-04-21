@@ -1,4 +1,5 @@
 import { MemoryPressureGate, type MemoryPressureOptions } from "../utils/memoryPressure.js";
+import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 export type BackpressureMode = "wait" | "reject";
 
@@ -57,7 +58,9 @@ class AsyncSemaphore {
           if (done) return;
           done = true;
           this.waiters = this.waiters.filter(w => w !== waiter);
-          reject(new Error("Write queue backpressure timeout"));
+          reject(new LiorandbError("BACKPRESSURE", "Write queue backpressure timeout", {
+            details: { timeoutMs: ms }
+          }));
         }, ms);
         timeout.unref?.();
       }
@@ -107,10 +110,18 @@ export class DedicatedWriter {
 
   async run<R>(task: () => Promise<R>): Promise<R> {
     if (this.closed) {
-      throw new Error("Writer is closed");
+      throw new LiorandbError("CLOSED", "Writer is closed");
     }
 
-    await this.memoryGate.waitUntilOk(this.timeoutMs);
+    try {
+      await this.memoryGate.waitUntilOk(this.timeoutMs);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "BACKPRESSURE",
+        message: "Write blocked by memory pressure",
+        details: { timeoutMs: this.timeoutMs }
+      });
+    }
 
     let release: ReleaseFn | null = null;
 
@@ -118,7 +129,9 @@ export class DedicatedWriter {
       release = this.semaphore.tryAcquire();
       if (!release) {
         this.onBackpressure?.({ pending: this.pending, maxSize: this.maxSize });
-        throw new Error("Write queue is full");
+        throw new LiorandbError("BACKPRESSURE", "Write queue is full", {
+          details: { pending: this.pending, maxSize: this.maxSize }
+        });
       }
     } else {
       if (this.semaphore.available <= 0 && !this.warnedBackpressure) {

@@ -1,4 +1,5 @@
 import v8 from "v8";
+import { LiorandbError } from "./errors.js";
 
 export type MemoryPressureOptions = {
   enabled?: boolean;
@@ -146,7 +147,9 @@ export class MemoryPressureGate {
         timeout = setTimeout(() => {
           finish(() => {
             this.waiters = this.waiters.filter(w => w !== waiter);
-            reject(new Error("Memory pressure backpressure timeout"));
+            reject(new LiorandbError("BACKPRESSURE", "Memory pressure backpressure timeout", {
+              details: { timeoutMs: ms }
+            }));
           });
         }, ms);
         timeout.unref?.();

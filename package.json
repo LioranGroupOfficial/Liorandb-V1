@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/core",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "LioranDB Core Module – Lightweight, local-first, peer-to-peer database management for Node.js.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,14 +26,23 @@
     "type": "git",
     "url": "git+https://github.com/LioranGroupOfficial/Liorandb.git"
   },
-  "keywords": [],
+  "keywords": [
+    "p2p-database",
+    "lioran",
+    "liorandb",
+    "p2p-db",
+    "peer-to-peer-db",
+    "peer-to-peer-database",
+    "localfirst-db",
+    "localfirst-database"
+  ],
   "author": "LioranGroup",
   "license": "LDEP",
   "type": "module",
   "bugs": {
     "url": "https://github.com/LioranGroupOfficial/Liorandb/issues"
   },
-  "homepage": "https://github.com/LioranGroupOfficial/Liorandb#readme",
+  "homepage": "https://db.lioransolutions.com/",
   "dependencies": {
     "@types/tar-stream": "^3.1.4",
     "classic-level": "^3.0.0",

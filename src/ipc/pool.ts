@@ -2,6 +2,7 @@ import { Worker } from "worker_threads";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 /**
  * Worker Thread Pool
@@ -79,7 +80,7 @@ export class IPCWorkerPool {
 
   exec(task: any): Promise<any> {
     if (this.workers.length === 0) {
-      throw new Error("No workers available");
+      throw new LiorandbError("CLOSED", "No workers available");
     }
 
     const worker = this.workers[this.rrIndex];
@@ -94,7 +95,7 @@ export class IPCWorkerPool {
         worker.off("message", messageHandler);
 
         if (msg.ok) resolve(msg.result);
-        else reject(new Error(msg.error));
+        else reject(new LiorandbError("INTERNAL", msg.error || "Worker execution error"));
       };
 
       worker.on("message", messageHandler);
@@ -102,6 +103,11 @@ export class IPCWorkerPool {
       worker.postMessage({
         id,
         task
+      });
+    }).catch(err => {
+      throw asLiorandbError(err, {
+        code: "INTERNAL",
+        message: "Worker task failed"
       });
     });
   }

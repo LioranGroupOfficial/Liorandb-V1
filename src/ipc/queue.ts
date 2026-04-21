@@ -1,6 +1,7 @@
 import { LioranManager } from "../LioranManager.js";
 import { getDefaultRootPath } from "../utils/rootpath.js";
 import { IPCWorkerPool } from "./pool.js";
+import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 /* -------------------------------- ACTION TYPES -------------------------------- */
 
@@ -35,11 +36,12 @@ export class DBQueue {
   /* -------------------------------- EXEC -------------------------------- */
 
   async exec(action: IPCAction, args: any) {
-    if (this.destroyed) {
-      throw new Error("DBQueue already shutdown");
-    }
+    try {
+      if (this.destroyed) {
+        throw new LiorandbError("CLOSED", "DBQueue already shutdown");
+      }
 
-    switch (action) {
+      switch (action) {
       /* ---------------- DB ---------------- */
 
       case "db":
@@ -108,7 +110,16 @@ export class DBQueue {
         return true;
 
       default:
-        throw new Error(`Unknown action: ${action}`);
+        throw new LiorandbError("UNKNOWN_ACTION", `Unknown action: ${action}`, {
+          details: { action }
+        });
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "INTERNAL",
+        message: "IPC action failed",
+        details: { action }
+      });
     }
   }
 

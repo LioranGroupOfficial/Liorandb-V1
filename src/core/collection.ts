@@ -17,6 +17,7 @@ import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
 import { Index } from "./index.js";
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
+import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -104,7 +105,7 @@ export class Collection<T = any> {
 
   private assertWritable() {
     if (this.readonlyMode) {
-      throw new Error("Collection is in readonly replica mode");
+      throw new LiorandbError("READONLY_MODE", "Collection is in readonly replica mode");
     }
   }
 
@@ -185,8 +186,12 @@ export class Collection<T = any> {
   /* ===================== WRITE SERIALIZATION ===================== */
 
   private _enqueueWrite<R>(task: () => Promise<R>): Promise<R> {
-    this.writeQueue = this.writeQueue.then(task).catch(console.error);
-    return this.writeQueue;
+    const resultPromise = this.writeQueue.then(task);
+    this.writeQueue = resultPromise.then(
+      () => undefined,
+      () => undefined
+    );
+    return resultPromise;
   }
 
   async close(): Promise<void> {
@@ -266,20 +271,31 @@ export class Collection<T = any> {
   /* ===================== INTERNAL EXEC ===================== */
 
   async _exec(op: string, args: any[]): Promise<any> {
-    switch (op) {
-      case "insertOne": return this._insertOne(args[0]);
-      case "insertMany": return this._insertMany(args[0]);
-      case "find": return this._find(args[0], args[1]);
-      case "findOne": return this._findOne(args[0], args[1]);
-      case "aggregate": return this._aggregate(args[0]);
-      case "explain": return this._explain(args[0], args[1]);
-      case "updateOne": return this._updateOne(args[0], args[1], args[2]);
-      case "updateMany": return this._updateMany(args[0], args[1]);
-      case "deleteOne": return this._deleteOne(args[0]);
-      case "deleteMany": return this._deleteMany(args[0]);
-      case "countDocuments": return this._countDocuments(args[0]);
-      case "count": return this._count();
-      default: throw new Error(`Unknown operation: ${op}`);
+    try {
+      switch (op) {
+        case "insertOne": return this._insertOne(args[0]);
+        case "insertMany": return this._insertMany(args[0]);
+        case "find": return this._find(args[0], args[1]);
+        case "findOne": return this._findOne(args[0], args[1]);
+        case "aggregate": return this._aggregate(args[0]);
+        case "explain": return this._explain(args[0], args[1]);
+        case "updateOne": return this._updateOne(args[0], args[1], args[2]);
+        case "updateMany": return this._updateMany(args[0], args[1]);
+        case "deleteOne": return this._deleteOne(args[0]);
+        case "deleteMany": return this._deleteMany(args[0]);
+        case "countDocuments": return this._countDocuments(args[0]);
+        case "count": return this._count();
+        default:
+          throw new LiorandbError("UNKNOWN_OPERATION", `Unknown operation: ${op}`, {
+            details: { op }
+          });
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "INTERNAL",
+        message: `Collection operation failed: ${op}`,
+        details: { op, dir: this.dir }
+      });
     }
   }
 
@@ -291,12 +307,18 @@ export class Collection<T = any> {
 
     const _id = doc._id ?? uuid();
     if (String(_id).startsWith(META_KEY_PREFIX)) {
-      throw new Error(`Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`);
+      throw new LiorandbError(
+        "RESERVED_KEY",
+        `Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`,
+        { details: { _id: String(_id), reservedPrefix: META_KEY_PREFIX } }
+      );
     }
     const existing = await this.db.get(String(_id)).catch(() => null);
 
     if (existing) {
-      throw new Error(`Document with _id "${_id}" already exists`);
+      throw new LiorandbError("DUPLICATE_KEY", `Document with _id "${_id}" already exists`, {
+        details: { _id: String(_id) }
+      });
     }
 
     const final = this.validate({
@@ -335,16 +357,24 @@ export class Collection<T = any> {
       const _id = d._id ?? uuid();
       const id = String(_id);
       if (id.startsWith(META_KEY_PREFIX)) {
-        throw new Error(`Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`);
+        throw new LiorandbError(
+          "RESERVED_KEY",
+          `Document _id cannot start with reserved prefix "${META_KEY_PREFIX}"`,
+          { details: { _id: id, reservedPrefix: META_KEY_PREFIX } }
+        );
       }
 
       if (seenIds.has(id)) {
-        throw new Error(`Duplicate _id "${id}" in insertMany batch`);
+        throw new LiorandbError("DUPLICATE_KEY", `Duplicate _id "${id}" in insertMany batch`, {
+          details: { _id: id }
+        });
       }
 
       const existing = await this.db.get(id).catch(() => null);
       if (existing) {
-        throw new Error(`Document with _id "${id}" already exists`);
+        throw new LiorandbError("DUPLICATE_KEY", `Document with _id "${id}" already exists`, {
+          details: { _id: id }
+        });
       }
 
       seenIds.add(id);
@@ -555,7 +585,11 @@ export class Collection<T = any> {
         : getByPath(docs[docs.length - 1], String(expr.$last).replace(/^\$/, ""));
     }
 
-    throw new Error(`Unsupported aggregation accumulator: ${Object.keys(expr)[0]}`);
+    throw new LiorandbError(
+      "UNSUPPORTED_QUERY",
+      `Unsupported aggregation accumulator: ${Object.keys(expr)[0]}`,
+      { details: { expr } }
+    );
   }
 
   private applyGroupStage(docs: any[], spec: Record<string, any>) {
@@ -682,7 +716,9 @@ export class Collection<T = any> {
 
   private async _aggregate(pipeline: any[]) {
     if (!Array.isArray(pipeline)) {
-      throw new Error("Aggregation pipeline must be an array");
+      throw new LiorandbError("VALIDATION_FAILED", "Aggregation pipeline must be an array", {
+        details: { pipelineType: typeof pipeline }
+      });
     }
 
     let working: any[];
@@ -724,7 +760,11 @@ export class Collection<T = any> {
         continue;
       }
 
-      throw new Error(`Unsupported aggregation stage: ${Object.keys(stage ?? {})[0] ?? "unknown"}`);
+      throw new LiorandbError(
+        "UNSUPPORTED_QUERY",
+        `Unsupported aggregation stage: ${Object.keys(stage ?? {})[0] ?? "unknown"}`,
+        { details: { stage } }
+      );
     }
 
     return working;

@@ -1,4 +1,5 @@
 import { parentPort } from "worker_threads";
+import { LiorandbError } from "../utils/errors.js";
 
 /**
  * Worker Thread Entry
@@ -10,7 +11,7 @@ import { parentPort } from "worker_threads";
  */
 
 if (!parentPort) {
-  throw new Error("worker.ts must be run as a worker thread");
+  throw new LiorandbError("INTERNAL", "worker.ts must be run as a worker thread");
 }
 
 /* -------------------------------------------------- */

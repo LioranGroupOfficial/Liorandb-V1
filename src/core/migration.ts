@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import type { LioranDB } from "./database.js";
+import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
 
 export type MigrationFn = (db: LioranDB) => Promise<void>;
 
@@ -28,7 +29,9 @@ export class MigrationEngine {
     const key = `${from}→${to}`;
 
     if (this.migrations.has(key)) {
-      throw new Error(`Duplicate migration: ${key}`);
+      throw new LiorandbError("DUPLICATE_KEY", `Duplicate migration: ${key}`, {
+        details: { from, to }
+      });
     }
 
     this.migrations.set(key, fn);
@@ -75,16 +78,18 @@ export class MigrationEngine {
   private async runMigration(from: string, to: string, fn: MigrationFn) {
     const current = this.db.getSchemaVersion();
     if (current !== from) {
-      throw new Error(
-        `Schema mismatch: DB=${current}, expected=${from}`
-      );
+      throw new LiorandbError("CORRUPTION", `Schema mismatch: DB=${current}, expected=${from}`, {
+        details: { db: current, expected: from }
+      });
     }
 
     const lockPath = path.join(this.db.basePath, LOCK_FILE);
 
     if (fs.existsSync(lockPath)) {
-      throw new Error(
-        "Previous migration interrupted. Resolve manually before continuing."
+      throw new LiorandbError(
+        "IO_ERROR",
+        "Previous migration interrupted. Resolve manually before continuing.",
+        { details: { lockPath } }
       );
     }
 
@@ -108,18 +113,28 @@ export class MigrationEngine {
   private acquireLock(file: string) {
     const token = crypto.randomBytes(16).toString("hex");
 
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        pid: process.pid,
-        token,
-        time: Date.now(),
-      })
-    );
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          time: Date.now(),
+        })
+      );
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to acquire migration lock",
+        details: { lockPath: file }
+      });
+    }
   }
 
   private releaseLock(file: string) {
-    if (fs.existsSync(file)) fs.unlinkSync(file);
+    try {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    } catch {}
   }
 
   /* ------------------------------------------------------------ */
@@ -131,8 +146,18 @@ export class MigrationEngine {
   }
 
   private readHistory(): MigrationRecord[] {
-    if (!fs.existsSync(this.historyPath())) return [];
-    return JSON.parse(fs.readFileSync(this.historyPath(), "utf8"));
+    const historyPath = this.historyPath();
+    return withLiorandbErrorSync(
+      {
+        code: "IO_ERROR",
+        message: "Failed to read migration history",
+        details: { historyPath }
+      },
+      () => {
+        if (!fs.existsSync(historyPath)) return [];
+        return JSON.parse(fs.readFileSync(historyPath, "utf8")) as MigrationRecord[];
+      }
+    );
   }
 
   private writeHistory(from: string, to: string, fn: MigrationFn) {
@@ -145,7 +170,16 @@ export class MigrationEngine {
       appliedAt: Date.now(),
     });
 
-    fs.writeFileSync(this.historyPath(), JSON.stringify(history, null, 2));
+    const historyPath = this.historyPath();
+    try {
+      fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to write migration history",
+        details: { historyPath, from, to }
+      });
+    }
   }
 
   private hash(data: string) {

@@ -5,6 +5,7 @@ import {
   encryptStringWithKey,
   getEncryptionKey
 } from "../utils/encryption.js";
+import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 /* =========================
    WAL RECORD TYPES
@@ -139,7 +140,7 @@ export class WALManager {
 
   private async open() {
     if (this.readonlyMode) {
-      throw new Error("WAL is in readonly replica mode");
+      throw new LiorandbError("READONLY_MODE", "WAL is in readonly replica mode");
     }
 
     if (!this.fd) {
@@ -223,28 +224,36 @@ export class WALManager {
   ------------------------- */
 
   async append(record: Omit<WALRecord, "lsn">): Promise<number> {
-    if (this.readonlyMode) {
-      throw new Error("Cannot append WAL in readonly replica mode");
+    try {
+      if (this.readonlyMode) {
+        throw new LiorandbError("READONLY_MODE", "Cannot append WAL in readonly replica mode");
+      }
+
+      await this.open();
+
+      const full: WALRecord = {
+        ...(record as any),
+        lsn: ++this.lsn
+      };
+
+      const line = this.encodeRecord(full);
+
+      await this.fd!.write(line);
+      await this.fd!.sync();
+
+      const stat = await this.fd!.stat();
+      if (stat.size >= MAX_WAL_SIZE) {
+        await this.rotate();
+      }
+
+      return full.lsn;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to append WAL record",
+        details: { walDir: this.walDir }
+      });
     }
-
-    await this.open();
-
-    const full: WALRecord = {
-      ...(record as any),
-      lsn: ++this.lsn
-    };
-
-    const line = this.encodeRecord(full);
-
-    await this.fd!.write(line);
-    await this.fd!.sync();
-
-    const stat = await this.fd!.stat();
-    if (stat.size >= MAX_WAL_SIZE) {
-      await this.rotate();
-    }
-
-    return full.lsn;
   }
 
   /* -------------------------
@@ -255,51 +264,59 @@ export class WALManager {
     fromLSN: number,
     apply: (r: WALRecord) => Promise<void>
   ): Promise<void> {
-    if (!fs.existsSync(this.walDir)) return;
+    try {
+      if (!fs.existsSync(this.walDir)) return;
 
-    const files = this.getSortedWalFiles();
+      const files = this.getSortedWalFiles();
 
-    for (const file of files) {
-      const filePath = path.join(this.walDir, file);
+      for (const file of files) {
+        const filePath = path.join(this.walDir, file);
 
-      const fd = fs.openSync(
-        filePath,
-        this.readonlyMode ? "r" : "r+"
-      );
+        const fd = fs.openSync(
+          filePath,
+          this.readonlyMode ? "r" : "r+"
+        );
 
-      const content = fs.readFileSync(filePath, "utf8");
-      const lines = content.split("\n");
+        const content = fs.readFileSync(filePath, "utf8");
+        const lines = content.split("\n");
 
-      let validOffset = 0;
+        let validOffset = 0;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line.trim()) {
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (!line.trim()) {
+            validOffset += line.length + 1;
+            continue;
+          }
+
+          const record = this.decodeLine(line);
+          if (!record) {
+            break;
+          }
+
           validOffset += line.length + 1;
-          continue;
+
+          if (record.lsn <= fromLSN) continue;
+
+          this.lsn = Math.max(this.lsn, record.lsn);
+          await apply(record);
         }
 
-        const record = this.decodeLine(line);
-        if (!record) {
-          break;
+        if (!this.readonlyMode) {
+          const stat = fs.fstatSync(fd);
+          if (validOffset < stat.size) {
+            fs.ftruncateSync(fd, validOffset);
+          }
         }
 
-        validOffset += line.length + 1;
-
-        if (record.lsn <= fromLSN) continue;
-
-        this.lsn = Math.max(this.lsn, record.lsn);
-        await apply(record);
+        fs.closeSync(fd);
       }
-
-      if (!this.readonlyMode) {
-        const stat = fs.fstatSync(fd);
-        if (validOffset < stat.size) {
-          fs.ftruncateSync(fd, validOffset);
-        }
-      }
-
-      fs.closeSync(fd);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "WAL replay failed",
+        details: { walDir: this.walDir, fromLSN }
+      });
     }
   }
 
@@ -308,19 +325,27 @@ export class WALManager {
   ------------------------- */
 
   async cleanup(beforeGen: number) {
-    if (this.readonlyMode) return;
-    if (!fs.existsSync(this.walDir)) return;
+    try {
+      if (this.readonlyMode) return;
+      if (!fs.existsSync(this.walDir)) return;
 
-    const files = fs.readdirSync(this.walDir);
+      const files = fs.readdirSync(this.walDir);
 
-    for (const f of files) {
-      const m = f.match(/^wal-(\d+)\.log$/);
-      if (!m) continue;
+      for (const f of files) {
+        const m = f.match(/^wal-(\d+)\.log$/);
+        if (!m) continue;
 
-      const gen = Number(m[1]);
-      if (gen < beforeGen) {
-        fs.unlinkSync(path.join(this.walDir, f));
+        const gen = Number(m[1]);
+        if (gen < beforeGen) {
+          fs.unlinkSync(path.join(this.walDir, f));
+        }
       }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "WAL cleanup failed",
+        details: { walDir: this.walDir, beforeGen }
+      });
     }
   }
 
@@ -341,33 +366,43 @@ export class WALManager {
   }
 
   async rotateEncryptionKey(oldKey: Buffer, newKey: Buffer) {
-    if (this.readonlyMode || !fs.existsSync(this.walDir)) return;
+    try {
+      if (this.readonlyMode || !fs.existsSync(this.walDir)) return;
 
-    if (this.fd) {
-      await this.fd.sync();
-      await this.fd.close();
-      this.fd = null;
-    }
-
-    const files = this.getSortedWalFiles();
-
-    for (const file of files) {
-      const filePath = path.join(this.walDir, file);
-      const lines = fs.readFileSync(filePath, "utf8").split("\n");
-      const nextLines: string[] = [];
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const record = this.decodeLine(line, oldKey);
-        if (!record) {
-          throw new Error(`Failed to decrypt WAL record in ${file}`);
-        }
-
-        nextLines.push(this.encodeRecord(record, newKey).trimEnd());
+      if (this.fd) {
+        await this.fd.sync();
+        await this.fd.close();
+        this.fd = null;
       }
 
-      fs.writeFileSync(filePath, nextLines.join("\n") + (nextLines.length ? "\n" : ""), "utf8");
+      const files = this.getSortedWalFiles();
+
+      for (const file of files) {
+        const filePath = path.join(this.walDir, file);
+        const lines = fs.readFileSync(filePath, "utf8").split("\n");
+        const nextLines: string[] = [];
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          const record = this.decodeLine(line, oldKey);
+          if (!record) {
+            throw new LiorandbError("CORRUPTION", `Failed to decrypt WAL record in ${file}`, {
+              details: { file }
+            });
+          }
+
+          nextLines.push(this.encodeRecord(record, newKey).trimEnd());
+        }
+
+        fs.writeFileSync(filePath, nextLines.join("\n") + (nextLines.length ? "\n" : ""), "utf8");
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "ENCRYPTION_ERROR",
+        message: "WAL re-encryption failed",
+        details: { walDir: this.walDir }
+      });
     }
   }
 }

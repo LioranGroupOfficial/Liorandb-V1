@@ -1,3 +1,5 @@
+import { LiorandbError } from "./errors.js";
+
 export type CleanupFn = () => void | Promise<void>;
 
 export class LifecycleManager {
@@ -6,7 +8,7 @@ export class LifecycleManager {
 
   register(cleanup: CleanupFn): void {
     if (this.closed) {
-      throw new Error("LifecycleManager is closed");
+      throw new LiorandbError("CLOSED", "LifecycleManager is closed");
     }
     this.cleanups.push(cleanup);
   }

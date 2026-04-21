@@ -15,6 +15,7 @@ import {
 import { WALManager } from "./wal.js";
 import { CheckpointManager } from "./checkpoint.js";
 import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
+import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -76,7 +77,7 @@ class DBTransactionContext {
 
   async commit() {
     if (this.db.isReadonly()) {
-      throw new Error("Cannot commit transaction in readonly mode");
+      throw new LiorandbError("READONLY_MODE", "Cannot commit transaction in readonly mode");
     }
 
     await this.db._commitTransaction(this.txId, this.ops);
@@ -122,40 +123,48 @@ export class LioranDB {
 
     this.metaPath = path.join(basePath, META_FILE);
 
-    fs.mkdirSync(basePath, { recursive: true });
+    try {
+      fs.mkdirSync(basePath, { recursive: true });
 
-    this.loadMeta();
+      this.loadMeta();
 
-    if (!this.readonlyMode) {
-      this.wal = new WALManager(basePath);
-      this.checkpoint = new CheckpointManager(basePath);
-      const userPressure = options.writeQueue?.memoryPressure;
-      this.writer = new DedicatedWriter({
-        ...(options.writeQueue ?? {}),
-        memoryPressure: {
-          ...(options.writeQueue?.memoryPressure ?? {}),
-          onPressureStart: info => {
-            userPressure?.onPressureStart?.(info);
-            console.warn(
-              `[LioranDB] Memory pressure start: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
-            );
+      if (!this.readonlyMode) {
+        this.wal = new WALManager(basePath);
+        this.checkpoint = new CheckpointManager(basePath);
+        const userPressure = options.writeQueue?.memoryPressure;
+        this.writer = new DedicatedWriter({
+          ...(options.writeQueue ?? {}),
+          memoryPressure: {
+            ...(options.writeQueue?.memoryPressure ?? {}),
+            onPressureStart: info => {
+              userPressure?.onPressureStart?.(info);
+              console.warn(
+                `[LioranDB] Memory pressure start: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
+              );
+            },
+            onPressureEnd: info => {
+              userPressure?.onPressureEnd?.(info);
+              console.warn(
+                `[LioranDB] Memory pressure end: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
+              );
+            }
           },
-          onPressureEnd: info => {
-            userPressure?.onPressureEnd?.(info);
+          onBackpressure: info => {
+            const now = Date.now();
+            if (now - this.lastBackpressureLogAt < 1000) return;
+            this.lastBackpressureLogAt = now;
+
             console.warn(
-              `[LioranDB] Memory pressure end: rssMB=${info.rssMB.toFixed(1)} ratio=${info.ratio.toFixed(3)} db=${this.dbName}`
+              `[LioranDB] Backpressure: pending=${info.pending} max=${info.maxSize} db=${this.dbName}`
             );
           }
-        },
-        onBackpressure: info => {
-          const now = Date.now();
-          if (now - this.lastBackpressureLogAt < 1000) return;
-          this.lastBackpressureLogAt = now;
-
-          console.warn(
-            `[LioranDB] Backpressure: pending=${info.pending} max=${info.maxSize} db=${this.dbName}`
-          );
-        }
+        });
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to construct database",
+        details: { dbName: this.dbName, basePath: this.basePath }
       });
     }
 
@@ -172,21 +181,30 @@ export class LioranDB {
 
   private assertWritable() {
     if (this.readonlyMode) {
-      throw new Error("Database is in readonly replica mode");
+      throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
     }
   }
 
   /* ------------------------- INIT & RECOVERY ------------------------- */
 
   private async initialize() {
-    if (!this.readonlyMode) {
-      await this.recoverFromWAL();
+    try {
+      if (!this.readonlyMode) {
+        await this.recoverFromWAL();
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Database initialization failed",
+        details: { dbName: this.dbName, basePath: this.basePath }
+      });
     }
   }
 
   private async recoverFromWAL() {
-    const checkpointData = this.checkpoint.get();
-    const fromLSN = checkpointData.lsn;
+    try {
+      const checkpointData = this.checkpoint.get();
+      const fromLSN = checkpointData.lsn;
 
     const committed = new Set<number>();
     const applied = new Set<number>();
@@ -194,7 +212,7 @@ export class LioranDB {
     const commitLSNByTx = new Map<number, number>();
     let maxSeenLSN = fromLSN;
 
-    await this.wal.replay(fromLSN, async (record) => {
+      await this.wal.replay(fromLSN, async (record) => {
       maxSeenLSN = Math.max(maxSeenLSN, record.lsn);
       if (record.type === "commit") {
         committed.add(record.tx);
@@ -205,7 +223,7 @@ export class LioranDB {
         if (!ops.has(record.tx)) ops.set(record.tx, []);
         ops.get(record.tx)!.push(record.payload as TXOp);
       }
-    });
+      });
 
     let highestAppliedLSN = fromLSN;
 
@@ -223,7 +241,14 @@ export class LioranDB {
       }
     }
 
-    this.advanceCheckpoint(highestAppliedLSN);
+      this.advanceCheckpoint(highestAppliedLSN);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "WAL recovery failed",
+        details: { dbName: this.dbName, basePath: this.basePath }
+      });
+    }
   }
 
   /* ------------------------- CHECKPOINT ADVANCE ------------------------- */
@@ -242,27 +267,48 @@ export class LioranDB {
   /* ------------------------- META ------------------------- */
 
   private loadMeta() {
-    if (!fs.existsSync(this.metaPath)) {
-      this.meta = {
-        version: META_VERSION,
-        indexes: {},
-        schemaVersion: DEFAULT_SCHEMA_VERSION
-      };
-      this.saveMeta();
-      return;
-    }
+    this.meta = withLiorandbErrorSync(
+      {
+        code: "IO_ERROR",
+        message: "Failed to load database metadata",
+        details: { metaPath: this.metaPath }
+      },
+      () => {
+        if (!fs.existsSync(this.metaPath)) {
+          const next: DBMeta = {
+            version: META_VERSION,
+            indexes: {},
+            schemaVersion: DEFAULT_SCHEMA_VERSION
+          };
+          this.meta = next;
+          this.saveMeta();
+          return next;
+        }
 
-    this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf8"));
+        const parsed = JSON.parse(fs.readFileSync(this.metaPath, "utf8")) as DBMeta;
 
-    if (!this.meta.schemaVersion) {
-      this.meta.schemaVersion = DEFAULT_SCHEMA_VERSION;
-      this.saveMeta();
-    }
+        if (!parsed.schemaVersion) {
+          parsed.schemaVersion = DEFAULT_SCHEMA_VERSION;
+          this.meta = parsed;
+          this.saveMeta();
+        }
+
+        return parsed;
+      }
+    );
   }
 
   private saveMeta() {
     if (this.readonlyMode) return;
-    fs.writeFileSync(this.metaPath, JSON.stringify(this.meta, null, 2));
+    try {
+      fs.writeFileSync(this.metaPath, JSON.stringify(this.meta, null, 2));
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to save database metadata",
+        details: { metaPath: this.metaPath }
+      });
+    }
   }
 
   getSchemaVersion(): string {
@@ -319,7 +365,9 @@ export class LioranDB {
       case "compactCollection":
         return this._compactCollectionInternal(args[0]);
       default:
-        throw new Error(`Unknown db meta operation: ${op}`);
+        throw new LiorandbError("UNKNOWN_OPERATION", `Unknown db meta operation: ${op}`, {
+          details: { op }
+        });
     }
   }
 
@@ -339,35 +387,51 @@ export class LioranDB {
     }
 
     const colPath = path.join(this.basePath, name);
-    fs.mkdirSync(colPath, { recursive: true });
-
-    const col = new Collection<T>(
-      colPath,
-      schema,
-      schemaVersion ?? 1,
-      {
-        readonly: this.readonlyMode,
-        batchChunkSize: this.runtimeOptions.batch?.chunkSize,
-        scheduler: this.readonlyMode
-          ? undefined
-          : {
-              write: (op: string, args: any[]) =>
-                this._scheduleWrite(name, op, args),
-              maintenance: <R>(task: () => Promise<R>) =>
-                this._scheduleMaintenance(task),
-              getChunkSize: () =>
-                Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500))
-            }
-      }
-    );
-
-    const metas = this.meta.indexes[name] ?? [];
-    for (const m of metas) {
-      col.registerIndex(new Index(colPath, m.field, m.options));
+    try {
+      fs.mkdirSync(colPath, { recursive: true });
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to create/open collection directory",
+        details: { collection: name, colPath }
+      });
     }
 
-    this.collections.set(name, col);
-    return col;
+    try {
+      const col = new Collection<T>(
+        colPath,
+        schema,
+        schemaVersion ?? 1,
+        {
+          readonly: this.readonlyMode,
+          batchChunkSize: this.runtimeOptions.batch?.chunkSize,
+          scheduler: this.readonlyMode
+            ? undefined
+            : {
+                write: (op: string, args: any[]) =>
+                  this._scheduleWrite(name, op, args),
+                maintenance: <R>(task: () => Promise<R>) =>
+                  this._scheduleMaintenance(task),
+                getChunkSize: () =>
+                  Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500))
+              }
+        }
+      );
+
+      const metas = this.meta.indexes[name] ?? [];
+      for (const m of metas) {
+        col.registerIndex(new Index(colPath, m.field, m.options));
+      }
+
+      this.collections.set(name, col);
+      return col;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to create/open collection",
+        details: { collection: name, colPath }
+      });
+    }
   }
 
   private getAllCollectionNames() {
@@ -388,70 +452,118 @@ export class LioranDB {
     field: string,
     options: IndexOptions = {}
   ) {
-    this.assertWritable();
+    try {
+      this.assertWritable();
 
-    await this._commitTransaction(++LioranDB.TX_SEQ, [
-      {
-        tx: LioranDB.TX_SEQ,
-        col: DB_META_COL,
-        op: "createIndex",
-        args: [collection, field, options]
-      }
-    ]);
+      await this._commitTransaction(++LioranDB.TX_SEQ, [
+        {
+          tx: LioranDB.TX_SEQ,
+          col: DB_META_COL,
+          op: "createIndex",
+          args: [collection, field, options]
+        }
+      ]);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to create index",
+        details: { collection, field }
+      });
+    }
   }
 
   /* ------------------------- COMPACTION ------------------------- */
 
   async compactCollection(name: string) {
-    this.assertWritable();
+    try {
+      this.assertWritable();
 
-    await this._commitTransaction(++LioranDB.TX_SEQ, [
-      {
-        tx: LioranDB.TX_SEQ,
-        col: DB_META_COL,
-        op: "compactCollection",
-        args: [name]
-      }
-    ], { wal: false });
+      await this._commitTransaction(++LioranDB.TX_SEQ, [
+        {
+          tx: LioranDB.TX_SEQ,
+          col: DB_META_COL,
+          op: "compactCollection",
+          args: [name]
+        }
+      ], { wal: false });
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to compact collection",
+        details: { collection: name }
+      });
+    }
   }
 
   async compactAll() {
-    this.assertWritable();
-    for (const name of this.collections.keys()) {
-      await this.compactCollection(name);
+    try {
+      this.assertWritable();
+      for (const name of this.collections.keys()) {
+        await this.compactCollection(name);
+      }
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to compact database",
+        details: { dbName: this.dbName }
+      });
     }
   }
 
   async explain(collection: string, query: any = {}, options?: any) {
-    const col = this.collection(collection);
-    return await (col as any).explain(query, options);
+    try {
+      const col = this.collection(collection);
+      return await (col as any).explain(query, options);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "INTERNAL",
+        message: "Explain failed",
+        details: { collection }
+      });
+    }
   }
 
   async rotateEncryptionKey(newKey: string | Buffer) {
-    this.assertWritable();
+    try {
+      this.assertWritable();
 
-    const oldKey = getEncryptionKey();
-    const nextKey = deriveEncryptionKey(newKey);
-    const collectionNames = this.getAllCollectionNames();
+      const oldKey = getEncryptionKey();
+      const nextKey = deriveEncryptionKey(newKey);
+      const collectionNames = this.getAllCollectionNames();
 
-    for (const name of collectionNames) {
-      const col = this.collection(name);
-      await col.reencryptAll(oldKey, nextKey);
+      for (const name of collectionNames) {
+        const col = this.collection(name);
+        await col.reencryptAll(oldKey, nextKey);
+      }
+
+      await this.wal.rotateEncryptionKey(oldKey, nextKey);
+      setEncryptionKey(nextKey);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "ENCRYPTION_ERROR",
+        message: "Failed to rotate encryption key",
+        details: { dbName: this.dbName }
+      });
     }
-
-    await this.wal.rotateEncryptionKey(oldKey, nextKey);
-    setEncryptionKey(nextKey);
   }
 
   /* ------------------------- TX API ------------------------- */
 
   async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
-    this.assertWritable();
-    const txId = ++LioranDB.TX_SEQ;
-    const tx = new DBTransactionContext(this, txId);
-    const result = await fn(tx);
-    await tx.commit();
-    return result;
+    try {
+      this.assertWritable();
+      const txId = ++LioranDB.TX_SEQ;
+      const tx = new DBTransactionContext(this, txId);
+      const result = await fn(tx);
+      await tx.commit();
+      return result;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Transaction failed",
+        details: { dbName: this.dbName }
+      });
+    }
   }
 
   /* ------------------------- POST COMMIT ------------------------- */
@@ -512,6 +624,7 @@ export class LioranDB {
     ops: TXOp[],
     useWAL: boolean
   ): Promise<any[]> {
+    try {
       if (useWAL) {
         for (const op of ops) {
           await this.wal.append({
@@ -540,6 +653,13 @@ export class LioranDB {
 
       await this.postCommitMaintenance();
       return results;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Commit transaction failed",
+        details: { txId, useWAL }
+      });
+    }
   }
 
   private async _createIndexInternal(
