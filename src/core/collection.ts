@@ -650,7 +650,6 @@ export class Collection<T = any> {
     limitOverride?: number
   ): Promise<QueryExecutionResult<R>> {
     const startedAt = Date.now();
-    const ids = await this._getCandidateIds(query);
     const out: R[] = [];
     const { offset, limit, projection } = this.normalizeFindOptions(options);
     const finalLimit = limitOverride === undefined ? limit : Math.min(limit, limitOverride);
@@ -679,12 +678,73 @@ export class Collection<T = any> {
           returnedDocuments: 0,
           executionTimeMs: Date.now() - startedAt,
           usedFullScan,
-          candidateDocuments: ids.size
+          candidateDocuments: 0
         }
       };
     }
 
     let scannedDocuments = 0;
+
+    const isTrivialQuery =
+      !query ||
+      (typeof query === "object" &&
+        typeof query !== "function" &&
+        !Array.isArray(query) &&
+        Object.keys(query).length === 0);
+
+    // Fast-path for `find({})`: avoid building an id list + per-doc `db.get()`.
+    // Instead, stream through LevelDB iterator (key,value) once.
+    if (isTrivialQuery) {
+      for await (const [key, enc] of this.db.iterator()) {
+        if (key.startsWith(META_KEY_PREFIX) || !enc) continue;
+        scannedDocuments++;
+
+        let raw: any;
+        try {
+          raw = decryptData(enc);
+        } catch {
+          continue;
+        }
+
+        const migrated = this.migrateIfNeeded(raw);
+
+        if (!this.readonlyMode && raw.__v !== this.schemaVersion) {
+          const persist = async () => {
+            await this.db.put(key, encryptData(migrated));
+            await this._updateIndexes(raw, migrated);
+          };
+
+          if (this.scheduler) {
+            void this.scheduler.maintenance(persist).catch(() => {});
+          } else {
+            await persist();
+          }
+        }
+
+        if (skipped < offset) {
+          skipped++;
+          continue;
+        }
+
+        out.push(this.projectDocument(migrated, projection) as unknown as R);
+        if (out.length >= finalLimit) break;
+      }
+
+      return {
+        results: out,
+        explain: {
+          indexUsed: undefined,
+          indexType: undefined,
+          scannedDocuments,
+          returnedDocuments: out.length,
+          executionTimeMs: Date.now() - startedAt,
+          usedFullScan: true,
+          candidateDocuments: scannedDocuments
+        }
+      };
+    }
+
+    const ids = await this._getCandidateIds(query);
 
     for (const id of ids) {
       scannedDocuments++;
