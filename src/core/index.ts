@@ -117,6 +117,38 @@ export class Index {
 
   /* --------------------------- API --------------------------- */
 
+  /**
+   * Returns true if this document is already indexed for this index field.
+   *
+   * - For non-unique indexes: checks presence of the exact entry key.
+   * - For unique indexes: checks that the unique mapping exists and points to the same document id.
+   *
+   * Documents with `undefined` value for the indexed field are treated as "already satisfied"
+   * (i.e., they should not produce index entries).
+   */
+  async isIndexed(doc: any): Promise<boolean> {
+    const val = doc?.[this.field];
+    if (val === undefined) return true;
+
+    if (this.unique) {
+      const key = this.makeUniqueKey(val);
+      const existing = await this.getRaw(key);
+      if (!existing) return false;
+
+      const docId = String(doc?._id);
+      if (existing === docId) return true;
+
+      throw new LiorandbError(
+        "UNIQUE_INDEX_VIOLATION",
+        `Unique index violation on "${this.field}"`,
+        { details: { field: this.field, value: val, existingId: existing, docId } }
+      );
+    }
+
+    const existing = await this.getRaw(this.makeEntryKey(val, doc?._id));
+    return !!existing;
+  }
+
   async insert(doc: any) {
     try {
       const val = doc[this.field];

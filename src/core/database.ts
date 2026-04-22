@@ -103,6 +103,8 @@ export class LioranDB {
   private writer!: DedicatedWriter;
   private runtimeOptions: LioranDBRuntimeOptions;
   private lastBackpressureLogAt = 0;
+  private idIndexEnsureScheduled = new Set<string>();
+  private pendingIdIndexEnsure = new Set<string>();
 
   private readonly readonlyMode: boolean;
   public readonly ready: Promise<void>;
@@ -383,6 +385,7 @@ export class LioranDB {
       if (schema && schemaVersion !== undefined) {
         col.setSchema(schema, schemaVersion);
       }
+      this._ensureIdIndex(name, col, path.join(this.basePath, name));
       return col as Collection<T>;
     }
 
@@ -413,7 +416,9 @@ export class LioranDB {
                 maintenance: <R>(task: () => Promise<R>) =>
                   this._scheduleMaintenance(task),
                 getChunkSize: () =>
-                  Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500))
+                  Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500)),
+                createIndex: (field: string, options: IndexOptions = {}) =>
+                  this._scheduleWrite(DB_META_COL, "createIndex", [name, field, options])
               }
         }
       );
@@ -423,6 +428,7 @@ export class LioranDB {
         col.registerIndex(new Index(colPath, m.field, m.options));
       }
 
+      this._ensureIdIndex(name, col, colPath);
       this.collections.set(name, col);
       return col;
     } catch (err) {
@@ -568,7 +574,18 @@ export class LioranDB {
 
   /* ------------------------- POST COMMIT ------------------------- */
 
-  public async postCommitMaintenance() {}
+  public async postCommitMaintenance() {
+    if (this.pendingIdIndexEnsure.size === 0) return;
+
+    const next = this.pendingIdIndexEnsure.values().next().value as string | undefined;
+    if (!next) return;
+    this.pendingIdIndexEnsure.delete(next);
+
+    // Best-effort: never fail the original write because a background index ensure failed.
+    try {
+      await this._createIndexInternal(next, "_id", { unique: true });
+    } catch {}
+  }
 
   /* ------------------------- SHUTDOWN ------------------------- */
 
@@ -669,10 +686,22 @@ export class LioranDB {
   ) {
     const col = this.collection(collection);
 
-    const existing = this.meta.indexes[collection]?.find(i => i.field === field);
-    if (existing) return true;
+    const normalizedOptions: IndexOptions = { unique: !!options.unique };
 
-    const index = new Index(col.dir, field, options);
+    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field);
+    if (existingMeta) {
+      const existingUnique = !!existingMeta.options?.unique;
+      if (existingUnique !== !!normalizedOptions.unique) {
+        throw new LiorandbError(
+          "INDEX_ALREADY_EXISTS",
+          `Index "${collection}.${field}" already exists with different options`,
+          { details: { collection, field, existingOptions: existingMeta.options, requestedOptions: normalizedOptions } }
+        );
+      }
+    }
+
+    const indexAlreadyRegistered = !!(col as any).getIndex?.(field);
+    const index = (col as any).getIndex?.(field) ?? new Index(col.dir, field, normalizedOptions);
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;
@@ -682,25 +711,39 @@ export class LioranDB {
 
     for await (const [key, enc] of col.db.iterator()) {
       if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+
+      let doc: any;
       try {
-        const doc = decryptData(enc);
-        docs.push(doc);
-        if (docs.length >= 5000) {
-          await flush();
-        }
-      } catch {}
+        doc = decryptData(enc);
+      } catch {
+        continue;
+      }
+
+      if (existingMeta || indexAlreadyRegistered) {
+        const ok = await index.isIndexed(doc);
+        if (ok) continue;
+      }
+
+      docs.push(doc);
+      if (docs.length >= 5000) {
+        await flush();
+      }
     }
 
     await flush();
 
-    col.registerIndex(index);
+    if (!indexAlreadyRegistered) {
+      col.registerIndex(index);
+    }
 
     if (!this.meta.indexes[collection]) {
       this.meta.indexes[collection] = [];
     }
 
-    this.meta.indexes[collection].push({ field, options });
-    this.saveMeta();
+    if (!existingMeta) {
+      this.meta.indexes[collection].push({ field, options: normalizedOptions });
+      this.saveMeta();
+    }
     return true;
   }
 
@@ -708,5 +751,24 @@ export class LioranDB {
     const col = this.collection(name);
     await (col as any)._compactInternal?.();
     return true;
+  }
+
+  private _ensureIdIndex(name: string, col: Collection, colPath: string) {
+    // Always ensure there is an in-memory `_id` index, so future writes keep it updated immediately.
+    // Backfill + persistence is handled opportunistically in `postCommitMaintenance()` to avoid
+    // stealing write-queue capacity (important in backpressure reject mode).
+    if (!col.getIndex("_id")) {
+      col.registerIndex(new Index(colPath, "_id", { unique: true }));
+    }
+
+    if (this.readonlyMode) return;
+    if (this.idIndexEnsureScheduled.has(name)) return;
+
+    const alreadyInMeta = !!this.meta.indexes[name]?.some(i => i.field === "_id");
+    this.idIndexEnsureScheduled.add(name);
+
+    if (!alreadyInMeta) {
+      this.pendingIdIndexEnsure.add(name);
+    }
   }
 }

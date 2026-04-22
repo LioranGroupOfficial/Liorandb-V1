@@ -15,7 +15,7 @@ import {
 } from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
-import { Index } from "./index.js";
+import { Index, type IndexOptions } from "./index.js";
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
@@ -47,6 +47,7 @@ export type CollectionScheduler = {
   write: (op: string, args: any[]) => Promise<any>;
   maintenance: <R>(task: () => Promise<R>) => Promise<R>;
   getChunkSize: () => number;
+  createIndex?: (field: string, options?: IndexOptions) => Promise<any>;
 };
 
 type QueryExecutionResult<R> = {
@@ -412,6 +413,21 @@ export class Collection<T = any> {
   /* ===================== QUERY ===================== */
 
   private async _getCandidateIds(query: any): Promise<Set<string>> {
+    if (query && typeof query === "object" && typeof query !== "function" && "_id" in query) {
+      const cond = (query as any)._id;
+
+      if (cond && typeof cond === "object" && !Array.isArray(cond)) {
+        if ("$eq" in cond) {
+          return new Set([String(cond.$eq)]);
+        }
+        if ("$in" in cond && Array.isArray(cond.$in)) {
+          return new Set(cond.$in.map((v: any) => String(v)));
+        }
+      } else {
+        return new Set([String(cond)]);
+      }
+    }
+
     const indexedFields = new Set(this.indexes.keys());
 
     return runIndexedQuery(
@@ -944,6 +960,54 @@ export class Collection<T = any> {
       return this.scheduler.write("insertOne", [doc]);
     }
     return this._enqueueWrite(() => this._exec("insertOne", [doc]));
+  }
+
+  async createIndex(defOrField: any, options: IndexOptions = {}) {
+    const field = typeof defOrField === "object" && defOrField
+      ? String(defOrField.field)
+      : String(defOrField);
+    const resolvedOptions: IndexOptions = typeof defOrField === "object" && defOrField
+      ? { unique: !!defOrField.unique }
+      : options;
+
+    if (this.scheduler?.createIndex) {
+      await this.scheduler.createIndex(field, resolvedOptions);
+      return;
+    }
+
+    // Fallback: local index creation without DB meta persistence.
+    // (Most users should create indexes via `db.createIndex(...)` or a DB-managed Collection instance.)
+    this.assertWritable();
+
+    if (this.indexes.has(field)) return;
+
+    const index = new Index(this.dir, field, resolvedOptions);
+    const docs: any[] = [];
+
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await index.bulkInsert(docs);
+      docs.length = 0;
+    };
+
+    for await (const [key, enc] of this.db.iterator()) {
+      if (key.startsWith(META_KEY_PREFIX) || !enc) continue;
+
+      let doc: any;
+      try {
+        doc = decryptData(enc);
+      } catch {
+        continue;
+      }
+
+      docs.push(doc);
+      if (docs.length >= 5000) {
+        await flush();
+      }
+    }
+
+    await flush();
+    this.registerIndex(index);
   }
 
   async insertMany(docs: any[], options?: { chunkSize?: number }) {

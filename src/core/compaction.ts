@@ -32,6 +32,12 @@ export async function compactCollectionEngine(col: Collection) {
   const tmpDir = baseDir + TMP_SUFFIX;
   const oldDir = baseDir + OLD_SUFFIX;
 
+  // On Windows, open LevelDB handles prevent directory renames.
+  // Always close index handles before attempting atomic swaps.
+  for (const idx of new Map(col["indexes"]).values()) {
+    try { await idx.close(); } catch {}
+  }
+
   await crashRecovery(baseDir);
 
   safeRemove(tmpDir);
