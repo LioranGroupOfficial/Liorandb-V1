@@ -157,15 +157,20 @@ export class Index {
       if (this.unique) {
         const key = this.makeUniqueKey(val);
         const existing = await this.getRaw(key);
+        const docId = String(doc._id);
+
+        // Idempotent: allow re-inserting the same mapping (important for retries/repairs).
+        if (existing === docId) return;
+
         if (existing) {
           throw new LiorandbError(
             "UNIQUE_INDEX_VIOLATION",
             `Unique index violation on "${this.field}"`,
-            { details: { field: this.field, value: val, existingId: existing } }
+            { details: { field: this.field, value: val, existingId: existing, docId } }
           );
         }
 
-        await this.setRaw(key, String(doc._id));
+        await this.setRaw(key, docId);
         return;
       }
 
@@ -185,7 +190,14 @@ export class Index {
       if (val === undefined) return;
 
       if (this.unique) {
-        await this.delRaw(this.makeUniqueKey(val));
+        const key = this.makeUniqueKey(val);
+        const existing = await this.getRaw(key);
+        const docId = String(doc._id);
+
+        // Safety: never delete a unique mapping we don't own (corruption/partial failures).
+        if (existing !== docId) return;
+
+        await this.delRaw(key);
         return;
       }
 
@@ -297,7 +309,9 @@ export class Index {
           if (val === undefined) continue;
 
           const key = this.makeUniqueKey(val);
-          if (seen.has(key) || await this.getRaw(key)) {
+          const docId = String(doc._id);
+
+          if (seen.has(key)) {
             throw new LiorandbError(
               "UNIQUE_INDEX_VIOLATION",
               `Unique index violation on "${this.field}"`,
@@ -305,8 +319,21 @@ export class Index {
             );
           }
 
+          const existing = await this.getRaw(key);
+          if (existing && existing !== docId) {
+            throw new LiorandbError(
+              "UNIQUE_INDEX_VIOLATION",
+              `Unique index violation on "${this.field}"`,
+              { details: { field: this.field, value: val, existingId: existing, docId } }
+            );
+          }
+
           seen.add(key);
-          ops.push({ type: "put", key, value: String(doc._id) });
+
+          // Idempotent: if already mapped to same doc, no-op.
+          if (existing === docId) continue;
+
+          ops.push({ type: "put", key, value: docId });
         }
       } else {
         for (const doc of docs) {

@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/core",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "description": "LioranDB Core Module – Lightweight, local-first, peer-to-peer database management for Node.js.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs",
+    "test": "node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs",
     "test:compact": "node __tests__/compaction.test.mjs",
     "prepublishOnly": "npm run build"
   },

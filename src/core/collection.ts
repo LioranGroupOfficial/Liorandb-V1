@@ -248,9 +248,44 @@ export class Collection<T = any> {
 
   private async _updateIndexes(oldDoc: any, newDoc: any) {
     if (this.readonlyMode) return;
-    for (const index of this.indexes.values()) {
-      await index.update(oldDoc, newDoc);
+    const indexes = Array.from(this.indexes.values());
+    await Promise.all(indexes.map(index => index.update(oldDoc, newDoc)));
+  }
+
+  private async _rollbackIndexesForDocs(docs: any[]) {
+    if (this.readonlyMode) return;
+    const indexes = Array.from(this.indexes.values());
+
+    await Promise.all(indexes.map(async (index) => {
+      for (const doc of docs) {
+        try {
+          await index.delete(doc);
+        } catch {}
+      }
+    }));
+  }
+
+  private async _insertIndexesForDocs(docs: any[]) {
+    if (this.readonlyMode) return;
+
+    const indexes = Array.from(this.indexes.values());
+    if (indexes.length === 0 || docs.length === 0) return;
+
+    // Run per-index in parallel; each index uses its own LevelDB instance.
+    await Promise.all(indexes.map(index => {
+      return docs.length === 1
+        ? index.insert(docs[0])
+        : index.bulkInsert(docs);
+    }));
+  }
+
+  private _runRead<R>(task: () => Promise<R>): Promise<R> {
+    if (this.scheduler) {
+      return this.scheduler.maintenance(task);
     }
+
+    // Best-effort read-after-write consistency for local (non-scheduler) mode.
+    return this.writeQueue.then(task);
   }
 
   /* ===================== COMPACTION ===================== */
@@ -328,20 +363,36 @@ export class Collection<T = any> {
       __v: this.schemaVersion
     });
 
-    this.docCount++;
-    await this.db.batch([
-      {
-        type: "put",
-        key: String(_id),
-        value: encryptData(final)
-      },
-      {
-        type: "put",
-        key: COUNT_META_KEY,
-        value: String(this.docCount)
-      }
-    ]);
-    await this._updateIndexes(null, final);
+    // Index first, then primary doc write.
+    // This avoids "inserted-but-not-indexed" states on index-based queries.
+    try {
+      await this._insertIndexesForDocs([final]);
+    } catch (err) {
+      await this._rollbackIndexesForDocs([final]);
+      throw err;
+    }
+
+    const nextCount = this.docCount + 1;
+
+    try {
+      await this.db.batch([
+        {
+          type: "put",
+          key: String(_id),
+          value: encryptData(final)
+        },
+        {
+          type: "put",
+          key: COUNT_META_KEY,
+          value: String(nextCount)
+        }
+      ]);
+
+      this.docCount = nextCount;
+    } catch (err) {
+      await this._rollbackIndexesForDocs([final]);
+      throw err;
+    }
 
     return final;
   }
@@ -394,17 +445,27 @@ export class Collection<T = any> {
       out.push(final);
     }
 
-    this.docCount += out.length;
+    // Index first, then primary doc write (see `_insertOne`).
+    try {
+      await this._insertIndexesForDocs(out);
+    } catch (err) {
+      await this._rollbackIndexesForDocs(out);
+      throw err;
+    }
+
+    const nextCount = this.docCount + out.length;
     batch.push({
       type: "put",
       key: COUNT_META_KEY,
-      value: String(this.docCount)
+      value: String(nextCount)
     });
 
-    await this.db.batch(batch);
-
-    for (const index of this.indexes.values()) {
-      await index.bulkInsert(out);
+    try {
+      await this.db.batch(batch);
+      this.docCount = nextCount;
+    } catch (err) {
+      await this._rollbackIndexesForDocs(out);
+      throw err;
     }
 
     return out;
@@ -897,7 +958,14 @@ export class Collection<T = any> {
         });
 
         await this.db.put(id, encryptData(updated));
-        await this._updateIndexes(existing, updated);
+        try {
+          await this._updateIndexes(existing, updated);
+        } catch (err) {
+          // Best-effort rollback: keep indexes + primary storage consistent.
+          try { await this.db.put(id, encryptData(existing)); } catch {}
+          try { await this._updateIndexes(updated, existing); } catch {}
+          throw err;
+        }
 
         return updated;
       }
@@ -928,7 +996,13 @@ export class Collection<T = any> {
         });
 
         await this.db.put(id, encryptData(updated));
-        await this._updateIndexes(existing, updated);
+        try {
+          await this._updateIndexes(existing, updated);
+        } catch (err) {
+          try { await this.db.put(id, encryptData(existing)); } catch {}
+          try { await this._updateIndexes(updated, existing); } catch {}
+          throw err;
+        }
 
         out.push(updated);
       }
@@ -1142,19 +1216,24 @@ export class Collection<T = any> {
   }
 
   find(query: any = {}, options?: FindOptions) {
-    return this._exec("find", [query, options]);
+    const finalOptions =
+      options && typeof options === "object" && options.limit !== undefined
+        ? options
+        : { ...(options ?? {}), limit: 100 };
+
+    return this._runRead(() => this._exec("find", [query, finalOptions]));
   }
 
   findOne(query: any = {}, options?: FindOptions) {
-    return this._exec("findOne", [query, options]);
+    return this._runRead(() => this._exec("findOne", [query, options]));
   }
 
   aggregate(pipeline: any[]) {
-    return this._exec("aggregate", [pipeline]);
+    return this._runRead(() => this._exec("aggregate", [pipeline]));
   }
 
   explain(query: any = {}, options?: FindOptions) {
-    return this._exec("explain", [query, options]);
+    return this._runRead(() => this._exec("explain", [query, options]));
   }
 
   updateOne(filter: any, update: any, options?: UpdateOptions) {
@@ -1186,10 +1265,10 @@ export class Collection<T = any> {
   }
 
   countDocuments(filter: any = {}) {
-    return this._exec("countDocuments", [filter]);
+    return this._runRead(() => this._exec("countDocuments", [filter]));
   }
 
   count() {
-    return this._count();
+    return this._runRead(() => this._count());
   }
 }
