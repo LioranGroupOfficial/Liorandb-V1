@@ -4,7 +4,13 @@
   "bin": {
     "liorandb-studio": "./bin/index.js"
   },
-  "files": ["bin", "template"],
+  "files": [
+    "bin",
+    "template"
+  ],
   "type": "module",
-  "private": false
+  "private": false,
+  "dependencies": {
+    "@liorandb/driver": "^1.1.4"
+  }
 }

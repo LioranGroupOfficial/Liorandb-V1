@@ -3,7 +3,7 @@ export interface ConnectionConfig {
   username?: string;
   host: string;
   port: number;
-  protocol: 'http' | 'https' | 'lioran';
+  protocol: 'http' | 'https' | 'lioran' | 'liorandb';
 }
 
 export interface LioranUser {

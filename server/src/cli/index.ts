@@ -25,9 +25,12 @@ Connection URI formats:
   http://<host>:<port>
   https://<host>:<port>
   lioran://<username>:<password>@<host>:<port>
+  liorandb://<dbUsername>:<dbPassword>@<host>:<port>/<databaseName>
+  liorandbs://<dbUsername>:<dbPassword>@<host>:<port>/<databaseName>
 
 Examples:
   ldb-cli lioran://admin:password123@localhost:4000
+  ldb-cli liorandb://analytics_user:analytics_pass_123@localhost:4000/user_123-analytics
   ldb-cli http://localhost:4000 'login("admin","password123")'
 `);
 }
@@ -145,7 +148,9 @@ Connection:
   login("username","password")
   register("username","password")
   setToken("<jwt>")
+  setConnectionString("liorandb://<dbUsername>:<dbPassword>@<host>:<port>/<databaseName>")
   getToken()
+  getConnectionString()
   getUser()
   logout()
 
@@ -154,7 +159,6 @@ Database:   ( current: ${currentDB} )
   use <dbname>
   db.create("<name>")
   db.delete("<name>")
-  db.rename("<old>", "<new>")
   db.stats("<name>")
   show collections
 
@@ -235,8 +239,26 @@ async function runAuthCommand(cmd: string) {
     return true;
   }
 
+  if (name === "setConnectionString") {
+    const args = parseNameTuple(rawArgs);
+    if (args.length < 1) {
+      console.error("setConnectionString expects a connection string");
+      return true;
+    }
+
+    client.setConnectionString(args[0]);
+    console.log("Connection string set");
+    updatePrompt();
+    return true;
+  }
+
   if (name === "getToken") {
     logValue(client.getToken());
+    return true;
+  }
+
+  if (name === "getConnectionString") {
+    logValue(client.getConnectionString());
     return true;
   }
 
@@ -419,23 +441,9 @@ async function handleCommand(input: string) {
   }
 
   if (cmd.startsWith("db.rename(")) {
-    const parsedCall = parseCall(cmd);
-    const args =
-      parsedCall?.name === "db.rename" ? parseNameTuple(parsedCall.rawArgs) : [];
-
-    if (args.length < 2) {
-      return console.error("Invalid syntax");
-    }
-
-    await client.renameDatabase(args[0], args[1]);
-
-    if (currentDB === args[0]) {
-      currentDB = args[1];
-      currentCollection = null;
-      updatePrompt();
-    }
-
-    return console.log("Database renamed");
+    return console.error(
+      "Database rename is not supported by the current driver/server API."
+    );
   }
 
   if (cmd.startsWith("db.stats(")) {
@@ -560,8 +568,24 @@ try {
 }
 
 async function initializeClient() {
-  if (connectionUri.startsWith("lioran://")) {
+  if (
+    connectionUri.startsWith("lioran://") ||
+    connectionUri.startsWith("liorandb://") ||
+    connectionUri.startsWith("liorandbs://")
+  ) {
     await client.connect();
+  }
+
+  if (connectionUri.startsWith("liorandb://") || connectionUri.startsWith("liorandbs://")) {
+    try {
+      const parsed = new URL(connectionUri);
+      const dbName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+      if (dbName) {
+        currentDB = dbName;
+      }
+    } catch {
+      // ignore; connect() will surface invalid connection strings
+    }
   }
 }
 

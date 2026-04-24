@@ -31,7 +31,7 @@ export class LioranDBService {
       await this.client.login(options.username, options.password);
     } else if (options.mode === 'token') {
       this.client.setToken(options.token);
-    } else if (parsed.protocol === 'lioran') {
+    } else if (parsed.protocol === 'lioran' || parsed.protocol === 'liorandb') {
       await this.client.connect();
     } else {
       throw new Error(

@@ -21,6 +21,30 @@ export function parseConnectionUri(uri: string): ConnectionConfig {
     };
   }
 
+  if (value.startsWith('liorandb://') || value.startsWith('liorandbs://')) {
+    try {
+      const parsed = new URL(value);
+      const port = Number(parsed.port || 4000);
+      const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+
+      if (!parsed.hostname || !parsed.username || !parsed.password || !databaseName) {
+        throw new Error();
+      }
+
+      return {
+        uri: parsed.toString().replace(/\/$/, ''),
+        username: decodeURIComponent(parsed.username),
+        host: parsed.hostname,
+        port,
+        protocol: 'liorandb',
+      };
+    } catch {
+      throw new Error(
+        'Invalid connection string. Expected: liorandb://dbUsername:dbPassword@host:port/databaseName'
+      );
+    }
+  }
+
   try {
     const parsed = new URL(value);
 
@@ -36,7 +60,7 @@ export function parseConnectionUri(uri: string): ConnectionConfig {
     };
   } catch {
     throw new Error(
-      'Invalid host URI. Use http://host:port, https://host:port, or lioran://user:pass@host:port'
+      'Invalid host URI. Use http://host:port, https://host:port, lioran://user:pass@host:port, or liorandb://dbUser:dbPass@host:port/databaseName'
     );
   }
 }
