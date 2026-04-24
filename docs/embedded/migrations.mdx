@@ -29,6 +29,19 @@ const db = await manager.db("app");
 const users = db.collection("users");
 
 // v2 schema
+const UserV1 = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  tier: z.enum(["free", "pro"]),
+  __v: z.number().optional(),
+});
+
+users.setSchema(UserV1, 1);
+
+// simulate an old stored doc (v1)
+await users.insertOne({ email: "x@y.com", tier: "pro", __v: 1 });
+
+// v2 schema
 const UserV2 = z.object({
   _id: z.string().optional(),
   email: z.string().email(),
@@ -42,9 +55,6 @@ users.addMigration({
   to: 2,
   migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }),
 });
-
-// simulate an old stored doc (v1)
-await users.insertOne({ email: "x@y.com", tier: "pro", __v: 1 });
 
 const migrated = await users.findOne({ email: "x@y.com" });
 console.log(migrated);
