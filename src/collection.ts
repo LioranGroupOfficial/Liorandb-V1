@@ -1,10 +1,13 @@
 import {
   DocumentData,
   Filter,
+  LioranAggregateResponse,
   LioranCollectionStats,
   LioranCountResponse,
   LioranDeleteManyResponse,
+  LioranExplainResponse,
   LioranFindResponse,
+  LioranFindOptions,
   LioranInsertManyResponse,
   LioranInsertOneResponse,
   LioranUpdateManyResponse,
@@ -37,25 +40,31 @@ export class Collection<T extends DocumentData = DocumentData> {
     )).docs;
   }
 
-  async find(filter: Filter = {}): Promise<Array<T & { _id?: string }>> {
+  async find(
+    filter: Filter = {},
+    options?: LioranFindOptions
+  ): Promise<Array<T & { _id?: string }>> {
     return (await this.http.post<LioranFindResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/find`,
-      { query: filter }
+      { query: filter, options }
     )).results;
   }
 
-  async findOne(filter: Filter = {}): Promise<(T & { _id?: string }) | null> {
-    const res = await this.find(filter);
+  async findOne(
+    filter: Filter = {},
+    options?: LioranFindOptions
+  ): Promise<(T & { _id?: string }) | null> {
+    const res = await this.find(filter, { ...options, limit: 1 });
     return res[0] || null;
   }
 
   async updateMany(
     filter: Filter,
     update: UpdateQuery
-  ): Promise<LioranUpdateManyResponse> {
-    return this.http.patch<LioranUpdateManyResponse>(
+  ): Promise<LioranUpdateManyResponse<T>> {
+    return this.http.patch<LioranUpdateManyResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/updateMany`,
@@ -79,6 +88,27 @@ export class Collection<T extends DocumentData = DocumentData> {
       )}/count`,
       { filter }
     )).count;
+  }
+
+  async aggregate<R = unknown>(pipeline: unknown[] = []): Promise<R[]> {
+    return (await this.http.post<LioranAggregateResponse<R>>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/aggregate`,
+      { pipeline }
+    )).results;
+  }
+
+  async explain(
+    query: Filter = {},
+    options?: LioranFindOptions
+  ): Promise<LioranExplainResponse["explain"]> {
+    return (await this.http.post<LioranExplainResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/explain`,
+      { query, options }
+    )).explain;
   }
 
   async stats(): Promise<LioranCollectionStats> {

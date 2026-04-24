@@ -18,7 +18,7 @@ export interface LioranManagedUser extends LioranUser {
 
 export interface LioranAuthResponse {
   user: LioranUser;
-  token: string;
+  token: string | null;
   secretBacked?: boolean;
 }
 
@@ -33,6 +33,12 @@ export interface LioranUsersResponse {
 export interface LioranIssueUserTokenResponse {
   user: LioranManagedUser;
   token: string;
+}
+
+export interface LioranCorsUpdateResponse {
+  ok: true;
+  userId: string;
+  corsOrigins: string[];
 }
 
 export interface LioranHealthResponse {
@@ -138,12 +144,33 @@ export interface LioranInsertManyResponse<T extends DocumentData> {
   docs: Array<T & { _id: string }>;
 }
 
+export interface LioranFindOptions {
+  limit?: number;
+  offset?: number;
+  projection?: string[];
+  sort?: Record<string, 1 | -1>;
+}
+
 export interface LioranFindResponse<T extends DocumentData> {
   results: Array<T & { _id?: string }>;
 }
 
-export interface LioranUpdateManyResponse {
+export interface LioranAggregateResponse<R = unknown> {
+  results: R[];
+}
+
+export interface LioranExplainPlan {
+  indexUsed: string | null;
+  [key: string]: unknown;
+}
+
+export interface LioranExplainResponse {
+  explain: LioranExplainPlan;
+}
+
+export interface LioranUpdateManyResponse<T extends DocumentData = DocumentData> {
   updated: number;
+  docs: Array<T & { _id?: string }>;
 }
 
 export interface LioranDeleteManyResponse {
@@ -166,3 +193,52 @@ export type UpdateQuery = {
   $inc?: Record<string, number>;
   $unset?: Record<string, boolean>;
 };
+
+export interface LioranDocsIndexEntry {
+  id: string;
+  title: string;
+}
+
+export interface LioranDocsListResponse {
+  ok: true;
+  docs: LioranDocsIndexEntry[];
+}
+
+export interface LioranDocResponse {
+  ok: true;
+  id: string;
+  title: string;
+  content: string;
+}
+
+export interface LioranSnapshotFile {
+  name: string;
+  path: string;
+  mtimeMs: number;
+  size: number;
+}
+
+export interface LioranMaintenanceStatusResponse {
+  ok: true;
+  snapshots: {
+    enabled: boolean;
+    intervalMs: number;
+    dir: string;
+    retentionHours: number;
+    running: boolean;
+  };
+}
+
+export interface LioranMaintenanceSnapshotsResponse {
+  ok: true;
+  snapshots: LioranSnapshotFile[];
+}
+
+export interface LioranMaintenanceCreateSnapshotResponse {
+  ok: true;
+  snapshot: {
+    ok: true;
+    path: string;
+    reason: string;
+  };
+}

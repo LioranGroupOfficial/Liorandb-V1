@@ -184,6 +184,8 @@ await client.register("editor", "password123");
 
 Requires authentication and returns the same shape as `login()`.
 
+Note: if you call `register(input)` without a `password`, the server returns `token: null`.
+
 ### `register(input)`
 
 Create a user with more control (user id, role, external id).
@@ -214,6 +216,22 @@ Calls `GET /auth/users`.
 
 ```ts
 const users = await client.listUsers();
+```
+
+### `updateMyCors(origins)`
+
+Calls `PUT /auth/me/cors`.
+
+```ts
+await client.updateMyCors(["https://app.example.com"]);
+```
+
+### `updateUserCors(userId, origins)`
+
+Calls `PUT /auth/users/:userId/cors` (admin-only).
+
+```ts
+await client.updateUserCors("user_123", ["https://app.example.com"]);
 ```
 
 ### `issueUserToken(userId)`
@@ -259,6 +277,25 @@ Response:
 }
 ```
 
+### `listDocs()` / `getDoc(id)`
+
+Calls `GET /docs` and `GET /docs/:id`.
+
+```ts
+const { docs } = await client.listDocs();
+const apiDoc = await client.getDoc("api");
+```
+
+### `maintenanceStatus()` / `listSnapshots()` / `createSnapshotNow()`
+
+Calls admin-only maintenance endpoints under `/maintenance/*`.
+
+```ts
+await client.maintenanceStatus();
+await client.listSnapshots();
+await client.createSnapshotNow();
+```
+
 ### `setToken(token)`
 
 ```ts
@@ -285,7 +322,7 @@ const cs = client.getConnectionString();
 
 ### `getUser()`
 
-Returns the last authenticated user from `login()`, `register()`, or `connect()`.
+Returns the last authenticated user from `login()`, `superAdminLogin()`, `me()`, or `connect()`.
 
 ```ts
 const user = client.getUser();
@@ -510,7 +547,7 @@ const inserted = await users.insertMany([
 ]);
 ```
 
-### `find(filter)`
+### `find(filter, options?)`
 
 Calls `POST /db/:db/collections/:col/find`.
 
@@ -518,7 +555,14 @@ Calls `POST /db/:db/collections/:col/find`.
 const adults = await users.find({ age: { $gt: 18 } });
 ```
 
-### `findOne(filter)`
+`options` supports (server passes through to the underlying query engine):
+
+- `limit?: number`
+- `offset?: number`
+- `projection?: string[]`
+- `sort?: Record<string, 1 | -1>`
+
+### `findOne(filter, options?)`
 
 ```ts
 const john = await users.findOne({ name: "John" });
@@ -540,7 +584,26 @@ const res = await users.updateMany(
 Response:
 
 ```ts
-{ updated: 3 }
+{ updated: 3, docs: [] }
+```
+
+### `aggregate(pipeline)`
+
+Calls `POST /db/:db/collections/:col/aggregate`.
+
+```ts
+const res = await users.aggregate([
+  { $match: { age: { $gte: 18 } } },
+  { $limit: 10 }
+]);
+```
+
+### `explain(query, options?)`
+
+Calls `POST /db/:db/collections/:col/explain`.
+
+```ts
+const plan = await users.explain({ age: { $gte: 18 } }, { limit: 50 });
 ```
 
 ### `deleteMany(filter)`

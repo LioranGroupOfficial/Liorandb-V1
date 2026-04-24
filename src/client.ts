@@ -1,15 +1,21 @@
 import { parseUri } from "./utils/parseUri";
 import {
   LioranAuthResponse,
+  LioranCorsUpdateResponse,
   LioranDatabaseCountResponse,
   LioranDatabaseListResponse,
   LioranDatabaseMutationResponse,
   LioranDatabaseStats,
   LioranDatabaseUserListResponse,
   LioranDeleteResponse,
+  LioranDocResponse,
+  LioranDocsListResponse,
   LioranHealthResponse,
   LioranHostInfoResponse,
   LioranIssueUserTokenResponse,
+  LioranMaintenanceCreateSnapshotResponse,
+  LioranMaintenanceSnapshotsResponse,
+  LioranMaintenanceStatusResponse,
   LioranManagedDatabase,
   LioranManagedUser,
   LioranMeResponse,
@@ -138,6 +144,22 @@ export class LioranClient {
     return res.users;
   }
 
+  async updateMyCors(origins: string[]): Promise<LioranCorsUpdateResponse> {
+    this.assertAuthenticated();
+    return this.http.put<LioranCorsUpdateResponse>("/auth/me/cors", { origins });
+  }
+
+  async updateUserCors(
+    userId: string,
+    origins: string[]
+  ): Promise<LioranCorsUpdateResponse> {
+    this.assertAuthenticated();
+    return this.http.put<LioranCorsUpdateResponse>(
+      `/auth/users/${encodeURIComponent(userId)}/cors`,
+      { origins }
+    );
+  }
+
   async issueUserToken(userId: string): Promise<LioranIssueUserTokenResponse> {
     this.assertAuthenticated();
     return this.http.post<LioranIssueUserTokenResponse>(
@@ -151,6 +173,33 @@ export class LioranClient {
 
   async info(): Promise<LioranHostInfoResponse> {
     return this.http.get<LioranHostInfoResponse>("/");
+  }
+
+  async listDocs(): Promise<LioranDocsListResponse> {
+    return this.http.get<LioranDocsListResponse>("/docs");
+  }
+
+  async getDoc(id: string): Promise<LioranDocResponse> {
+    return this.http.get<LioranDocResponse>(`/docs/${encodeURIComponent(id)}`);
+  }
+
+  async maintenanceStatus(): Promise<LioranMaintenanceStatusResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranMaintenanceStatusResponse>("/maintenance/status");
+  }
+
+  async listSnapshots(): Promise<LioranMaintenanceSnapshotsResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranMaintenanceSnapshotsResponse>(
+      "/maintenance/snapshots"
+    );
+  }
+
+  async createSnapshotNow(): Promise<LioranMaintenanceCreateSnapshotResponse> {
+    this.assertAuthenticated();
+    return this.http.post<LioranMaintenanceCreateSnapshotResponse>(
+      "/maintenance/snapshots"
+    );
   }
 
   setToken(token: string): void {
@@ -243,6 +292,10 @@ export class LioranClient {
   }
 
   private setAuthState(auth: LioranAuthResponse): void {
+    if (!auth.token) {
+      throw new Error("Authentication failed: server returned no token.");
+    }
+
     this.token = auth.token;
     this.connectionString = null;
     this.user = auth.user;

@@ -85,9 +85,14 @@ export class HttpClient {
       const message =
         typeof data === "object" &&
         data !== null &&
-        "error" in data &&
-        typeof (data as { error?: unknown }).error === "string"
-          ? (data as { error: string }).error
+        (("error" in data &&
+          typeof (data as { error?: unknown }).error === "string") ||
+          ("reason" in data &&
+            typeof (data as { reason?: unknown }).reason === "string"))
+          ? ("error" in data &&
+            typeof (data as { error?: unknown }).error === "string"
+              ? (data as { error: string }).error
+              : (data as { reason: string }).reason)
           : `${method} ${path} failed with status ${response.status}`;
 
       throw new HttpError(message, response.status, data);
