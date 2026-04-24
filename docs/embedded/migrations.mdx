@@ -28,7 +28,7 @@ const manager = new LioranManager({ rootPath: "./.liorandb" });
 const db = await manager.db("app");
 const users = db.collection("users");
 
-// v2 schema
+// v1 schema
 const UserV1 = z.object({
   _id: z.string().optional(),
   email: z.string().email(),
