@@ -776,7 +776,120 @@ Response:
 { "explain": { "indexUsed": null } }
 ```
 
-## Docs
+
+## Advanced Core Features
+
+### `POST /db/:db/collections/:col/findOne`
+
+Body:
+
+```json
+{
+  "query": { "_id": "<id>" },
+  "options": { "projection": ["name"] }
+}
+```
+
+Response:
+
+```json
+{ "doc": { "_id": "<id>", "name": "John" } }
+```
+
+### `PATCH /db/:db/collections/:col/updateOne`
+
+Body:
+
+```json
+{
+  "filter": { "_id": "<id>" },
+  "update": { "$set": { "name": "Jane" } },
+  "options": { "upsert": false }
+}
+```
+
+Response:
+
+```json
+{ "ok": true, "doc": null }
+```
+
+### `POST /db/:db/collections/:col/deleteOne`
+
+Body:
+
+```json
+{ "filter": { "_id": "<id>" } }
+```
+
+Response:
+
+```json
+{ "ok": true, "doc": null }
+```
+
+### `GET /db/:db/collections/:col/indexes`
+
+List indexes for a collection.
+
+### `POST /db/:db/collections/:col/indexes`
+
+Create an index.
+
+Body:
+
+```json
+{ "field": "email", "unique": true }
+```
+
+### `DELETE /db/:db/collections/:col/indexes/:field`
+
+Drop an index by field name.
+
+### `POST /db/:db/collections/:col/indexes/:field/rebuild`
+
+Rebuild a single index.
+
+### `POST /db/:db/collections/:col/indexes/rebuild`
+
+Rebuild all indexes registered in DB metadata for this collection.
+
+### `POST /db/:db/collections/:col/compact`
+
+Compact a collection (rewrites storage and rebuilds indexes).
+
+### `POST /databases/:db/compact`
+
+Compact all collections in a database.
+
+### `POST /databases/:db/explain`
+
+Explain a query at the database level.
+
+Body:
+
+```json
+{ "collection": "users", "query": { "age": { "$gte": 18 } } }
+```
+
+### `POST /databases/:db/transaction`
+
+Apply multiple operations as a single transaction.
+
+Body:
+
+```json
+{
+  "ops": [
+    { "col": "users", "op": "insertOne", "args": [ { "name": "A" } ] },
+    { "col": "users", "op": "updateMany", "args": [ { "active": true }, { "$set": { "seen": true } } ] }
+  ]
+}
+```
+
+### `POST /maintenance/compact/all`
+
+Admin-only: compact all databases on disk.\n## Docs
 
 ### `GET /docs`
 

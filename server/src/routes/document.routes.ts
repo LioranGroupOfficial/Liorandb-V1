@@ -1,9 +1,12 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import {
   insertDocument,
   insertMany,
   findDocuments,
+  findOneDocument,
+  updateOne,
   updateMany,
+  deleteOne,
   deleteMany,
   countDocuments,
   aggregateDocuments,
@@ -20,9 +23,12 @@ router.use(authMiddleware, userCorsMiddleware);
 router.post("/", insertDocument);
 router.post("/bulk", insertMany);
 router.post("/find", findDocuments);
+router.post("/findOne", findOneDocument);
 router.post("/aggregate", aggregateDocuments);
 router.post("/explain", explainQuery);
+router.patch("/updateOne", updateOne);
 router.patch("/updateMany", updateMany);
+router.post("/deleteOne", deleteOne);
 router.post("/deleteMany", deleteMany);
 router.post("/count", countDocuments);
 

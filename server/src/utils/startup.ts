@@ -1,11 +1,15 @@
-import bcrypt from "bcryptjs";
-import { getAuthCollection } from "../config/database";
+﻿import bcrypt from "bcryptjs";
+import { getAuthCollection, manager } from "../config/database";
 import { AuthUser } from "../types/auth-user";
 
 const DEFAULT_ADMIN_USERNAME = "admin";
 const DEFAULT_ADMIN_PASSWORD = "admin";
 
 export async function ensureAdminUser() {
+  if (manager.isReadOnly()) {
+    return { created: false, username: DEFAULT_ADMIN_USERNAME, skipped: true };
+  }
+
   const users = await getAuthCollection();
   const adminUser = await users.findOne({ username: DEFAULT_ADMIN_USERNAME });
 

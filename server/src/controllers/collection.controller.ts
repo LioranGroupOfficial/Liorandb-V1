@@ -1,12 +1,13 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { manager } from "../config/database";
 import {
   createCollectionByName,
   deleteCollectionByName,
   listCollectionNames,
-  renameCollectionByName
+  renameCollectionByName,
 } from "../utils/coreStorage";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
+import { sendApiError } from "../utils/apiError";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
@@ -14,7 +15,7 @@ export const listCollections = async (req: Request, res: Response) => {
     const collections = await listCollectionNames(req.params.db);
     res.json({ collections });
   } catch (error) {
-    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 403);
   }
 };
 
@@ -24,7 +25,7 @@ export const createCollection = async (req: Request, res: Response) => {
     await createCollectionByName(req.params.db, req.body.name);
     res.json({ ok: true, collection: req.body.name });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 400);
   }
 };
 
@@ -34,7 +35,7 @@ export const deleteCollection = async (req: Request, res: Response) => {
     const ok = await deleteCollectionByName(req.params.db, req.params.col);
     res.json({ ok });
   } catch (error) {
-    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 403);
   }
 };
 
@@ -48,7 +49,7 @@ export const renameCollection = async (req: Request, res: Response) => {
 
     res.json({ ok: true, old: col, new: newName });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 400);
   }
 };
 
@@ -66,6 +67,20 @@ export const collectionStats = async (req: Request, res: Response) => {
       documents: count,
     });
   } catch (error) {
-    res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 403);
+  }
+};
+
+export const compactCollection = async (req: Request, res: Response) => {
+  try {
+    const { db, col } = req.params;
+    await requireDatabaseAccess(req, db);
+
+    const database = await manager.db(db);
+    await database.compactCollection(col);
+
+    return res.json({ ok: true, db, collection: col });
+  } catch (error) {
+    return sendApiError(res, error, 400);
   }
 };

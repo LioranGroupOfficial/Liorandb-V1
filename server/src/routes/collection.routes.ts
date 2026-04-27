@@ -1,10 +1,11 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import {
   listCollections,
   createCollection,
   deleteCollection,
   renameCollection,
   collectionStats,
+  compactCollection,
 } from "../controllers/collection.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
@@ -19,5 +20,6 @@ router.post("/", createCollection);
 router.delete("/:col", deleteCollection);
 router.patch("/:col/rename", renameCollection);
 router.get("/:col/stats", collectionStats);
+router.post("/:col/compact", compactCollection);
 
 export default router;

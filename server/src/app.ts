@@ -1,9 +1,10 @@
-import express from "express";
+﻿import express from "express";
 import path from "path";
 import authRoutes from "./routes/auth.routes";
 import databaseRoutes from "./routes/database.routes";
 import collectionRoutes from "./routes/collection.routes";
 import documentRoutes from "./routes/document.routes";
+import indexRoutes from "./routes/index.routes";
 import maintenanceRoutes from "./routes/maintenance.routes";
 import docsRoutes from "./routes/docs.routes";
 import { requestLogger } from "./middleware/requestLogger.middleware";
@@ -27,26 +28,33 @@ app.use(express.json({ limit: bodyLimit }));
 app.use(buildCorsMiddleware());
 app.use(securityHeaders);
 
-app.use(createConcurrencyLimiter({
-  maxGlobal: Number(process.env.LIORANDB_MAX_INFLIGHT_GLOBAL || 500),
-  maxPerIp: Number(process.env.LIORANDB_MAX_INFLIGHT_PER_IP || 50),
-}));
+app.use(
+  createConcurrencyLimiter({
+    maxGlobal: Number(process.env.LIORANDB_MAX_INFLIGHT_GLOBAL || 500),
+    maxPerIp: Number(process.env.LIORANDB_MAX_INFLIGHT_PER_IP || 50),
+  })
+);
 
-app.use(createRateLimiter({
-  windowMs: Number(process.env.LIORANDB_RATE_LIMIT_WINDOW_MS || 60_000),
-  max: Number(process.env.LIORANDB_RATE_LIMIT_MAX || 240),
-  softMax: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_MAX || 180),
-  softDelayMs: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_DELAY_MS || 150),
-}));
+app.use(
+  createRateLimiter({
+    windowMs: Number(process.env.LIORANDB_RATE_LIMIT_WINDOW_MS || 60_000),
+    max: Number(process.env.LIORANDB_RATE_LIMIT_MAX || 240),
+    softMax: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_MAX || 180),
+    softDelayMs: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_DELAY_MS || 150),
+  })
+);
 
 // Stricter brute-force protection for auth endpoints
-app.use("/auth", createRateLimiter({
-  windowMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_WINDOW_MS || 60_000),
-  max: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_MAX || 20),
-  softMax: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_SOFT_MAX || 10),
-  softDelayMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_SOFT_DELAY_MS || 250),
-  blockMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_BLOCK_MS || 5 * 60_000),
-}));
+app.use(
+  "/auth",
+  createRateLimiter({
+    windowMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_WINDOW_MS || 60_000),
+    max: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_MAX || 20),
+    softMax: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_SOFT_MAX || 10),
+    softDelayMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_SOFT_DELAY_MS || 250),
+    blockMs: Number(process.env.LIORANDB_AUTH_RATE_LIMIT_BLOCK_MS || 5 * 60_000),
+  })
+);
 
 app.use(requestLogger);
 app.use(maintenanceMiddleware);
@@ -56,15 +64,13 @@ const publicDir = path.join(__dirname, "..", "public");
 app.use("/dashboard", express.static(path.join(publicDir, "dashboard")));
 
 // health check
-app.get("/health", (req, res) =>
-  res.json({ ok: true, time: new Date().toISOString() })
-);
+app.get("/health", (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-app.get("/", (_, res) => {
+app.get("/", (_req, res) => {
   res.json({
     name: "LioranDB",
     role: "Database Host",
-    status: "online"
+    status: "online",
   });
 });
 
@@ -76,6 +82,7 @@ app.use("/docs", docsRoutes);
 app.use("/maintenance", maintenanceRoutes);
 app.use("/databases", databaseRoutes);
 app.use("/db/:db/collections", collectionRoutes);
+app.use("/db/:db/collections/:col/indexes", indexRoutes);
 app.use("/db/:db/collections/:col", documentRoutes);
 
 export default app;

@@ -1,8 +1,6 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { manager } from "../config/database";
-import {
-  listCollectionNames,
-} from "../utils/coreStorage";
+import { listCollectionNames } from "../utils/coreStorage";
 import {
   buildDatabaseResponse,
   createManagedDatabase,
@@ -13,9 +11,10 @@ import {
   listManagedDatabases,
   requireDatabaseAccess,
   resolveDatabaseListForAuth,
-  setDatabaseCredentials
+  setDatabaseCredentials,
 } from "../utils/databaseAccess";
 import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth";
+import { sendApiError } from "../utils/apiError";
 
 export const listDatabases = async (req: Request, res: Response) => {
   try {
@@ -26,10 +25,6 @@ export const listDatabases = async (req: Request, res: Response) => {
 
     const databases = await resolveDatabaseListForAuth(auth);
     const host = getRequestHost(req);
-
-    console.log({
-      databases: databases.map((record) => buildDatabaseResponse(record, host)),
-    })
 
     res.json({
       databases: databases.map((record) => buildDatabaseResponse(record, host)),
@@ -54,7 +49,9 @@ export const createDatabase = async (req: Request, res: Response) => {
 
     if (ownerUserId && ownerUserId !== auth.userId) {
       if (!isAdminRole(auth.role)) {
-        return res.status(403).json({ error: "cannot create database for another user" });
+        return res
+          .status(403)
+          .json({ error: "cannot create database for another user" });
       }
 
       const owner = await findUserById(ownerUserId);
@@ -73,7 +70,10 @@ export const createDatabase = async (req: Request, res: Response) => {
       requestedName: name,
     });
 
-    res.json({ ok: true, database: buildDatabaseResponse(record, getRequestHost(req)) });
+    res.json({
+      ok: true,
+      database: buildDatabaseResponse(record, getRequestHost(req)),
+    });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
   }
@@ -96,8 +96,10 @@ export const deleteDatabase = async (req: Request, res: Response) => {
   }
 };
 
-export const renameDatabase = async (req: Request, res: Response) => {
-  return res.status(405).json({ error: "database rename is not supported for managed databases" });
+export const renameDatabase = async (_req: Request, res: Response) => {
+  return res
+    .status(405)
+    .json({ error: "database rename is not supported for managed databases" });
 };
 
 export const databaseStats = async (req: Request, res: Response) => {
@@ -156,7 +158,9 @@ export const countDatabases = async (req: Request, res: Response) => {
     return res.status(403).json({ error: "admin access required for other users" });
   }
 
-  const records = await listManagedDatabases(targetUserId || (auth.role === "user" ? auth.userId : undefined));
+  const records = await listManagedDatabases(
+    targetUserId || (auth.role === "user" ? auth.userId : undefined)
+  );
 
   return res.json({
     userId: targetUserId || (auth.role === "user" ? auth.userId : "all"),
@@ -178,9 +182,10 @@ export const getDatabaseCredentials = async (req: Request, res: Response) => {
       ownerUserId: record.ownerUserId,
       username: record.dbUsername || null,
       password,
-      connectionString: record.dbUsername && password
-        ? buildDatabaseResponse(record, getRequestHost(req)).connectionString
-        : null,
+      connectionString:
+        record.dbUsername && password
+          ? buildDatabaseResponse(record, getRequestHost(req)).connectionString
+          : null,
     });
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "server error" });
@@ -238,5 +243,97 @@ export const generateDatabaseConnectionString = async (req: Request, res: Respon
     });
   } catch (error) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "server error" });
+  }
+};
+
+export const compactDatabase = async (req: Request, res: Response) => {
+  try {
+    const { db } = req.params;
+    await requireDatabaseAccess(req, db);
+
+    const database = await manager.db(db);
+    await database.compactAll();
+
+    return res.json({ ok: true, db });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
+export const explainDatabase = async (req: Request, res: Response) => {
+  try {
+    const { db } = req.params;
+    await requireDatabaseAccess(req, db);
+
+    const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
+    const collection = body.collection;
+    if (!collection || typeof collection !== "string") {
+      return res.status(400).json({ error: "collection is required" });
+    }
+
+    const database = await manager.db(db);
+    const explain = await database.explain(collection, body.query || {}, body.options || undefined);
+
+    return res.json({ explain });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
+type TxOp = { col: string; op: string; args: any[] };
+
+const ALLOWED_TX_OPS = new Set([
+  "insertOne",
+  "insertMany",
+  "updateOne",
+  "updateMany",
+  "deleteOne",
+  "deleteMany",
+]);
+
+export const runTransaction = async (req: Request, res: Response) => {
+  try {
+    const { db } = req.params;
+    await requireDatabaseAccess(req, db);
+
+    const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
+    const ops: TxOp[] = Array.isArray(body.ops) ? body.ops : [];
+
+    if (!Array.isArray(body.ops)) {
+      return res.status(400).json({ error: "ops must be an array" });
+    }
+
+    for (const [idx, op] of ops.entries()) {
+      if (!op || typeof op !== "object") {
+        return res.status(400).json({ error: `invalid op at index ${idx}` });
+      }
+      if (typeof op.col !== "string" || !op.col.trim()) {
+        return res.status(400).json({ error: `invalid col at index ${idx}` });
+      }
+      if (typeof op.op !== "string" || !ALLOWED_TX_OPS.has(op.op)) {
+        return res.status(400).json({ error: `unsupported op at index ${idx}` });
+      }
+      if (!Array.isArray(op.args)) {
+        return res.status(400).json({ error: `args must be an array at index ${idx}` });
+      }
+    }
+
+    const database = await manager.db(db);
+
+    const result = await database.transaction(async (tx: any) => {
+      for (const op of ops) {
+        const col = tx.collection(op.col);
+        const fn = (col as any)[op.op];
+        if (typeof fn !== "function") {
+          throw new Error(`unsupported operation: ${op.op}`);
+        }
+        fn(...op.args);
+      }
+      return { applied: ops.length };
+    });
+
+    return res.json({ ok: true, result });
+  } catch (error) {
+    return sendApiError(res, error, 400);
   }
 };

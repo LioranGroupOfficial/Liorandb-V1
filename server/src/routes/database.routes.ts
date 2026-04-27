@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import {
   countDatabases,
   listDatabases,
@@ -10,6 +10,9 @@ import {
   generateDatabaseConnectionString,
   getDatabaseCredentials,
   upsertDatabaseCredentials,
+  compactDatabase,
+  explainDatabase,
+  runTransaction,
 } from "../controllers/database.controller";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { userCorsMiddleware } from "../middleware/userCors.middleware";
@@ -28,5 +31,9 @@ router.get("/:db/stats", databaseStats);
 router.get("/:db/credentials", getDatabaseCredentials);
 router.put("/:db/credentials", upsertDatabaseCredentials);
 router.get("/:db/connection-string", generateDatabaseConnectionString);
+
+router.post("/:db/compact", compactDatabase);
+router.post("/:db/explain", explainDatabase);
+router.post("/:db/transaction", runTransaction);
 
 export default router;

@@ -303,3 +303,26 @@ Important files:
 - `externalUserId` is stored for integration with systems like Clerk, but Clerk JWT verification is not implemented yet
 - Existing unmanaged on-disk databases are still visible to admins
 - Database rename is intentionally disabled for managed databases
+
+## Performance / Scaling
+
+### Write queue tuning
+
+You can tune the internal write queue (backpressure + batching) via env or CLI:
+
+- Env: `LIORANDB_WRITE_QUEUE_MAX`, `LIORANDB_WRITE_QUEUE_MODE` (`wait|reject`), `LIORANDB_WRITE_QUEUE_TIMEOUT_MS`
+- CLI: `--write-queue-max`, `--write-queue-mode`, `--write-queue-timeout-ms`
+
+Batch tuning:
+
+- Env: `LIORANDB_BATCH_CHUNK_SIZE`
+- CLI: `--batch-chunk-size`
+
+### Parallel readers (read-only servers)
+
+To scale read traffic, run multiple server instances pointing at the same `--root` path:
+
+- One **primary** instance for writes: `ldb-serve --ipc primary`
+- One or more **read-only** instances for reads: `ldb-serve --ipc readonly`
+
+In readonly mode, write endpoints will respond with `READONLY_MODE`.

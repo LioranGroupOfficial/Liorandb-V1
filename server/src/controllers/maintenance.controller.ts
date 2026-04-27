@@ -1,7 +1,14 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { getRequestAuth, isAdminRole } from "../utils/auth";
-import { isSnapshotRunning, listSnapshots, runSnapshot, getSnapshotConfig } from "../utils/snapshots";
+import {
+  isSnapshotRunning,
+  listSnapshots,
+  runSnapshot,
+  getSnapshotConfig,
+} from "../utils/snapshots";
 import { manager } from "../config/database";
+import { listDatabaseNames } from "../utils/coreStorage";
+import { sendApiError } from "../utils/apiError";
 
 function requireAdmin(req: Request, res: Response) {
   const auth = getRequestAuth(req);
@@ -24,7 +31,7 @@ export const maintenanceStatus = async (req: Request, res: Response) => {
       dir: config.dir,
       retentionHours: config.retentionHours,
       running: isSnapshotRunning(),
-    }
+    },
   });
 };
 
@@ -45,7 +52,24 @@ export const createSnapshotNow = async (req: Request, res: Response) => {
     }
     return res.json({ ok: true, snapshot: result });
   } catch (error) {
-    return res.status(500).json({ error: error instanceof Error ? error.message : "server error" });
+    return sendApiError(res, error, 500);
   }
 };
 
+export const compactAllDatabases = async (req: Request, res: Response) => {
+  const auth = requireAdmin(req, res);
+  if (!auth) return;
+
+  try {
+    const names = await listDatabaseNames();
+
+    for (const name of names) {
+      const db = await manager.db(name);
+      await db.compactAll();
+    }
+
+    return res.json({ ok: true, databases: names.length });
+  } catch (error) {
+    return sendApiError(res, error, 500);
+  }
+};
