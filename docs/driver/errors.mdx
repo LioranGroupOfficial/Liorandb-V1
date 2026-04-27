@@ -3,9 +3,18 @@ title: Errors
 sidebar_position: 5
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 The driver throws `HttpError` for non-2xx responses.
 
 ## `HttpError`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 class HttpError extends Error {
@@ -14,5 +23,114 @@ class HttpError extends Error {
 }
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+class HttpError extends Error {
+  // status: number
+  // data?: unknown
+}
+```
+
+</TabItem>
+</Tabs>
+
 In tooling and CLIs, you often want to log `error.data` if available (it may include server error details).
+
+## Example: log status + data
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { HttpError, LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+
+try {
+  await client.login("admin", "wrong-password");
+} catch (err) {
+  if (err instanceof HttpError) {
+    console.error("HTTP", err.status, err.data);
+  } else {
+    console.error(err);
+  }
+}
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { HttpError, LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+
+try {
+  await client.login("admin", "wrong-password");
+} catch (err) {
+  if (err instanceof HttpError) {
+    console.error("HTTP", err.status, err.data);
+  } else {
+    console.error(err);
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Example: handle `401` and re-authenticate
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+async function withRetry<T>(fn: () => Promise<T>) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 401) {
+      await client.login("admin", "admin");
+      return await fn();
+    }
+    throw err;
+  }
+}
+
+const db = client.db("default");
+const users = db.collection("users");
+console.log(await withRetry(() => users.count()));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+async function withRetry(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 401) {
+      await client.login("admin", "admin");
+      return await fn();
+    }
+    throw err;
+  }
+}
+
+const db = client.db("default");
+const users = db.collection("users");
+console.log(await withRetry(() => users.count()));
+```
+
+</TabItem>
+</Tabs>
 

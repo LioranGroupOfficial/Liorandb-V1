@@ -3,6 +3,9 @@ title: Compaction
 sidebar_position: 10
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 Compaction rebuilds collection storage to remove fragmentation and then rebuilds indexes.
 
 You typically run compaction when:
@@ -13,9 +16,31 @@ You typically run compaction when:
 
 ## `db.compactCollection(name)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 compactCollection(name: string): Promise<void>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+compactCollection(name)
+```
+
+</TabItem>
+</Tabs>
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -27,30 +52,111 @@ await db.compactCollection("users");
 await manager.close();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+await db.compactCollection("users");
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 (no output)
 ```
 
 ## `db.compactAll()`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 compactAll(): Promise<void>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+compactAll()
+```
+
+</TabItem>
+</Tabs>
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 await db.compactAll();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+await db.compactAll();
+```
+
+</TabItem>
+</Tabs>
+
 ## `collection.compact()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 compact(): Promise<void>
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+compact()
+```
+
+</TabItem>
+</Tabs>
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const users = db.collection("users");
 await users.compact();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const users = db.collection("users");
+await users.compact();
+```
+
+</TabItem>
+</Tabs>
 
 ## What compaction does (high level)
 

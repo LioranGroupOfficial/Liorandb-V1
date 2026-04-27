@@ -3,6 +3,9 @@ title: IPC (multi-process)
 sidebar_position: 12
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 `LioranManager` supports multiple process modes so you can safely use one database root from multiple Node processes.
 
 ## Modes
@@ -30,6 +33,12 @@ The lock is stored at:
 
 ## Example: log which mode you are in
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 import { LioranManager } from "@liorandb/core";
 
@@ -48,9 +57,51 @@ await manager.close();
 { primary: true, client: false, readonly: false }
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+console.log({
+  primary: manager.isPrimary(),
+  client: manager.isClient(),
+  readonly: manager.isReadOnly(),
+});
+
+await manager.close();
+```
+
+```txt title="Sandbox output (example)"
+{ primary: true, client: false, readonly: false }
+```
+
+</TabItem>
+</Tabs>
+
 ## Example: two-process setup (primary + client)
 
-### `primary.js`
+### `primary` (writer / lock owner)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb", ipc: "primary" });
+const db = await manager.db("app");
+await db.collection("events").insertOne({ name: "primary-ready" });
+console.log("primary ready");
+```
+
+</TabItem>
+<TabItem value="js">
 
 ```js
 import { LioranManager } from "@liorandb/core";
@@ -61,20 +112,48 @@ await db.collection("events").insertOne({ name: "primary-ready" });
 console.log("primary ready");
 ```
 
-### `client.js`
+</TabItem>
+</Tabs>
+
+### `client` (forwards operations)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb", ipc: "client" });
+const db = await manager.db("app");
+
+await db.collection("events").insertOne({ name: "client-write" });
+console.log("client wrote");
+
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
 
 ```js
 import { LioranManager } from "@liorandb/core";
 
 const manager = new LioranManager({ rootPath: "./.liorandb", ipc: "client" });
 const db = await manager.db("app");
+
 await db.collection("events").insertOne({ name: "client-write" });
 console.log("client wrote");
+
 await manager.close();
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 primary ready
 client wrote
 ```
-

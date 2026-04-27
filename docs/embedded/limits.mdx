@@ -3,6 +3,9 @@ title: Limits & performance notes
 sidebar_position: 13
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 ## Key limits
 
 - **Document size (encrypted)**: encrypted JSON must be ~5MB max (5,000,000 characters).
@@ -26,6 +29,12 @@ sidebar_position: 13
 
 If you're doing heavy write throughput, `LioranManager` exposes `writeQueue` options (like max queue size and behavior under memory pressure).
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 import { LioranManager } from "@liorandb/core";
 
@@ -42,3 +51,26 @@ const manager = new LioranManager({
 await manager.db("app");
 await manager.close();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  writeQueue: {
+    maxSize: 50000,
+    mode: "wait",
+    timeoutMs: 10000,
+  },
+  batch: { chunkSize: 500 },
+});
+
+await manager.db("app");
+await manager.close();
+```
+
+</TabItem>
+</Tabs>

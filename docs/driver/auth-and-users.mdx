@@ -3,31 +3,506 @@ title: Auth & users
 sidebar_position: 2
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 `LioranClient` exposes authentication + user management methods.
 
-## Login
+## `connect()` (URI auto-detect)
 
-- `connect(): Promise<void>` (auto-detects from URI)
-- `login(username: string, password: string): Promise<{ user; token; ... }>`
-- `superAdminLogin(secret: string): Promise<{ user; token; ... }>`
+`connect()` chooses behavior based on your URI:
+
+1) `lioran://username:password@host:port` → logs in and stores a JWT token  
+2) `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses connection-string mode  
+3) `http(s)://host:port` → no auto-login (call `login()` or `setToken()` / `setConnectionString()`)
+
+### Example: `lioran://` (username/password)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+console.log(client.isAuthenticated(), client.getUser()?.role);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+console.log(client.isAuthenticated(), client.getUser()?.role);
+```
+
+</TabItem>
+</Tabs>
+
+### Example: `liorandb://` (database-scoped connection string)
+
+This mode authenticates as a single database only (no user-management APIs).
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient(
+  "liorandb://db_user:db_pass@localhost:4000/app"
+);
+await client.connect();
+
+const db = client.db("app");
+console.log(await db.collection("items").count());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient(
+  "liorandb://db_user:db_pass@localhost:4000/app"
+);
+await client.connect();
+
+const db = client.db("app");
+console.log(await db.collection("items").count());
+```
+
+</TabItem>
+</Tabs>
+
+## `login(username, password)`
+
+Use this with `http://` or `https://` URIs.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "admin");
+
+console.log(client.getToken());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "admin");
+
+console.log(client.getToken());
+```
+
+</TabItem>
+</Tabs>
+
+## `superAdminLogin(secret)`
+
+Use the raw contents of the server `secret.key`.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import fs from "node:fs";
+import { LioranClient } from "@liorandb/driver";
+
+const secret = fs.readFileSync("./secret.key", "utf8").trim();
+const client = new LioranClient("http://localhost:4000");
+await client.superAdminLogin(secret);
+
+console.log(client.getUser());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import fs from "node:fs";
+import { LioranClient } from "@liorandb/driver";
+
+const secret = fs.readFileSync("./secret.key", "utf8").trim();
+const client = new LioranClient("http://localhost:4000");
+await client.superAdminLogin(secret);
+
+console.log(client.getUser());
+```
+
+</TabItem>
+</Tabs>
 
 ## Session helpers
 
-- `setToken(token: string): void`
-- `getToken(): string | null`
-- `setConnectionString(connectionString: string): void`
-- `getConnectionString(): string | null`
-- `logout(): void`
-- `isAuthenticated(): boolean`
-- `getUser(): LioranUser | null`
+### `setToken()` / `getToken()`
 
-## User APIs
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
-Requires authentication.
+```ts
+client.setToken("<jwt>");
+console.log(client.getToken());
+```
 
-- `me(): Promise<{ user }>`
-- `register(username: string, password: string): Promise<{ user; token; ... }>`
-- `register(input: { userId; username?; password?; role?; externalUserId? }): Promise<{ user; token; ... }>`
-- `listUsers(): Promise<LioranManagedUser[]>`
-- `issueUserToken(userId: string): Promise<{ user; token }>`
+</TabItem>
+<TabItem value="js">
+
+```js
+client.setToken("<jwt>");
+console.log(client.getToken());
+```
+
+</TabItem>
+</Tabs>
+
+### `setConnectionString()` / `getConnectionString()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+client.setConnectionString("liorandb://db_user:db_pass@localhost:4000/app");
+console.log(client.getConnectionString());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+client.setConnectionString("liorandb://db_user:db_pass@localhost:4000/app");
+console.log(client.getConnectionString());
+```
+
+</TabItem>
+</Tabs>
+
+### `isAuthenticated()` / `getUser()` / `logout()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(client.isAuthenticated(), client.getUser());
+client.logout();
+console.log(client.isAuthenticated());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(client.isAuthenticated(), client.getUser());
+client.logout();
+console.log(client.isAuthenticated());
+```
+
+</TabItem>
+</Tabs>
+
+## User APIs (require JWT auth)
+
+### `me()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const me = await client.me();
+console.log(me.user.username);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const me = await client.me();
+console.log(me.user.username);
+```
+
+</TabItem>
+</Tabs>
+
+### `register(...)`
+
+`register()` is a protected route (admins/super-admins).
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await client.register({ userId: "editor", password: "secret123", role: "admin" });
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await client.register({ userId: "editor", password: "secret123", role: "admin" });
+```
+
+</TabItem>
+</Tabs>
+
+### `listUsers()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const users = await client.listUsers();
+console.log(users.map((u) => ({ userId: u.userId, role: u.role })));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const users = await client.listUsers();
+console.log(users.map((u) => ({ userId: u.userId, role: u.role })));
+```
+
+</TabItem>
+</Tabs>
+
+### `issueUserToken(userId)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const out = await client.issueUserToken("editor");
+console.log(out.token);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const out = await client.issueUserToken("editor");
+console.log(out.token);
+```
+
+</TabItem>
+</Tabs>
+
+## CORS helpers (require JWT auth)
+
+### `updateMyCors(origins)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await client.updateMyCors(["https://app.example.com"]);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await client.updateMyCors(["https://app.example.com"]);
+```
+
+</TabItem>
+</Tabs>
+
+### `updateUserCors(userId, origins)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await client.updateUserCors("editor", ["https://app.example.com"]);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await client.updateUserCors("editor", ["https://app.example.com"]);
+```
+
+</TabItem>
+</Tabs>
+
+## Public info APIs
+
+### `health()` / `info()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.health());
+console.log(await client.info());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.health());
+console.log(await client.info());
+```
+
+</TabItem>
+</Tabs>
+
+## Embedded docs APIs
+
+### `listDocs()` / `getDoc(id)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const list = await client.listDocs();
+const first = list.docs[0];
+if (first) console.log(await client.getDoc(first.id));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const list = await client.listDocs();
+const first = list.docs[0];
+if (first) console.log(await client.getDoc(first.id));
+```
+
+</TabItem>
+</Tabs>
+
+## Maintenance APIs
+
+### `maintenanceStatus()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const status = await client.maintenanceStatus();
+console.log(status.snapshots);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const status = await client.maintenanceStatus();
+console.log(status.snapshots);
+```
+
+</TabItem>
+</Tabs>
+
+### `listSnapshots()` / `createSnapshotNow()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.listSnapshots());
+console.log(await client.createSnapshotNow());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.listSnapshots());
+console.log(await client.createSnapshotNow());
+```
+
+</TabItem>
+</Tabs>
+
+### `compactAllDatabases()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.compactAllDatabases());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.compactAllDatabases());
+```
+
+</TabItem>
+</Tabs>
 

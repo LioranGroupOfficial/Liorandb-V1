@@ -17,12 +17,34 @@ A `Collection` stores JSON documents keyed by `_id` (string). It's the API you'l
 
 ### `setSchema(schema, version)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 setSchema(schema: ZodSchema<T>, version: number): void
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+setSchema(schema, version)
+```
+
+</TabItem>
+</Tabs>
+
 - Validates writes.
 - Stores the current schema version in documents as `__v`.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { z } from "zod";
@@ -37,14 +59,55 @@ users.setSchema(
 );
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { z } from "zod";
+
+users.setSchema(
+  z.object({
+    _id: z.string().optional(),
+    email: z.string().email(),
+    __v: z.number().optional(),
+  }),
+  1
+);
+```
+
+</TabItem>
+</Tabs>
+
 ### `addMigration({ from, to, migrate })`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 addMigration(migration: { from: number; to: number; migrate: (doc: any) => T }): void
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+addMigration(migration)
+```
+
+</TabItem>
+</Tabs>
+
 - Upgrades documents on read (from older `__v` to the current version).
 - Great for renames/defaults when you don't want to rewrite the whole collection immediately.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 users.setSchema(UserV2, 2);
@@ -55,16 +118,48 @@ users.addMigration({
 });
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+users.setSchema(UserV2, 2);
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }),
+});
+```
+
+</TabItem>
+</Tabs>
+
 ## CRUD (every common function with a tiny example)
 
 All **writes** are queued per collection to keep ordering consistent.
 
 ### `insertOne(doc)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const inserted = await users.insertOne({ email: "a@b.com", plan: "free" });
 console.log(inserted);
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const inserted = await users.insertOne({ email: "a@b.com", plan: "free" });
+console.log(inserted);
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 { _id: "...", email: "a@b.com", plan: "free", __v: 1 }
@@ -72,15 +167,37 @@ console.log(inserted);
 
 ### `insertMany(docs, options?)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 await users.insertMany([{ email: "a@b.com" }, { email: "c@d.com" }], { chunkSize: 500 });
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await users.insertMany([{ email: "a@b.com" }, { email: "c@d.com" }], { chunkSize: 500 });
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 (no output)
 ```
 
 ### `find(query?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 const list = await users.find(
@@ -90,22 +207,59 @@ const list = await users.find(
 console.log(list);
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+const list = await users.find(
+  { plan: { $in: ["free", "pro"] } },
+  { limit: 2, offset: 0, projection: ["email", "plan"] }
+);
+console.log(list);
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 [ { email: "a@b.com", plan: "free" }, { email: "c@d.com", plan: "pro" } ]
 ```
 
 ### `findOne(query?, options?)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const one = await users.findOne({ email: "a@b.com" });
 console.log(one?.email);
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const one = await users.findOne({ email: "a@b.com" });
+console.log(one?.email);
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 a@b.com
 ```
 
 ### `updateOne(filter, update, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 const updated = await users.updateOne(
@@ -115,11 +269,31 @@ const updated = await users.updateOne(
 console.log(updated);
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+const updated = await users.updateOne(
+  { email: "a@b.com" },
+  { $set: { plan: "pro" }, $inc: { "stats.logins": 1 } }
+);
+console.log(updated);
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 { _id: "...", email: "a@b.com", plan: "pro", stats: { logins: 1 }, __v: 1 }
 ```
 
 #### Upsert
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 const doc = await users.updateOne(
@@ -130,16 +304,48 @@ const doc = await users.updateOne(
 console.log(doc);
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+const doc = await users.updateOne(
+  { email: "new@x.com" },
+  { $set: { email: "new@x.com", plan: "free" } },
+  { upsert: true }
+);
+console.log(doc);
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 { _id: "...", email: "new@x.com", plan: "free", __v: 1 }
 ```
 
 ### `updateMany(filter, update)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const changed = await users.updateMany({ plan: "free" }, { $set: { plan: "pro" } });
 console.log(changed.length);
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const changed = await users.updateMany({ plan: "free" }, { $set: { plan: "pro" } });
+console.log(changed.length);
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 2
@@ -147,9 +353,25 @@ console.log(changed.length);
 
 ### `deleteOne(filter)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 console.log(await users.deleteOne({ email: "a@b.com" }));
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.deleteOne({ email: "a@b.com" }));
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 true
@@ -157,9 +379,25 @@ true
 
 ### `deleteMany(filter)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 console.log(await users.deleteMany({ plan: "free" }));
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.deleteMany({ plan: "free" }));
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 3
@@ -167,14 +405,199 @@ console.log(await users.deleteMany({ plan: "free" }));
 
 ### `count()` / `countDocuments(filter?)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 console.log(await users.count());
 console.log(await users.countDocuments({ plan: "pro" }));
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.count());
+console.log(await users.countDocuments({ plan: "pro" }));
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 10
 4
+```
+
+## Indexes (collection-level)
+
+You can create indexes directly from a `Collection` as well:
+
+### `createIndex(field, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+createIndex(field: string, options?: { unique?: boolean }): Promise<void>
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+createIndex(field, options)
+```
+
+</TabItem>
+</Tabs>
+
+#### Example: unique index (email)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await users.createIndex("email", { unique: true });
+await users.insertOne({ email: "a@b.com", plan: "free" });
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await users.createIndex("email", { unique: true });
+await users.insertOne({ email: "a@b.com", plan: "free" });
+```
+
+</TabItem>
+</Tabs>
+
+```txt title="Sandbox output (example)"
+(no output)
+```
+
+### `explain(query?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+explain(query?: any, options?: FindOptions): Promise<any>
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+explain(query, options)
+```
+
+</TabItem>
+</Tabs>
+
+#### Example: check whether an index is used
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await users.createIndex("plan");
+const plan = await users.explain({ plan: "pro" }, { limit: 10 });
+console.log(plan.indexUsed);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await users.createIndex("plan");
+const plan = await users.explain({ plan: "pro" }, { limit: 10 });
+console.log(plan.indexUsed);
+```
+
+</TabItem>
+</Tabs>
+
+```txt title="Sandbox output (example)"
+plan
+```
+
+## Streaming inserts
+
+For large datasets, streamed inserts avoid building a huge array in memory:
+
+### `insertManyStream(docs, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+insertManyStream(docs: Iterable<any> | AsyncIterable<any>, options?: { chunkSize?: number }): Promise<number>
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+insertManyStream(docs, options)
+```
+
+</TabItem>
+</Tabs>
+
+#### Example: insert 100k docs from a generator
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+function* generateDocs(count: number) {
+  for (let i = 0; i < count; i++) yield { n: i };
+}
+
+const inserted = await users.insertManyStream(generateDocs(100_000), { chunkSize: 1000 });
+console.log(inserted);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+function* generateDocs(count) {
+  for (let i = 0; i < count; i++) yield { n: i };
+}
+
+const inserted = await users.insertManyStream(generateDocs(100000), { chunkSize: 1000 });
+console.log(inserted);
+```
+
+</TabItem>
+</Tabs>
+
+```txt title="Sandbox output (example)"
+100000
 ```
 
 ## Aggregation
@@ -183,10 +606,27 @@ console.log(await users.countDocuments({ plan: "pro" }));
 
 Supported stages: `$match`, `$project`, `$skip`, `$limit`, `$group`.
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const out = await users.aggregate([{ $group: { _id: "plan", count: { $sum: 1 } } }]);
 console.log(out);
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const out = await users.aggregate([{ $group: { _id: "plan", count: { $sum: 1 } } }]);
+console.log(out);
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 [ { _id: "free", count: 7 }, { _id: "pro", count: 3 } ]
@@ -198,9 +638,25 @@ console.log(out);
 
 Compaction rebuilds the collection to reduce fragmentation and then rebuilds indexes.
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 await users.compact();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await users.compact();
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 (no output)

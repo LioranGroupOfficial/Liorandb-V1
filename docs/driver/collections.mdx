@@ -14,14 +14,17 @@ import TabItem from '@theme/TabItem';
 - `insertMany(docs): Promise<T[]>`
 - `find(filter = {}): Promise<T[]>`
 - `findOne(filter = {}): Promise<T | null>`
-- `updateOne(filter, update): Promise<T | null>`
-- `updateMany(filter, update): Promise<T[]>`
-- `deleteOne(filter): Promise<{ deleted: boolean }>`
-- `deleteMany(filter): Promise<{ deleted: number }>`
+- `updateOne(filter, update, options?): Promise<T | null>`
+- `updateMany(filter, update): Promise<{ updated; docs }>`
+- `deleteOne(filter): Promise<T | null>`
+- `deleteMany(filter): Promise<{ deleted: number }`
 - `count(filter = {}): Promise<number>`
+- `countDocuments(filter = {}): Promise<number>`
 - `stats(): Promise<...>`
 
-## Example
+## Examples (tiny per method)
+
+### `insertOne(doc)`
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -33,7 +36,7 @@ import TabItem from '@theme/TabItem';
 import { LioranClient } from "@liorandb/driver";
 
 const client = new LioranClient("http://localhost:4000");
-await client.login("admin", "password123");
+await client.login("admin", "admin");
 
 const db = client.db("default");
 const users = db.collection<{ userId: string; role: string }>("users");
@@ -49,7 +52,7 @@ console.log(await users.count({ role: "user" }));
 import { LioranClient } from "@liorandb/driver";
 
 const client = new LioranClient("http://localhost:4000");
-await client.login("admin", "password123");
+await client.login("admin", "admin");
 
 const db = client.db("default");
 const users = db.collection("users");
@@ -61,3 +64,308 @@ console.log(await users.count({ role: "user" }));
 </TabItem>
 </Tabs>
 
+### `insertMany(docs)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await users.insertMany([
+  { userId: "u2", role: "user" },
+  { userId: "u3", role: "admin" },
+]);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await users.insertMany([
+  { userId: "u2", role: "user" },
+  { userId: "u3", role: "admin" },
+]);
+```
+
+</TabItem>
+</Tabs>
+
+### `find(filter?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.find({ role: "user" }, { limit: 10, offset: 0 }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.find({ role: "user" }, { limit: 10, offset: 0 }));
+```
+
+</TabItem>
+</Tabs>
+
+### `findOne(filter?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.findOne({ userId: "u1" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.findOne({ userId: "u1" }));
+```
+
+</TabItem>
+</Tabs>
+
+### `updateOne(filter, update, options?)`
+
+Supports update operators like `$set`, `$inc`, `$unset`. Use `{ upsert: true }` to insert when missing.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(
+  await users.updateOne(
+    { userId: "u1" },
+    { $set: { role: "admin" } },
+    { upsert: true }
+  )
+);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(
+  await users.updateOne(
+    { userId: "u1" },
+    { $set: { role: "admin" } },
+    { upsert: true }
+  )
+);
+```
+
+</TabItem>
+</Tabs>
+
+### `updateMany(filter, update)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const out = await users.updateMany({ role: "user" }, { $set: { active: true } });
+console.log(out.updated);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const out = await users.updateMany({ role: "user" }, { $set: { active: true } });
+console.log(out.updated);
+```
+
+</TabItem>
+</Tabs>
+
+### `deleteOne(filter)` / `deleteMany(filter)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.deleteOne({ userId: "u3" }));
+console.log(await users.deleteMany({ active: false }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.deleteOne({ userId: "u3" }));
+console.log(await users.deleteMany({ active: false }));
+```
+
+</TabItem>
+</Tabs>
+
+### `count(filter?)` / `countDocuments(filter?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.count({ role: "admin" }));
+console.log(await users.countDocuments({ role: "admin" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.count({ role: "admin" }));
+console.log(await users.countDocuments({ role: "admin" }));
+```
+
+</TabItem>
+</Tabs>
+
+## Aggregation
+
+### `aggregate(pipeline?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const out = await users.aggregate([{ $group: { _id: "role", count: { $sum: 1 } } }]);
+console.log(out);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const out = await users.aggregate([{ $group: { _id: "role", count: { $sum: 1 } } }]);
+console.log(out);
+```
+
+</TabItem>
+</Tabs>
+
+## Indexes
+
+### `listIndexes()` / `createIndex(field, options?)` / `dropIndex(field)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.listIndexes());
+console.log(await users.createIndex("userId", { unique: true }));
+console.log(await users.dropIndex("userId"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.listIndexes());
+console.log(await users.createIndex("userId", { unique: true }));
+console.log(await users.dropIndex("userId"));
+```
+
+</TabItem>
+</Tabs>
+
+### `rebuildIndex(field)` / `rebuildIndexes()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.rebuildIndex("role"));
+console.log(await users.rebuildIndexes());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.rebuildIndex("role"));
+console.log(await users.rebuildIndexes());
+```
+
+</TabItem>
+</Tabs>
+
+### `explain(filter?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.explain({ role: "admin" }, { limit: 5 }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.explain({ role: "admin" }, { limit: 5 }));
+```
+
+</TabItem>
+</Tabs>
+
+## Maintenance
+
+### `stats()` / `compact()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await users.stats());
+console.log(await users.compact());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await users.stats());
+console.log(await users.compact());
+```
+
+</TabItem>
+</Tabs>

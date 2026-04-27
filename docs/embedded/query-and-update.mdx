@@ -3,6 +3,9 @@ title: Query & update language
 sidebar_position: 5
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 LioranDB's embedded query engine uses plain JavaScript objects.
 
 ## Query basics
@@ -13,9 +16,25 @@ LioranDB's embedded query engine uses plain JavaScript objects.
 
 ### Equality
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ email: "a@b.com" }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { email: "a@b.com" }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches docs where doc.email === "a@b.com"
@@ -23,9 +42,25 @@ Matches docs where doc.email === "a@b.com"
 
 ### Dot-paths
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ "profile.age": 21 }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { "profile.age": 21 }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches docs where doc.profile?.age === 21
@@ -42,9 +77,25 @@ Supported operators:
 
 #### Range
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ age: { $gte: 18, $lt: 65 } }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { age: { $gte: 18, $lt: 65 } }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches 18 <= doc.age < 65
@@ -52,9 +103,25 @@ Matches 18 <= doc.age < 65
 
 #### `$in`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ status: { $in: ["active", "trial"] } }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { status: { $in: ["active", "trial"] } }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches docs where status is one of "active" or "trial"
@@ -62,9 +129,25 @@ Matches docs where status is one of "active" or "trial"
 
 #### Combine multiple fields (implicit AND)
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ plan: "pro", "profile.age": { $gte: 18 } }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { plan: "pro", "profile.age": { $gte: 18 } }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches docs that satisfy both conditions
@@ -74,9 +157,25 @@ Matches docs that satisfy both conditions
 
 You can also pass a function instead of an object:
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+(doc) => doc.qty > 0 && doc.sku?.startsWith("A")
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 (doc) => doc.qty > 0 && doc.sku?.startsWith("A")
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Matches docs where qty > 0 and sku begins with "A"
@@ -84,12 +183,31 @@ Matches docs where qty > 0 and sku begins with "A"
 
 ## Find options: `limit`, `offset`, `projection`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await collection.find(
+  { plan: "pro" },
+  { limit: 10, offset: 0, projection: ["email", "profile.age"] }
+)
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 await collection.find(
   { plan: "pro" },
   { limit: 10, offset: 0, projection: ["email", "profile.age"] }
 )
 ```
+
+</TabItem>
+</Tabs>
 
 - `limit`: max documents returned
 - `offset`: skip N matching docs (simple paging)
@@ -110,9 +228,25 @@ Updates can be either:
 
 #### `$set`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ $set: { "profile.name": "New Name", plan: "pro" } }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { $set: { "profile.name": "New Name", plan: "pro" } }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Sets profile.name and plan on the matching doc(s)
@@ -120,9 +254,25 @@ Sets profile.name and plan on the matching doc(s)
 
 #### `$inc`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ $inc: { attempts: 1, "stats.logins": 1 } }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { $inc: { attempts: 1, "stats.logins": 1 } }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Increments numeric fields by the given amount
@@ -132,9 +282,25 @@ Increments numeric fields by the given amount
 
 If the update object contains **no** `$` keys, it's treated as a shallow merge:
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+{ status: "active", plan: "pro" }
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 { status: "active", plan: "pro" }
 ```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 Merges into the existing doc (top-level keys)
@@ -144,6 +310,23 @@ Merges into the existing doc (top-level keys)
 
 `updateOne(filter, update, { upsert: true })` inserts a new document if nothing matches.
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await users.updateOne(
+  { email: "new@x.com" },
+  { $set: { email: "new@x.com", plan: "free" } },
+  { upsert: true }
+)
+```
+
+</TabItem>
+<TabItem value="js">
+
 ```js
 await users.updateOne(
   { email: "new@x.com" },
@@ -152,11 +335,20 @@ await users.updateOne(
 )
 ```
 
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 Inserts a new doc when no existing doc matches the filter
 ```
 
 ## Complete example (query + update)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -178,6 +370,33 @@ await users.updateOne(
 console.log(await users.find({}, { projection: ["email", "stats.logins", "active"] }));
 await manager.close();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await users.insertMany([
+  { email: "a@b.com", profile: { age: 21 }, plan: "free" },
+  { email: "c@d.com", profile: { age: 35 }, plan: "pro" },
+]);
+
+await users.updateOne(
+  { "profile.age": { $gte: 18 }, plan: { $in: ["free", "pro"] } },
+  { $inc: { "stats.logins": 1 }, $set: { active: true } }
+);
+
+console.log(await users.find({}, { projection: ["email", "stats.logins", "active"] }));
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 [ { email: "a@b.com", stats: { logins: 1 }, active: true }, { email: "c@d.com" } ]

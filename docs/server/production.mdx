@@ -13,7 +13,7 @@ For a full Ubuntu VPS production setup using PM2 + Nginx (rate limiting, TLS, fi
 
 Minimum:
 
-- Node.js 16+
+- Node.js 18+
 - ~512MB RAM
 - SSD recommended
 
@@ -40,7 +40,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 COPY dist ./dist
 
@@ -51,9 +51,9 @@ CMD ["node", "dist/server.js"]
 Example `docker run` (mount data):
 
 ```bash
-docker run -d ^
-  -p 4000:4000 ^
-  -v liorandb-data:/app/data ^
-  --name liorandb-server ^
+docker run -d \
+  -p 4000:4000 \
+  -v liorandb-data:/app/data \
+  --name liorandb-server \
   liorandb-server
 ```

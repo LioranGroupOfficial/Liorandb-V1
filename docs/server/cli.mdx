@@ -16,11 +16,16 @@ Connection URI formats:
 - `http://<host>:<port>`
 - `https://<host>:<port>`
 - `lioran://<username>:<password>@<host>:<port>`
+- `liorandb://<dbUsername>:<dbPassword>@<host>[:<port>]/<databaseName>`
 
 Examples:
 
 ```bash
 ldb-cli lioran://admin:password123@localhost:4000
+```
+
+```bash
+ldb-cli liorandb://db_user:db_pass@localhost:4000/app
 ```
 
 ```bash

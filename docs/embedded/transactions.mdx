@@ -10,9 +10,25 @@ Transactions group multiple operations into a single atomic commit (WAL-backed).
 
 ## `db.transaction(fn)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+transaction(fn)
+```
+
+</TabItem>
+</Tabs>
 
 - Runs `fn(tx)`, records operations, then commits them as one unit.
 - If the manager/db is in readonly mode, transactions are rejected.

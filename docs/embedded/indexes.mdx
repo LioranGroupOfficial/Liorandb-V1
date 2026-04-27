@@ -14,9 +14,25 @@ Indexes are created per collection field and are persisted on disk. They speed u
 
 ## `db.createIndex(collection, field, options?)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 createIndex(collection: string, field: string, options?: { unique?: boolean }): Promise<void>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+createIndex(collection, field, options)
+```
+
+</TabItem>
+</Tabs>
 
 - Builds the index from existing documents.
 - After creation, writes keep the index updated.
@@ -90,10 +106,27 @@ Error: Unique constraint violation on index "email"
 
 Use `explain()` to see what the planner did and how much work the query performed.
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 const plan = await db.explain("users", { age: { $gte: 18 } });
 console.log(plan);
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const plan = await db.explain("users", { age: { $gte: 18 } });
+console.log(plan);
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 {
@@ -108,6 +141,12 @@ console.log(plan);
 ```
 
 ### Example: compare indexed vs full scan
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -129,6 +168,33 @@ const after = await db.explain("users", { age: { $gte: 18 } });
 console.log({ before: before.usedFullScan, after: after.usedFullScan });
 await manager.close();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+await users.insertMany([
+  { email: "a@b.com", age: 21 },
+  { email: "c@d.com", age: 35 },
+  { email: "e@f.com", age: 10 },
+]);
+
+const before = await db.explain("users", { age: { $gte: 18 } });
+await db.createIndex("users", "age");
+const after = await db.explain("users", { age: { $gte: 18 } });
+
+console.log({ before: before.usedFullScan, after: after.usedFullScan });
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 { before: true, after: false }

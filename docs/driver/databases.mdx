@@ -3,6 +3,9 @@ title: Databases
 sidebar_position: 3
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 The driver provides both:
 
 - **management APIs** (`client.*`) and
@@ -12,24 +15,517 @@ The driver provides both:
 
 Requires authentication.
 
-- `listDatabases(): Promise<LioranManagedDatabase[]>`
-- `countDatabases(userId?: string): Promise<{ count: number }>`
-- `listUserDatabases(userId: string): Promise<{ databases: LioranManagedDatabase[] }>`
-- `createDatabase(name | { name; ownerUserId? }): Promise<...>`
-- `dropDatabase(name: string): Promise<{ deleted: boolean }>`
-- `databaseStats(name: string): Promise<LioranDatabaseStats>`
+### `listDatabases()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "admin");
+
+console.log(await client.listDatabases());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+await client.login("admin", "admin");
+
+console.log(await client.listDatabases());
+```
+
+</TabItem>
+</Tabs>
+
+### `countDatabases(userId?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.countDatabases()); // all visible DBs
+console.log(await client.countDatabases("admin")); // for a specific owner userId
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.countDatabases()); // all visible DBs
+console.log(await client.countDatabases("admin")); // for a specific owner userId
+```
+
+</TabItem>
+</Tabs>
+
+### `listUserDatabases(userId)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.listUserDatabases("admin"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.listUserDatabases("admin"));
+```
+
+</TabItem>
+</Tabs>
+
+### `createDatabase(name | { name; ownerUserId? })`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.createDatabase("app"));
+console.log(await client.createDatabase({ name: "analytics", ownerUserId: "admin" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.createDatabase("app"));
+console.log(await client.createDatabase({ name: "analytics", ownerUserId: "admin" }));
+```
+
+</TabItem>
+</Tabs>
+
+### `dropDatabase(name)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.dropDatabase("analytics"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.dropDatabase("analytics"));
+```
+
+</TabItem>
+</Tabs>
+
+### `databaseStats(name)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await client.databaseStats("app"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await client.databaseStats("app"));
+```
+
+</TabItem>
+</Tabs>
 
 ## Database wrapper (DB)
 
 `client.db(name)` returns a `DB` instance with:
 
-- `collection(name): Collection`
-- `listCollections(): Promise<string[]>`
-- `createCollection(name: string): Promise<...>`
-- `dropCollection(name: string): Promise<...>`
-- `renameCollection(oldName, newName): Promise<...>`
-- `stats(): Promise<LioranDatabaseStats>`
-- `getCredentials(): Promise<...>`
-- `setCredentials({ username, password }): Promise<...>`
-- `getConnectionString(): Promise<...>`
+## Collections
+
+### `collection(name)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const db = client.db("app");
+const users = db.collection<{ _id?: string; email: string }>("users");
+await users.insertOne({ email: "a@b.com" });
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const db = client.db("app");
+const users = db.collection("users");
+await users.insertOne({ email: "a@b.com" });
+```
+
+</TabItem>
+</Tabs>
+
+### `listCollections()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.listCollections());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.listCollections());
+```
+
+</TabItem>
+</Tabs>
+
+### `createCollection(name)` / `dropCollection(name)` / `renameCollection(old, next)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.createCollection("items"));
+console.log(await db.renameCollection("items", "inventory"));
+console.log(await db.dropCollection("inventory"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.createCollection("items"));
+console.log(await db.renameCollection("items", "inventory"));
+console.log(await db.dropCollection("inventory"));
+```
+
+</TabItem>
+</Tabs>
+
+## Stats and maintenance
+
+### `stats()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.stats());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.stats());
+```
+
+</TabItem>
+</Tabs>
+
+### `compactAll()` / `compactCollection(name)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.compactCollection("users"));
+console.log(await db.compactAll());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.compactCollection("users"));
+console.log(await db.compactAll());
+```
+
+</TabItem>
+</Tabs>
+
+## Indexes
+
+### `createIndex(collection, field, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.createIndex("users", "email", { unique: true }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.createIndex("users", "email", { unique: true }));
+```
+
+</TabItem>
+</Tabs>
+
+### `listIndexes(collection)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.listIndexes("users"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.listIndexes("users"));
+```
+
+</TabItem>
+</Tabs>
+
+### `dropIndex(collection, field)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.dropIndex("users", "email"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.dropIndex("users", "email"));
+```
+
+</TabItem>
+</Tabs>
+
+### `rebuildIndex(collection, field)` / `rebuildIndexes(collection)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.rebuildIndex("users", "email"));
+console.log(await db.rebuildIndexes("users"));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.rebuildIndex("users", "email"));
+console.log(await db.rebuildIndexes("users"));
+```
+
+</TabItem>
+</Tabs>
+
+### `explain(collection, query?, options?)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const explain = await db.explain("users", { email: "a@b.com" }, { limit: 1 });
+console.log(explain);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const explain = await db.explain("users", { email: "a@b.com" }, { limit: 1 });
+console.log(explain);
+```
+
+</TabItem>
+</Tabs>
+
+## Transactions
+
+### `transaction(ops[])`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await db.transaction([
+  { col: "accounts", op: "updateOne", args: [{ id: "a" }, { $inc: { balance: -50 } }, { upsert: true }] },
+  { col: "accounts", op: "updateOne", args: [{ id: "b" }, { $inc: { balance: 50 } }, { upsert: true }] },
+]);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await db.transaction([
+  { col: "accounts", op: "updateOne", args: [{ id: "a" }, { $inc: { balance: -50 } }, { upsert: true }] },
+  { col: "accounts", op: "updateOne", args: [{ id: "b" }, { $inc: { balance: 50 } }, { upsert: true }] },
+]);
+```
+
+</TabItem>
+</Tabs>
+
+### `transaction(fn)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+await db.transaction(async (tx) => {
+  await tx.collection("audit").insertOne({ at: Date.now(), event: "purchase" });
+});
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+await db.transaction(async (tx) => {
+  await tx.collection("audit").insertOne({ at: Date.now(), event: "purchase" });
+});
+```
+
+</TabItem>
+</Tabs>
+
+## Database credentials (connection strings)
+
+### `getCredentials()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.getCredentials());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.getCredentials());
+```
+
+</TabItem>
+</Tabs>
+
+### `setCredentials({ username, password })`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.setCredentials({ username: "app_user", password: "app_pass_123" }));
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.setCredentials({ username: "app_user", password: "app_pass_123" }));
+```
+
+</TabItem>
+</Tabs>
+
+### `getConnectionString()`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+console.log(await db.getConnectionString());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+console.log(await db.getConnectionString());
+```
+
+</TabItem>
+</Tabs>
 

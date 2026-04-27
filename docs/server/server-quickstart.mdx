@@ -25,8 +25,28 @@ Defaults:
 The server and CLIs support:
 
 - `--root <path>`: override the storage root path
+- `--ipc <primary|client|readonly>`: process mode (see below)
 - `-ed <key>`: set encryption key directly
 - `-ef <file>`: read encryption key from a file
+
+Write-queue tuning (backpressure):
+
+- `--write-queue-max <n>`
+- `--write-queue-mode <wait|reject>`
+- `--write-queue-timeout-ms <ms>`
+
+Batch tuning:
+
+- `--batch-chunk-size <n>`
+
+## IPC modes (`--ipc`)
+
+Use `--ipc` when multiple server processes share the same `--root` path:
+
+- **Primary** (writer / lock owner): `ldb-serve --ipc primary`
+- **Read-only** (scale reads safely): `ldb-serve --ipc readonly`
+
+In readonly mode, write endpoints respond with `READONLY_MODE`.
 
 ## Environment variables
 
@@ -35,4 +55,14 @@ Common environment variables:
 - `PORT` (default `4000`)
 - `NODE_ENV`
 - `LOG_LEVEL`
+
+Write queue:
+
+- `LIORANDB_WRITE_QUEUE_MAX`
+- `LIORANDB_WRITE_QUEUE_MODE` (`wait|reject`)
+- `LIORANDB_WRITE_QUEUE_TIMEOUT_MS`
+
+Batch:
+
+- `LIORANDB_BATCH_CHUNK_SIZE`
 

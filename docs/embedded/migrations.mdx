@@ -3,6 +3,9 @@ title: Migrations
 sidebar_position: 8
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 Migrations exist at two levels:
 
 1) **Collection document migrations** (per-document `__v`), and  
@@ -19,6 +22,12 @@ Good for:
 - adding defaults
 
 ### Example: rename `tier` -> `plan` (on read)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -62,6 +71,54 @@ console.log(migrated);
 await manager.close();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+import { z } from "zod";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+const users = db.collection("users");
+
+// v1 schema
+const UserV1 = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  tier: z.enum(["free", "pro"]),
+  __v: z.number().optional(),
+});
+
+users.setSchema(UserV1, 1);
+
+// simulate an old stored doc (v1)
+await users.insertOne({ email: "x@y.com", tier: "pro", __v: 1 });
+
+// v2 schema
+const UserV2 = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  plan: z.enum(["free", "pro"]),
+  __v: z.number().optional(),
+});
+
+users.setSchema(UserV2, 2);
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }),
+});
+
+const migrated = await users.findOne({ email: "x@y.com" });
+console.log(migrated);
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 { _id: "...", email: "x@y.com", plan: "pro", __v: 2, tier: "pro" }
 ```
@@ -72,30 +129,85 @@ The database stores a `schemaVersion` string in its metadata file. You can regis
 
 ### `db.getSchemaVersion()` / `db.setSchemaVersion(v)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 getSchemaVersion(): string
 setSchemaVersion(v: string): void
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+getSchemaVersion()
+setSchemaVersion(v)
+```
+
+</TabItem>
+</Tabs>
+
 Writable mode only for `setSchemaVersion`.
 
 ### `db.migrate(from, to, fn)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 migrate(from: string, to: string, fn: (db: LioranDB) => Promise<void>): void
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+migrate(from, to, fn)
+```
+
+</TabItem>
+</Tabs>
+
 Registers a step; after `fn` finishes, the DB schema version is set to `to`.
 
 ### `db.applyMigrations(targetVersion)`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 applyMigrations(targetVersion: string): Promise<void>
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+applyMigrations(targetVersion)
+```
+
+</TabItem>
+</Tabs>
+
 Applies registered migrations in order until there are no more pending steps.
 
 ### Example: add an index in a migration
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -113,6 +225,29 @@ console.log(db.getSchemaVersion());
 
 await manager.close();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+const db = await manager.db("app");
+
+db.migrate("v1", "v2", async (db) => {
+  db.collection("users");
+  await db.createIndex("users", "email", { unique: true });
+});
+
+await db.applyMigrations("v2");
+console.log(db.getSchemaVersion());
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 v2

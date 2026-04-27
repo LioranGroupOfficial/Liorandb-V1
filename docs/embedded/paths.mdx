@@ -3,6 +3,9 @@ title: Storage paths
 sidebar_position: 14
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 `@liorandb/core` uses a single "root folder" where all database directories are stored.
 
 ## Default root path
@@ -16,13 +19,35 @@ The directory is created automatically if it does not exist.
 
 ## `getBaseDBFolder()`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 getBaseDBFolder(): string
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+getBaseDBFolder()
+```
+
+</TabItem>
+</Tabs>
+
 Returns the resolved default root folder path used by the embedded engine.
 
 ### Example: print the default root folder
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { getBaseDBFolder } from "@liorandb/core";
@@ -30,11 +55,29 @@ import { getBaseDBFolder } from "@liorandb/core";
 console.log(getBaseDBFolder());
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { getBaseDBFolder } from "@liorandb/core";
+
+console.log(getBaseDBFolder());
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 /home/you/LioranDB/db
 ```
 
 ## Example: project-local root folder
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -43,6 +86,20 @@ const manager = new LioranManager({ rootPath: "./.liorandb" });
 await manager.db("app");
 await manager.close();
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.db("app");
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
 
 ```txt title="Sandbox output (example)"
 (creates ./\.liorandb/app on disk)

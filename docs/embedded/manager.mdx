@@ -16,9 +16,25 @@ Think of it as a small "embedded DB server in-process", plus (optional) IPC if y
 
 ## Constructor
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 new LioranManager(options?: LioranManagerOptions)
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+new LioranManager(options)
+```
+
+</TabItem>
+</Tabs>
 
 ### `LioranManagerOptions`
 
@@ -47,14 +63,36 @@ If `rootPath` is `./.liorandb` and you open `db("app")`, you'll get:
 
 ## `db(name)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 db(name: string): Promise<LioranDB>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+db(name)
+```
+
+</TabItem>
+</Tabs>
 
 - Opens (or reuses) a database named `name`.
 - In IPC `client` mode, returns a proxy that forwards operations to the primary process.
 
 ### Example: open two DBs
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -70,21 +108,63 @@ await analyticsDb.collection("events").insertOne({ name: "signup" });
 await manager.close();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+const appDb = await manager.db("app");
+const analyticsDb = await manager.db("analytics");
+
+await appDb.collection("users").insertOne({ email: "a@b.com" });
+await analyticsDb.collection("events").insertOne({ name: "signup" });
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 (no output)
 ```
 
 ## `snapshot(snapshotPath)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 snapshot(snapshotPath: string): Promise<true>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+snapshot(snapshotPath)
+```
+
+</TabItem>
+</Tabs>
 
 - Creates a **tar.gz** snapshot of the manager root directory.
 - Not allowed in `readonly` mode.
 - In IPC client mode, the snapshot is executed by the primary process.
 
 ### Example: create a snapshot
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -98,21 +178,61 @@ console.log(ok);
 await manager.close();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.db("app");
+
+const ok = await manager.snapshot("./backups/app.tar.gz");
+console.log(ok);
+
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 true
 ```
 
 ## `restore(snapshotPath)`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 restore(snapshotPath: string): Promise<never>
 ```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+restore(snapshotPath)
+```
+
+</TabItem>
+</Tabs>
 
 - Restores the snapshot into the manager root directory.
 - **Clears the existing root directory** before restore.
 - After a successful restore, the process prints a message and exits.
 
 ### Example: restore (note: process exits)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -124,19 +244,57 @@ await manager.restore("./backups/app.tar.gz");
 console.log("done");
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+await manager.restore("./backups/app.tar.gz");
+
+// this line never runs (restore exits the process)
+console.log("done");
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 Restore completed. Restart required.
 ```
 
 ## `close()` / `closeAll()`
 
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
 ```ts
 close(): Promise<void>
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+close()
+```
+
+</TabItem>
+</Tabs>
+
 - Closes all open databases and releases the process lock (primary mode).
 
 ### Example: always close in `finally`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -151,9 +309,34 @@ try {
 }
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+
+try {
+  const db = await manager.db("app");
+  await db.collection("health").insertOne({ ok: true });
+} finally {
+  await manager.close();
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## IPC helpers (`isPrimary()`, `isClient()`, `isReadOnly()`)
 
 These are handy for logging/debugging in multi-process deployments.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
 
 ```ts
 import { LioranManager } from "@liorandb/core";
@@ -167,9 +350,127 @@ console.log({
 await manager.close();
 ```
 
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({ rootPath: "./.liorandb" });
+console.log({
+  primary: manager.isPrimary(),
+  client: manager.isClient(),
+  readonly: manager.isReadOnly(),
+});
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
 ```txt title="Sandbox output (example)"
 { primary: true, client: false, readonly: false }
 ```
+
+## Write queue (backpressure)
+
+For write-heavy workloads you can tune the dedicated writer queue:
+
+- `writeQueue.maxSize` (in-memory queue length)
+- `writeQueue.mode`: `"wait"` (default) or `"reject"`
+- `writeQueue.timeoutMs`: how long to wait in `"wait"` mode before rejecting
+
+### Example: reject quickly under load
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  writeQueue: {
+    maxSize: 5_000,
+    mode: "reject",
+    timeoutMs: 250,
+  },
+});
+
+const db = await manager.db("app");
+await db.collection("events").insertOne({ at: Date.now() });
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  writeQueue: {
+    maxSize: 5000,
+    mode: "reject",
+    timeoutMs: 250,
+  },
+});
+
+const db = await manager.db("app");
+await db.collection("events").insertOne({ at: Date.now() });
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
+
+## Batch tuning
+
+Batch inserts (`insertMany`) are written in chunks. You can set a default chunk size:
+
+### Example: default chunk size for `insertMany`
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  batch: { chunkSize: 500 },
+});
+
+const db = await manager.db("app");
+await db.collection("items").insertMany([{ sku: "A" }, { sku: "B" }]);
+await manager.close();
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  batch: { chunkSize: 500 },
+});
+
+const db = await manager.db("app");
+await db.collection("items").insertMany([{ sku: "A" }, { sku: "B" }]);
+await manager.close();
+```
+
+</TabItem>
+</Tabs>
 
 ## Example: project-local root + encryption
 

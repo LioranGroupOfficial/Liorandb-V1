@@ -3,6 +3,9 @@ title: Connection strings
 sidebar_position: 4
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 LioranDB uses two different “URI” formats in the ecosystem:
 
 ## Admin/login URI (`lioran://`)
@@ -18,6 +21,34 @@ Used by:
 - `ldb-cli`
 - `@liorandb/driver` (`new LioranClient(...)`)
 
+### Example (driver)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect(); // logs in and stores a JWT token
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect(); // logs in and stores a JWT token
+```
+
+</TabItem>
+</Tabs>
+
 ## Database connection string (`liorandb://`)
 
 This is a database-scoped credential format:
@@ -29,4 +60,38 @@ liorandb://<dbUsername>:<dbPassword>@<host>[:<port>]/<databaseName>
 Used by:
 
 - `@liorandb/driver` (`connect()` auto-detects and uses it)
+
+### Example (driver)
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("liorandb://db_user:db_pass@localhost:4000/app");
+await client.connect(); // uses x-liorandb-connection-string under the hood
+
+const items = client.db("app").collection("items");
+console.log(await items.count());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("liorandb://db_user:db_pass@localhost:4000/app");
+await client.connect(); // uses x-liorandb-connection-string under the hood
+
+const items = client.db("app").collection("items");
+console.log(await items.count());
+```
+
+</TabItem>
+</Tabs>
 
