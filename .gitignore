@@ -160,3 +160,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 build
 __tests__
+log-c.txt
+log-d.txt
+log-s.txt

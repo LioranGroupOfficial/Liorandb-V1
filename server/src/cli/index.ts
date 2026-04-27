@@ -2,6 +2,7 @@
 
 import readline from "readline";
 import util from "util";
+import * as vm from "node:vm";
 
 import { HttpError, LioranClient } from "@liorandb/driver";
 
@@ -83,7 +84,7 @@ function printBanner(uri: string) {
 
 function safeParse(value: string) {
   try {
-    return eval(`(${value})`);
+    return vm.runInNewContext(`(${value})`, {}, { timeout: 200 });
   } catch {
     return null;
   }
@@ -128,6 +129,15 @@ function parseNameTuple(rawArgs: string) {
   return values;
 }
 
+function parseAnyTuple(rawArgs: string) {
+  const parsed = parseTupleArgs(rawArgs);
+  if (parsed) {
+    return parsed;
+  }
+
+  return parseNameTuple(rawArgs);
+}
+
 function logValue(value: unknown) {
   console.log(util.inspect(value, false, 10, true));
 }
@@ -145,6 +155,7 @@ async function printHelp() {
 Connection:
   health()
   info()
+  me()
   login("username","password")
   register("username","password")
   setToken("<jwt>")
@@ -153,6 +164,22 @@ Connection:
   getConnectionString()
   getUser()
   logout()
+
+User / Admin:
+  listUsers()
+  issueUserToken("<userId>")
+  updateMyCors(["https://example.com"])
+  updateUserCors("<userId>", ["https://example.com"])
+
+Docs:
+  listDocs()
+  getDoc("<id>")
+
+Maintenance:
+  maintenanceStatus()
+  listSnapshots()
+  createSnapshotNow()
+  compactAllDatabases()
 
 Database:   ( current: ${currentDB} )
   show dbs
@@ -170,20 +197,24 @@ Collection:   ( current: ${currentCollection ?? "none"} )
   db.collectionStats("<name>")
 
 CRUD:
-  db.<collection>.find({...})
+  db.<collection>.find({...}, {...options})
   db.<collection>.insert({...})
+  db.<collection>.aggregate([...pipeline])
 
   When collection selected:
-    find({...})
-    findOne({...})
+    find({...}, {...options})
+    findOne({...}, {...options})
     insert({...})
     insertMany([...])
-    update({...filter},{...update})
+    update({...filter},{...update})       // alias: updateMany(filter, update)
+    updateOne({...filter},{...update}, {...options})
     updateMany({...filter},{...update})
-    delete({...})
+    delete({...})                        // alias: deleteMany(filter)
+    deleteOne({...})
     deleteMany({...})
     count({...})
     stats()
+    aggregate([...pipeline])
 
 System:
   clear
@@ -209,9 +240,15 @@ async function runAuthCommand(cmd: string) {
     return true;
   }
 
+  if (name === "me") {
+    logValue(await client.me());
+    updatePrompt();
+    return true;
+  }
+
   if (name === "login" || name === "register") {
-    const args = parseNameTuple(rawArgs);
-    if (args.length < 2) {
+    const args = parseAnyTuple(rawArgs);
+    if (args.length < 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
       console.error(`${name} expects username and password`);
       return true;
     }
@@ -227,8 +264,8 @@ async function runAuthCommand(cmd: string) {
   }
 
   if (name === "setToken") {
-    const args = parseNameTuple(rawArgs);
-    if (args.length < 1) {
+    const args = parseAnyTuple(rawArgs);
+    if (args.length < 1 || typeof args[0] !== "string") {
       console.error("setToken expects a JWT");
       return true;
     }
@@ -240,8 +277,8 @@ async function runAuthCommand(cmd: string) {
   }
 
   if (name === "setConnectionString") {
-    const args = parseNameTuple(rawArgs);
-    if (args.length < 1) {
+    const args = parseAnyTuple(rawArgs);
+    if (args.length < 1 || typeof args[0] !== "string") {
       console.error("setConnectionString expects a connection string");
       return true;
     }
@@ -271,6 +308,86 @@ async function runAuthCommand(cmd: string) {
     client.logout();
     console.log("Logged out");
     updatePrompt();
+    return true;
+  }
+
+  if (name === "listUsers") {
+    logValue(await client.listUsers());
+    return true;
+  }
+
+  if (name === "issueUserToken") {
+    const args = parseAnyTuple(rawArgs);
+    if (args.length < 1 || typeof args[0] !== "string") {
+      console.error('issueUserToken expects a userId: issueUserToken("userId")');
+      return true;
+    }
+
+    logValue(await client.issueUserToken(args[0]));
+    return true;
+  }
+
+  if (name === "updateMyCors") {
+    const origins = parseSingleArg(rawArgs);
+    if (!Array.isArray(origins) || origins.some((origin) => typeof origin !== "string")) {
+      console.error('updateMyCors expects an array of strings: updateMyCors(["https://..."])');
+      return true;
+    }
+
+    logValue(await client.updateMyCors(origins));
+    return true;
+  }
+
+  if (name === "updateUserCors") {
+    const args = parseTupleArgs(rawArgs);
+    if (
+      !args ||
+      args.length < 2 ||
+      typeof args[0] !== "string" ||
+      !Array.isArray(args[1]) ||
+      args[1].some((origin) => typeof origin !== "string")
+    ) {
+      console.error('updateUserCors expects (userId, origins): updateUserCors("userId", ["https://..."])');
+      return true;
+    }
+
+    logValue(await client.updateUserCors(args[0], args[1]));
+    return true;
+  }
+
+  if (name === "listDocs") {
+    logValue(await client.listDocs());
+    return true;
+  }
+
+  if (name === "getDoc") {
+    const args = parseAnyTuple(rawArgs);
+    if (args.length < 1 || typeof args[0] !== "string") {
+      console.error('getDoc expects an id: getDoc("id")');
+      return true;
+    }
+
+    logValue(await client.getDoc(args[0]));
+    return true;
+  }
+
+  if (name === "maintenanceStatus") {
+    logValue(await client.maintenanceStatus());
+    return true;
+  }
+
+  if (name === "listSnapshots") {
+    logValue(await client.listSnapshots());
+    return true;
+  }
+
+  if (name === "createSnapshotNow") {
+    logValue(await client.createSnapshotNow());
+    return true;
+  }
+
+  if (name === "compactAllDatabases") {
+    logValue(await client.compactAllDatabases());
     return true;
   }
 
@@ -306,21 +423,27 @@ async function runCollectionCommand(colName: string, action: string) {
   }
 
   if (name === "find") {
-    const query = parseSingleArg(rawArgs);
-    if (query == null) {
+    const args = parseTupleArgs(rawArgs);
+    if (!args) {
       return console.error("Invalid syntax");
     }
 
-    return logValue(await col.find(query));
+    const filter = args[0] ?? {};
+    const options = args[1];
+
+    return logValue(await col.find(filter, options));
   }
 
   if (name === "findOne") {
-    const query = parseSingleArg(rawArgs);
-    if (query == null) {
+    const args = parseTupleArgs(rawArgs);
+    if (!args) {
       return console.error("Invalid syntax");
     }
 
-    return logValue(await col.findOne(query));
+    const filter = args[0] ?? {};
+    const options = args[1];
+
+    return logValue(await col.findOne(filter, options));
   }
 
   if (name === "update" || name === "updateOne" || name === "updateMany") {
@@ -329,16 +452,26 @@ async function runCollectionCommand(colName: string, action: string) {
       return console.error(`${name} expects filter and update`);
     }
 
-    return logValue(await col.updateMany(args[0], args[1]));
+    if (name === "updateMany" || (name === "update" && args.length < 3)) {
+      return logValue(await col.updateMany(args[0], args[1]));
+    }
+
+    return logValue(await col.updateOne(args[0], args[1], args[2]));
   }
 
   if (name === "delete" || name === "deleteOne" || name === "deleteMany") {
-    const query = parseSingleArg(rawArgs);
-    if (query == null) {
+    const args = parseTupleArgs(rawArgs);
+    if (!args) {
       return console.error("Invalid syntax");
     }
 
-    return logValue(await col.deleteMany(query));
+    const filter = args[0] ?? {};
+
+    if (name === "deleteOne") {
+      return logValue(await col.deleteOne(filter));
+    }
+
+    return logValue(await col.deleteMany(filter));
   }
 
   if (name === "count" || name === "countDocuments") {
@@ -352,6 +485,15 @@ async function runCollectionCommand(colName: string, action: string) {
 
   if (name === "stats") {
     return logValue(await col.stats());
+  }
+
+  if (name === "aggregate") {
+    const pipeline = rawArgs ? parseSingleArg(rawArgs) : [];
+    if (!Array.isArray(pipeline)) {
+      return console.error("aggregate expects an array pipeline: aggregate([{...}])");
+    }
+
+    return logValue(await col.aggregate(pipeline));
   }
 
   return console.log("Unknown collection command. Type: help");
