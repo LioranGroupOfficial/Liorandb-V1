@@ -8,18 +8,19 @@ const bins = [
 ];
 
 for (const bin of bins) {
+  console.log(`Building ${bin.output}...`);
+
   const cmd = [
     "nexe",
     bin.input,
-    "--target windows-x64-18.0.0",
+    "--target windows-x64-20.0.0",
     "--build",
-    "--loglevel verbose",
-    "--resource ./dist/**/*",
+    "--loglevel info",
+    '--resource "./dist/**/*.{js,json}"',
     `--output ${path.join("build", bin.output)}`
   ].join(" ");
 
-  console.log(`Building ${bin.output}...`);
   execSync(cmd, { stdio: "inherit" });
 }
 
-console.log("All executables built successfully.");
+console.log("All executables built.");
