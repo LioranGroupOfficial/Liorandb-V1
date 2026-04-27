@@ -1,22 +1,34 @@
 'use client';
 
 import React from 'react';
-import { Database, LogOut, Moon, Sun, UserRound } from 'lucide-react';
+import { Database, LogOut, Menu, Moon, Sun, UserRound } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { truncateMiddle } from '@/lib/utils';
 import { useThemeStore } from '@/store/theme';
 
 interface NavbarProps {
   onLogout: () => void;
+  onToggleSidebar?: () => void;
 }
 
-export function Navbar({ onLogout }: NavbarProps) {
-  const { currentDatabase, selectedCollection, isLoading, connectionUri, user } = useAppStore();
+export function Navbar({ onLogout, onToggleSidebar }: NavbarProps) {
+  const { currentDatabase, selectedCollection, isLoading, connectionUri, user, isLoggedIn } = useAppStore();
   const { theme, toggleTheme } = useThemeStore();
 
   return (
     <header className="flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 text-slate-900 dark:border-slate-800 dark:bg-black dark:text-slate-100">
       <div className="flex min-w-0 items-center gap-3">
+        {onToggleSidebar ? (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900 md:hidden"
+            title="Toggle explorer"
+            aria-label="Toggle explorer"
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+        ) : null}
         <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
           <Database className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
         </div>
@@ -30,7 +42,7 @@ export function Navbar({ onLogout }: NavbarProps) {
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
-              Connected
+              {isLoggedIn ? 'Connected' : 'Disconnected'}
             </span>
             {currentDatabase ? <span>{currentDatabase}</span> : <span>No database selected</span>}
             {selectedCollection ? (

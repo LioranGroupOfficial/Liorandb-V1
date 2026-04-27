@@ -32,14 +32,15 @@ export default function LoginPage() {
   useEffect(() => {
     const savedUri = localStorage.getItem('liorandb_uri');
     const savedToken = localStorage.getItem('liorandb_token');
+    const savedConnectionString = localStorage.getItem('liorandb_connection_string');
 
-    if (savedUri && savedToken) {
-      void restoreSession(savedUri, savedToken);
+    if (savedUri && (savedToken || savedConnectionString)) {
+      void restoreSession(savedUri, savedToken ?? undefined);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function restoreSession(savedUri: string, savedToken: string) {
+  async function restoreSession(savedUri: string, savedToken?: string) {
     try {
       setIsLoading(true);
       const session = await LioranDBService.restore(savedUri, savedToken);
@@ -48,6 +49,7 @@ export default function LoginPage() {
       setLoggedIn({
         loggedIn: true,
         token: session.token,
+        connectionString: session.connectionString,
         uri: session.uri,
         user: session.user,
       });
@@ -56,6 +58,7 @@ export default function LoginPage() {
     } catch {
       localStorage.removeItem('liorandb_uri');
       localStorage.removeItem('liorandb_token');
+      localStorage.removeItem('liorandb_connection_string');
       localStorage.removeItem('liorandb_user');
     } finally {
       setIsLoading(false);
@@ -96,6 +99,7 @@ export default function LoginPage() {
       setLoggedIn({
         loggedIn: true,
         token: session.token,
+        connectionString: session.connectionString,
         uri: session.uri,
         user: session.user,
       });

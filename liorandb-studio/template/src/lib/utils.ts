@@ -37,6 +37,7 @@ export function parseConnectionUri(uri: string): ConnectionConfig {
         host: parsed.hostname,
         port,
         protocol: 'liorandb',
+        databaseName,
       };
     } catch {
       throw new Error(

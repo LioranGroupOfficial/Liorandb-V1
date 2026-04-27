@@ -5,10 +5,12 @@ interface AppStore extends StoreState {
   setLoggedIn: (payload: {
     loggedIn: boolean;
     token?: string | null;
+    connectionString?: string | null;
     uri?: string | null;
     user?: LioranUser | null;
   }) => void;
   setToken: (token: string | null) => void;
+  setConnectionString: (connectionString: string | null) => void;
   setConnectionUri: (uri: string | null) => void;
   setUser: (user: LioranUser | null) => void;
   logout: () => void;
@@ -26,6 +28,7 @@ interface AppStore extends StoreState {
 
 const STORAGE_KEYS = {
   token: 'liorandb_token',
+  connectionString: 'liorandb_connection_string',
   uri: 'liorandb_uri',
   user: 'liorandb_user',
 };
@@ -33,6 +36,7 @@ const STORAGE_KEYS = {
 export const useAppStore = create<AppStore>((set) => ({
   isLoggedIn: false,
   token: null,
+  connectionString: null,
   connectionUri: null,
   user: null,
   currentDatabase: null,
@@ -45,19 +49,27 @@ export const useAppStore = create<AppStore>((set) => ({
   error: null,
   successMessage: null,
 
-  setLoggedIn: ({ loggedIn, token = null, uri = null, user = null }) => {
-    set({ isLoggedIn: loggedIn, token, connectionUri: uri, user });
+  setLoggedIn: ({ loggedIn, token = null, connectionString = null, uri = null, user = null }) => {
+    set({ isLoggedIn: loggedIn, token, connectionString, connectionUri: uri, user });
 
     if (typeof window !== 'undefined') {
-      if (loggedIn && token && uri) {
-        localStorage.setItem(STORAGE_KEYS.token, token);
+      if (loggedIn && uri && (token || connectionString)) {
         localStorage.setItem(STORAGE_KEYS.uri, uri);
+
+        if (token) {
+          localStorage.setItem(STORAGE_KEYS.token, token);
+          localStorage.removeItem(STORAGE_KEYS.connectionString);
+        } else if (connectionString) {
+          localStorage.setItem(STORAGE_KEYS.connectionString, connectionString);
+          localStorage.removeItem(STORAGE_KEYS.token);
+        }
 
         if (user) {
           localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
         }
       } else {
         localStorage.removeItem(STORAGE_KEYS.token);
+        localStorage.removeItem(STORAGE_KEYS.connectionString);
         localStorage.removeItem(STORAGE_KEYS.uri);
         localStorage.removeItem(STORAGE_KEYS.user);
       }
@@ -65,6 +77,7 @@ export const useAppStore = create<AppStore>((set) => ({
   },
 
   setToken: (token) => set({ token }),
+  setConnectionString: (connectionString) => set({ connectionString }),
   setConnectionUri: (uri) => set({ connectionUri: uri }),
   setUser: (user) => set({ user }),
 
@@ -72,6 +85,7 @@ export const useAppStore = create<AppStore>((set) => ({
     set({
       isLoggedIn: false,
       token: null,
+      connectionString: null,
       connectionUri: null,
       user: null,
       databases: [],
@@ -84,6 +98,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
     if (typeof window !== 'undefined') {
       localStorage.removeItem(STORAGE_KEYS.token);
+      localStorage.removeItem(STORAGE_KEYS.connectionString);
       localStorage.removeItem(STORAGE_KEYS.uri);
       localStorage.removeItem(STORAGE_KEYS.user);
     }
@@ -109,13 +124,15 @@ export const useAppStore = create<AppStore>((set) => ({
     if (typeof window === 'undefined') return;
 
     const token = localStorage.getItem(STORAGE_KEYS.token);
+    const connectionString = localStorage.getItem(STORAGE_KEYS.connectionString);
     const uri = localStorage.getItem(STORAGE_KEYS.uri);
     const user = localStorage.getItem(STORAGE_KEYS.user);
 
-    if (token && uri) {
+    if (uri && (token || connectionString)) {
       set({
         isLoggedIn: true,
         token,
+        connectionString,
         connectionUri: uri,
         user: user ? (JSON.parse(user) as LioranUser) : null,
       });

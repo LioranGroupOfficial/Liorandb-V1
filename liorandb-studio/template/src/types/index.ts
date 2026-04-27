@@ -4,16 +4,24 @@ export interface ConnectionConfig {
   host: string;
   port: number;
   protocol: 'http' | 'https' | 'lioran' | 'liorandb';
+  databaseName?: string;
 }
 
+export type LioranRole = 'super_admin' | 'admin' | 'user';
+export type LioranAuthType = 'jwt' | 'connection_string';
+
 export interface LioranUser {
-  id: string;
+  userId: string;
   username: string;
+  role: LioranRole;
+  authType: LioranAuthType;
+  externalUserId?: string | null;
 }
 
 export interface AuthState {
   isLoggedIn: boolean;
   token: string | null;
+  connectionString: string | null;
   connectionUri: string | null;
   user: LioranUser | null;
   error: string | null;
@@ -41,15 +49,17 @@ export interface StoredDocument extends Document {
 }
 
 export interface QueryResult {
+  mode: 'find' | 'aggregate';
   data: Document[];
   count: number;
   executionTime: number;
-  filter: Record<string, unknown>;
+  query: Record<string, unknown> | unknown[];
 }
 
 export interface StoreState {
   isLoggedIn: boolean;
   token: string | null;
+  connectionString: string | null;
   connectionUri: string | null;
   user: LioranUser | null;
   currentDatabase: string | null;

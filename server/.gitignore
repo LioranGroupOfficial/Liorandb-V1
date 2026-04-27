@@ -5,6 +5,8 @@ logs
 bundle
 executable
 
+build
+
 # Logs
 logs
 *.log

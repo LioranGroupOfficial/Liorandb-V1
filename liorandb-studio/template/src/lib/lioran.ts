@@ -9,6 +9,7 @@ type InitializeOptions =
 
 interface SessionSnapshot {
   token: string | null;
+  connectionString: string | null;
   user: LioranUser | null;
   uri: string | null;
 }
@@ -17,6 +18,7 @@ export class LioranDBService {
   private static client: LioranClient | null = null;
   private static session: SessionSnapshot = {
     token: null,
+    connectionString: null,
     user: null,
     uri: null,
   };
@@ -25,31 +27,61 @@ export class LioranDBService {
     const parsed = parseConnectionUri(uri);
     const normalizedUri = parsed.uri;
 
-    this.client = new LioranClient(normalizedUri);
+    const isSecureConnectionString = normalizedUri.startsWith('liorandbs://');
+
+    if (parsed.protocol === 'liorandb' && isSecureConnectionString) {
+      const baseUri = `https://${parsed.host}:${parsed.port}`;
+      this.client = new LioranClient(baseUri);
+      this.client.setConnectionString(normalizedUri);
+    } else {
+      this.client = new LioranClient(normalizedUri);
+    }
 
     if (options.mode === 'credentials') {
       await this.client.login(options.username, options.password);
     } else if (options.mode === 'token') {
       this.client.setToken(options.token);
+      await this.client.me();
     } else if (parsed.protocol === 'lioran' || parsed.protocol === 'liorandb') {
-      await this.client.connect();
+      if (parsed.protocol === 'liorandb' && isSecureConnectionString) {
+        // `@liorandb/driver` currently only accepts `liorandb://` in its URI parser,
+        // but supports a secure connection string via the connection-string header.
+        // This branch sets the connection string explicitly and skips `connect()`.
+      } else {
+        await this.client.connect();
+      }
     } else {
       throw new Error(
         'An http(s) URI needs either a username/password login or an existing token.'
       );
     }
 
+    const derivedUser =
+      parsed.protocol === 'liorandb'
+        ? ({
+            userId: parsed.databaseName ?? 'connection-string',
+            username: parsed.username ?? 'connection-string',
+            role: 'user',
+            authType: 'connection_string',
+          } satisfies LioranUser)
+        : null;
+
     this.session = {
       token: this.client.getToken(),
-      user: (this.client.getUser() as LioranUser | null) ?? null,
+      connectionString: this.client.getConnectionString(),
+      user: this.client.getUser() ?? derivedUser,
       uri: normalizedUri,
     };
 
     return this.session;
   }
 
-  static async restore(uri: string, token: string): Promise<SessionSnapshot> {
-    return this.initialize(uri, { mode: 'token', token });
+  static async restore(uri: string, token?: string): Promise<SessionSnapshot> {
+    if (token) {
+      return this.initialize(uri, { mode: 'token', token });
+    }
+
+    return this.initialize(uri, { mode: 'uri' });
   }
 
   static isConnected(): boolean {
@@ -69,6 +101,7 @@ export class LioranDBService {
     this.client = null;
     this.session = {
       token: null,
+      connectionString: null,
       user: null,
       uri: null,
     };
@@ -89,12 +122,12 @@ export class LioranDBService {
 
     const dbs = await this.client.listDatabases();
     const stats = await Promise.allSettled(
-      dbs.map(async (name) => this.client!.databaseStats(String(name)))
+      dbs.map(async (db) => this.client!.databaseStats(db.databaseName))
     );
 
-    return dbs.map((name, index) => {
+    return dbs.map((db, index) => {
       const stat = stats[index];
-      const dbName = String(name);
+      const dbName = db.databaseName;
 
       if (stat.status === 'fulfilled') {
         return {
@@ -162,11 +195,14 @@ export class LioranDBService {
     if (!this.client) throw new Error('Client not connected');
 
     const collection = this.client.db(dbName).collection<Document>(collectionName);
-    const documents = await collection.find(filter);
+    const [documents, count] = await Promise.all([
+      collection.find(filter, { limit }),
+      collection.count(filter),
+    ]);
 
     return {
-      documents: documents.slice(0, limit),
-      count: documents.length,
+      documents,
+      count,
     };
   }
 
@@ -245,6 +281,17 @@ export class LioranDBService {
     return this.client.db(dbName).collection<Document>(collectionName).count(filter);
   }
 
+  static async aggregate<R = Document>(
+    dbName: string,
+    collectionName: string,
+    pipeline: unknown[] = []
+  ): Promise<{ documents: R[]; count: number }> {
+    if (!this.client) throw new Error('Client not connected');
+
+    const results = await this.client.db(dbName).collection(collectionName).aggregate<R>(pipeline);
+    return { documents: results, count: results.length };
+  }
+
   static async stats(dbName: string, collectionName: string): Promise<Record<string, unknown>> {
     if (!this.client) throw new Error('Client not connected');
     return this.client.db(dbName).collection(collectionName).stats() as unknown as Record<string, unknown>;
@@ -253,5 +300,60 @@ export class LioranDBService {
   static async databaseStats(dbName: string): Promise<Record<string, unknown>> {
     if (!this.client) throw new Error('Client not connected');
     return this.client.databaseStats(dbName) as unknown as Record<string, unknown>;
+  }
+
+  static async listDocs() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.listDocs();
+  }
+
+  static async getDoc(id: string) {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.getDoc(id);
+  }
+
+  static async me() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.me();
+  }
+
+  static async listUsers() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.listUsers();
+  }
+
+  static async issueUserToken(userId: string) {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.issueUserToken(userId);
+  }
+
+  static async updateMyCors(origins: string[]) {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.updateMyCors(origins);
+  }
+
+  static async updateUserCors(userId: string, origins: string[]) {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.updateUserCors(userId, origins);
+  }
+
+  static async maintenanceStatus() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.maintenanceStatus();
+  }
+
+  static async listSnapshots() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.listSnapshots();
+  }
+
+  static async createSnapshotNow() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.createSnapshotNow();
+  }
+
+  static async compactAllDatabases() {
+    if (!this.client) throw new Error('Client not connected');
+    return this.client.compactAllDatabases();
   }
 }

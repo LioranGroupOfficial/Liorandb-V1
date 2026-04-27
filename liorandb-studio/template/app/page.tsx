@@ -7,14 +7,15 @@ import { useAppStore } from '@/store';
 
 export default function Home() {
   const router = useRouter();
-  const { loadFromStorage } = useAppStore();
+  const { loadFromStorage, isLoggedIn } = useAppStore();
 
   useEffect(() => {
     loadFromStorage();
+  }, [loadFromStorage]);
 
-    const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('liorandb_token'));
-    router.replace(hasToken ? '/dashboard' : '/login');
-  }, [loadFromStorage, router]);
+  useEffect(() => {
+    router.replace(isLoggedIn ? '/dashboard' : '/login');
+  }, [isLoggedIn, router]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-100 p-8 text-slate-900 dark:bg-black dark:text-slate-100">

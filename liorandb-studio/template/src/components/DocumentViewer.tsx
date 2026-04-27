@@ -73,7 +73,7 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
   }
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+    <div className="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
           Documents <span className="text-slate-500 dark:text-slate-400">({documents.length})</span>
@@ -114,7 +114,7 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-slate-600 dark:text-slate-400">
             <p>Loading documents...</p>

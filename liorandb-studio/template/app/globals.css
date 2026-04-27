@@ -62,7 +62,8 @@ html.dark {
 }
 
 body {
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
 }
 
 a {
@@ -104,6 +105,12 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(143, 164, 194, 0.5);
   background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
 }
 
 .glass-panel {

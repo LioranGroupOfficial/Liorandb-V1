@@ -34,6 +34,7 @@ export default function DashboardPage() {
   const [addDocModal, setAddDocModal] = useState(false);
   const [editDocModal, setEditDocModal] = useState(false);
   const [editingDoc, setEditingDoc] = useState<Document | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const loadDatabases = useCallback(async () => {
     try {
@@ -120,21 +121,52 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <Navbar onLogout={handleLogout} />
+    <div className="flex h-screen flex-col overflow-auto md:overflow-hidden">
+      <Navbar onLogout={handleLogout} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
+
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close explorer"
+          />
+          <div className="absolute left-0 top-0 h-full w-[320px] max-w-[85vw] shadow-xl">
+            <Sidebar
+              onDatabaseSelect={(db) => {
+                setCurrentDatabase(db);
+              }}
+              onCollectionSelect={(db, col) => {
+                setCurrentDatabase(db);
+                setSelectedCollection(col);
+                setSidebarOpen(false);
+              }}
+              onCreateDatabase={() => {
+                setCreateDbModal(true);
+              }}
+              onCreateCollection={() => {
+                setCreateColModal(true);
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar
-          onDatabaseSelect={setCurrentDatabase}
-          onCollectionSelect={(db, col) => {
-            setCurrentDatabase(db);
-            setSelectedCollection(col);
-          }}
-          onCreateDatabase={() => setCreateDbModal(true)}
-          onCreateCollection={() => setCreateColModal(true)}
-        />
+        <div className="hidden md:block">
+          <Sidebar
+            onDatabaseSelect={setCurrentDatabase}
+            onCollectionSelect={(db, col) => {
+              setCurrentDatabase(db);
+              setSelectedCollection(col);
+            }}
+            onCreateDatabase={() => setCreateDbModal(true)}
+            onCreateCollection={() => setCreateColModal(true)}
+          />
+        </div>
 
-        <main className="min-h-0 flex-1 bg-slate-100 p-3 dark:bg-black md:p-4">
+        <main className="min-h-0 flex-1 overflow-auto bg-slate-100 p-3 dark:bg-black md:p-4">
           {!currentDatabase ? (
             <EmptyState
               icon={<DatabaseZap className="h-10 w-10 text-emerald-600 dark:text-emerald-400" />}
@@ -152,7 +184,7 @@ export default function DashboardPage() {
               onAction={() => setCreateColModal(true)}
             />
           ) : (
-            <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_400px]">
+            <div className="grid min-h-0 gap-4 md:h-full lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,480px)]">
               <DocumentViewer
                 onAddDocument={() => setAddDocModal(true)}
                 onEditDocument={(doc) => {

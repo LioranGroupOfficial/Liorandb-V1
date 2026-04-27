@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
+    "build:exe": "node build-exe.js",
     "start": "node dist/server.js",
     "cli": "ts-node src/cli/index.ts",
     "users": "ts-node src/cli/users.ts"
@@ -34,7 +35,9 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.1",
     "commander": "^14.0.2",
+    "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.1.11",
+    "pkg": "^5.8.1",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
