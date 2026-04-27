@@ -2,15 +2,24 @@ import {
   DocumentData,
   Filter,
   LioranAggregateResponse,
+  LioranCompactCollectionResponse,
   LioranCollectionStats,
   LioranCountResponse,
+  LioranCreateIndexResponse,
   LioranDeleteManyResponse,
+  LioranDeleteOneResponse,
+  LioranDropIndexResponse,
   LioranExplainResponse,
   LioranFindResponse,
+  LioranFindOneResponse,
   LioranFindOptions,
   LioranInsertManyResponse,
   LioranInsertOneResponse,
+  LioranListIndexesResponse,
+  LioranRebuildAllIndexesResponse,
   LioranUpdateManyResponse,
+  LioranUpdateOneOptions,
+  LioranUpdateOneResponse,
   UpdateQuery,
 } from "./types";
 import { HttpClient } from "./http";
@@ -56,8 +65,25 @@ export class Collection<T extends DocumentData = DocumentData> {
     filter: Filter = {},
     options?: LioranFindOptions
   ): Promise<(T & { _id?: string }) | null> {
-    const res = await this.find(filter, { ...options, limit: 1 });
-    return res[0] || null;
+    return (await this.http.post<LioranFindOneResponse<T>>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/findOne`,
+      { query: filter, options }
+    )).doc;
+  }
+
+  async updateOne(
+    filter: Filter,
+    update: UpdateQuery,
+    options?: LioranUpdateOneOptions
+  ): Promise<(T & { _id?: string }) | null> {
+    return (await this.http.patch<LioranUpdateOneResponse<T>>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/updateOne`,
+      { filter, update, options }
+    )).doc;
   }
 
   async updateMany(
@@ -90,6 +116,19 @@ export class Collection<T extends DocumentData = DocumentData> {
     )).count;
   }
 
+  async countDocuments(filter: Filter = {}): Promise<number> {
+    return this.count(filter);
+  }
+
+  async deleteOne(filter: Filter): Promise<(T & { _id?: string }) | null> {
+    return (await this.http.post<LioranDeleteOneResponse<T>>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/deleteOne`,
+      { filter }
+    )).doc;
+  }
+
   async aggregate<R = unknown>(pipeline: unknown[] = []): Promise<R[]> {
     return (await this.http.post<LioranAggregateResponse<R>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
@@ -97,6 +136,47 @@ export class Collection<T extends DocumentData = DocumentData> {
       )}/aggregate`,
       { pipeline }
     )).results;
+  }
+
+  async listIndexes(): Promise<LioranListIndexesResponse["indexes"]> {
+    return (await this.http.get<LioranListIndexesResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes`
+    )).indexes;
+  }
+
+  async createIndex(field: string, options?: { unique?: boolean }): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes`,
+      { field, unique: !!options?.unique }
+    );
+  }
+
+  async dropIndex(field: string): Promise<LioranDropIndexResponse> {
+    return this.http.delete<LioranDropIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/${encodeURIComponent(field)}`
+    );
+  }
+
+  async rebuildIndex(field: string): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/${encodeURIComponent(field)}/rebuild`
+    );
+  }
+
+  async rebuildIndexes(): Promise<LioranRebuildAllIndexesResponse> {
+    return this.http.post<LioranRebuildAllIndexesResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/rebuild`
+    );
   }
 
   async explain(
@@ -116,6 +196,14 @@ export class Collection<T extends DocumentData = DocumentData> {
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/stats`
+    );
+  }
+
+  async compact(): Promise<LioranCompactCollectionResponse> {
+    return this.http.post<LioranCompactCollectionResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/compact`
     );
   }
 }

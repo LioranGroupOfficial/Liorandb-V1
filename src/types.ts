@@ -155,6 +155,10 @@ export interface LioranFindResponse<T extends DocumentData> {
   results: Array<T & { _id?: string }>;
 }
 
+export interface LioranFindOneResponse<T extends DocumentData> {
+  doc: (T & { _id?: string }) | null;
+}
+
 export interface LioranAggregateResponse<R = unknown> {
   results: R[];
 }
@@ -168,9 +172,23 @@ export interface LioranExplainResponse {
   explain: LioranExplainPlan;
 }
 
+export interface LioranUpdateOneOptions {
+  upsert?: boolean;
+}
+
+export interface LioranUpdateOneResponse<T extends DocumentData = DocumentData> {
+  ok: true;
+  doc: (T & { _id?: string }) | null;
+}
+
 export interface LioranUpdateManyResponse<T extends DocumentData = DocumentData> {
   updated: number;
   docs: Array<T & { _id?: string }>;
+}
+
+export interface LioranDeleteOneResponse<T extends DocumentData = DocumentData> {
+  ok: true;
+  doc: (T & { _id?: string }) | null;
 }
 
 export interface LioranDeleteManyResponse {
@@ -192,7 +210,60 @@ export type UpdateQuery = {
   $set?: Record<string, any>;
   $inc?: Record<string, number>;
   $unset?: Record<string, boolean>;
+  [key: string]: any;
 };
+
+export interface LioranIndexEntry {
+  field: string;
+  unique: boolean;
+  persisted: boolean;
+}
+
+export interface LioranListIndexesResponse {
+  ok: true;
+  collection: string;
+  indexes: LioranIndexEntry[];
+}
+
+export interface LioranCreateIndexResponse {
+  ok: true;
+  collection: string;
+  field: string;
+  unique: boolean;
+}
+
+export interface LioranDropIndexResponse {
+  ok: true;
+  collection: string;
+  field: string;
+}
+
+export interface LioranRebuildAllIndexesResponse {
+  ok: true;
+  collection: string;
+  rebuilt: number;
+}
+
+export interface LioranCompactCollectionResponse {
+  ok: true;
+  db: string;
+  collection: string;
+}
+
+export interface LioranCompactDatabaseResponse {
+  ok: true;
+  db: string;
+}
+
+export interface LioranTransactionResponse<R = any> {
+  ok: true;
+  result: R;
+}
+
+export interface LioranMaintenanceCompactAllResponse {
+  ok: true;
+  databases: number;
+}
 
 export interface LioranDocsIndexEntry {
   id: string;

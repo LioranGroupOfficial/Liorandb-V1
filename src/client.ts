@@ -14,6 +14,7 @@ import {
   LioranHostInfoResponse,
   LioranIssueUserTokenResponse,
   LioranMaintenanceCreateSnapshotResponse,
+  LioranMaintenanceCompactAllResponse,
   LioranMaintenanceSnapshotsResponse,
   LioranMaintenanceStatusResponse,
   LioranManagedDatabase,
@@ -199,6 +200,13 @@ export class LioranClient {
     this.assertAuthenticated();
     return this.http.post<LioranMaintenanceCreateSnapshotResponse>(
       "/maintenance/snapshots"
+    );
+  }
+
+  async compactAllDatabases(): Promise<LioranMaintenanceCompactAllResponse> {
+    this.assertAuthenticated();
+    return this.http.post<LioranMaintenanceCompactAllResponse>(
+      "/maintenance/compact/all"
     );
   }
 
