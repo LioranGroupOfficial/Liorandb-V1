@@ -1,11 +1,21 @@
 {
-    "currentVersion": "1.1.6",
-    "earlyProductionVersion": "1.1.6",
-    "windows": [
-        {
-            "version": "1.1.6",
-            "exe-url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB_Setup.exe",
-            "zip-url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB-1.1.6.zip"
+  "schemaVersion": 1,
+  "defaultChannel": "earlyProduction",
+  "channels": {
+    "earlyProduction": {
+      "version": "1.1.6",
+      "platforms": {
+        "windows": {
+          "artifacts": {
+            "zip": {
+              "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB-1.1.6.zip"
+            },
+            "exe": {
+              "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB_Setup.exe"
+            }
+          }
         }
-    ]
+      }
+    }
+  }
 }

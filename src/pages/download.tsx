@@ -15,6 +15,11 @@ type WindowsRelease = {
 };
 
 type ReleaseJson = {
+  schemaVersion?: number;
+  defaultChannel?: string;
+  channels?: unknown;
+
+  // legacy fields (kept for backward compatibility)
   currentVersion?: string;
   earlyProductionVersion?: string;
   windows?: unknown[];
@@ -31,6 +36,39 @@ type WindowsEntryLinks = {
   ['exe-url']?: string;
 };
 
+type ArtifactObj = {
+  url?: string;
+};
+
+type ChannelV1 = {
+  version?: string;
+  platforms?: {
+    windows?: {
+      artifacts?: unknown;
+    };
+  };
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getChannel(data: ReleaseJson | null): ChannelV1 | null {
+  if (!data || data.schemaVersion !== 1) return null;
+  if (!isRecord(data.channels)) return null;
+
+  const defaultChannel = typeof data.defaultChannel === 'string' ? data.defaultChannel : null;
+  const channels = data.channels as Record<string, unknown>;
+  const candidate =
+    (defaultChannel && channels[defaultChannel]) ||
+    channels.earlyProduction ||
+    channels.stable ||
+    channels.beta ||
+    Object.values(channels)[0];
+
+  return (isRecord(candidate) ? (candidate as ChannelV1) : null) ?? null;
+}
+
 function inferWindowsType(rel: WindowsRelease): 'zip' | 'exe' | null {
   const explicit = (rel.type ?? '').toLowerCase();
   if (explicit === 'zip' || explicit === 'exe') return explicit;
@@ -41,6 +79,42 @@ function inferWindowsType(rel: WindowsRelease): 'zip' | 'exe' | null {
 }
 
 function pickWindowsDownloads(data: ReleaseJson | null): WindowsDownloads {
+  // v1 schema (scalable):
+  // channels[channel].platforms.windows.artifacts.{zip|exe}.url
+  const channel = getChannel(data);
+  const v1Version = channel?.version ?? data?.currentVersion ?? data?.earlyProductionVersion ?? '';
+  const artifacts = channel?.platforms?.windows?.artifacts;
+  if (artifacts) {
+    // object form: { zip: { url }, exe: { url } }
+    if (isRecord(artifacts)) {
+      const zipObj = artifacts.zip;
+      const exeObj = artifacts.exe;
+      const zipUrl = isRecord(zipObj) ? (zipObj as ArtifactObj).url : undefined;
+      const exeUrl = isRecord(exeObj) ? (exeObj as ArtifactObj).url : undefined;
+      if (zipUrl || exeUrl) {
+        return {
+          zip: zipUrl ? { version: v1Version, url: zipUrl, type: 'zip' } : null,
+          exe: exeUrl ? { version: v1Version, url: exeUrl, type: 'exe' } : null,
+        };
+      }
+    }
+
+    // array form: [{ type: 'zip'|'exe', url }, ...]
+    if (Array.isArray(artifacts)) {
+      let zip: WindowsRelease | null = null;
+      let exe: WindowsRelease | null = null;
+      for (const item of artifacts) {
+        if (!isRecord(item)) continue;
+        const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
+        const url = typeof item.url === 'string' ? item.url : '';
+        if (!url) continue;
+        if (type === 'zip' && !zip) zip = { version: v1Version, url, type: 'zip' };
+        if (type === 'exe' && !exe) exe = { version: v1Version, url, type: 'exe' };
+      }
+      if (zip || exe) return { zip, exe };
+    }
+  }
+
   const windowsRaw = data?.windows ?? [];
 
   // New schema support:
