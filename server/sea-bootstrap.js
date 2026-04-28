@@ -1,79 +1,128 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { createRequire } = require("node:module");
+const { createRequire } =
+  require("node:module");
 const sea = require("node:sea");
 
 if (!sea.isSea()) {
-  console.error("Not running inside SEA");
+  console.error(
+    "Not running inside SEA"
+  );
   process.exit(1);
 }
 
+const PKG = require("./package.json");
+
 const APP_NAME = "ldb-runtime";
-const APP_VERSION = "1.0.0";
+
+const APP_VERSION =
+  PKG.version;
 
 /**
- * Use versioned temp dir so updates refresh automatically
+ * Shared runtime directory
+ *
+ * Windows:
+ * C:\Users\<user>\ldb-runtime\<version>
+ *
+ * Mac:
+ * ~/ldb-runtime/<version>
+ *
+ * Linux:
+ * ~/ldb-runtime/<version>
  */
-const tmpDir = path.join(
-  os.tmpdir(),
-  APP_NAME,
-  APP_VERSION
-);
 
-/**
- * Marker file to prevent re-extraction every run
- */
-const marker = path.join(tmpDir, ".extracted");
+const runtimeDir =
+  path.join(
+    os.homedir(),
+    APP_NAME,
+    APP_VERSION
+  );
+
+const marker =
+  path.join(
+    runtimeDir,
+    ".extracted"
+  );
 
 if (!fs.existsSync(marker)) {
-  fs.mkdirSync(tmpDir, { recursive: true });
+  fs.mkdirSync(
+    runtimeDir,
+    {
+      recursive: true,
+    }
+  );
 
-  console.log("Extracting runtime files...");
+  console.log(
+    "Extracting runtime files..."
+  );
 
   for (const key of sea.getAssetKeys()) {
-    if (key === "entry.txt") continue;
+    if (key === "entry.txt")
+      continue;
 
-    const filePath = path.join(tmpDir, key);
+    const filePath =
+      path.join(
+        runtimeDir,
+        key
+      );
 
     fs.mkdirSync(
       path.dirname(filePath),
-      { recursive: true }
+      {
+        recursive: true,
+      }
     );
 
-    const data = sea.getRawAsset(key);
+    const data =
+      sea.getRawAsset(key);
 
     fs.writeFileSync(
       filePath,
       new Uint8Array(data)
     );
+
+    if (
+      process.platform !==
+      "win32"
+    ) {
+      fs.chmodSync(
+        filePath,
+        0o755
+      );
+    }
   }
 
-  fs.writeFileSync(marker, "ok");
+  fs.writeFileSync(
+    marker,
+    "ok"
+  );
 }
 
-/**
- * Read entry file
- */
-const entry = sea
-  .getAsset("entry.txt", "utf8")
-  .trim();
+const entry =
+  sea
+    .getAsset(
+      "entry.txt",
+      "utf8"
+    )
+    .trim();
 
-const entryPath = path.join(tmpDir, entry);
+const entryPath =
+  path.join(
+    runtimeDir,
+    entry
+  );
 
 if (!fs.existsSync(entryPath)) {
-  console.error("Entry not found:", entry);
+  console.error(
+    "Entry not found:",
+    entry
+  );
   process.exit(1);
 }
 
-/**
- * CRITICAL for node_modules resolution
- */
-process.chdir(tmpDir);
+process.chdir(runtimeDir);
 
-/**
- * Make require resolve from extracted runtime
- */
 const requireFromTmp =
   createRequire(entryPath);
 
