@@ -82,3 +82,27 @@ start().catch(async (error) => {
   await manager.closeAll();
   process.exit(1);
 });
+
+let isShuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\nReceived ${signal}. Shutting down gracefully...`);
+
+  try {
+    await manager.closeAll();
+    console.log("All connections closed.");
+  } catch (err) {
+    console.error("Error during shutdown:", err);
+  } finally {
+    process.exit(0);
+  }
+}
+
+// Handle Ctrl+C
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Handle kill command (e.g. systemd, docker)
+process.on("SIGTERM", () => shutdown("SIGTERM"));
