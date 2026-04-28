@@ -7,6 +7,8 @@ import { parseCLIArgs } from "./utils/cli";
 import { ensureAdminUser } from "./utils/startup";
 import { startSnapshotScheduler } from "./utils/snapshots";
 import { logDiskIntegrityWarnings } from "./utils/integrity";
+import { registerShutdownHandler, requestShutdown } from "./utils/shutdown";
+import { readServerConfig, writeServerConfig } from "./utils/serverConfig";
 
 const cli = parseCLIArgs();
 const PORT = 4000;
@@ -65,7 +67,7 @@ async function start() {
 
   await logDiskIntegrityWarnings();
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const httpServer = app.listen(PORT, "0.0.0.0", () => {
     console.log("======================================");
     console.log("LioranDB Host is LIVE");
     console.log(`Listening on port: ${PORT}`);
@@ -74,6 +76,54 @@ async function start() {
     );
     printHostAddresses(PORT);
     console.log("======================================");
+  });
+
+  const baseUrl = process.env.LIORANDB_BASE_URL || `http://localhost:${PORT}`;
+
+  writeServerConfig({
+    version: 1,
+    baseUrl,
+    stopEndpoint: "/maintenance/stop",
+    restart: {
+      command: process.execPath,
+      args: process.argv.slice(1),
+      cwd: process.cwd(),
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([, v]) => typeof v === "string") as Array<[string, string]>
+      ),
+    },
+    lastStartedAt: new Date().toISOString(),
+  });
+
+  registerShutdownHandler(async (reason: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    console.log(`\nShutdown requested (${reason}). Shutting down gracefully...`);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => (err ? reject(err) : resolve()));
+      });
+    } catch (err) {
+      console.error("Error while closing HTTP server:", err);
+    }
+
+    try {
+      await manager.closeAll();
+      console.log("All connections closed.");
+    } catch (err) {
+      console.error("Error during shutdown:", err);
+    } finally {
+      const previous = readServerConfig();
+      if (previous) {
+        writeServerConfig({
+          ...previous,
+          lastStoppedAt: new Date().toISOString(),
+        });
+      }
+      process.exit(0);
+    }
   });
 }
 
@@ -86,18 +136,18 @@ start().catch(async (error) => {
 let isShuttingDown = false;
 
 async function shutdown(signal: string) {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-
-  console.log(`\nReceived ${signal}. Shutting down gracefully...`);
-
   try {
-    await manager.closeAll();
-    console.log("All connections closed.");
+    await requestShutdown(signal);
   } catch (err) {
-    console.error("Error during shutdown:", err);
-  } finally {
-    process.exit(0);
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`\nReceived ${signal}. Shutting down...`);
+    try {
+      await manager.closeAll();
+    } finally {
+      process.exit(0);
+    }
+    console.error("Shutdown handler failed:", err);
   }
 }
 

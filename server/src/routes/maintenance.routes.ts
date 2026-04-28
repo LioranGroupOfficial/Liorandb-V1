@@ -6,9 +6,13 @@ import {
   listSnapshotFiles,
   maintenanceStatus,
   compactAllDatabases,
+  stopServer,
 } from "../controllers/maintenance.controller";
 
 const router = Router();
+
+// secret-based server stop (does not require JWT auth)
+router.post("/stop", stopServer);
 
 router.use(authMiddleware, userCorsMiddleware);
 

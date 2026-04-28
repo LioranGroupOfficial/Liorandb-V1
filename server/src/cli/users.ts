@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "child_process";
+import { spawn } from "child_process";
+import fs from "fs";
 import bcrypt from "bcryptjs";
 import { getAuthCollection, manager } from "../config/database";
 import { AuthUser } from "../types/auth-user";
+import { getSecretFilePath } from "../utils/secret";
+import { readServerConfig, ServerRestartCommand } from "../utils/serverConfig";
 
 function printUsage() {
   console.log(`Usage:
@@ -75,6 +79,126 @@ function requireRootUser() {
 
   console.error("This CLI can only be used by an elevated OS account (Administrator on Windows or root on Unix).");
   process.exit(1);
+}
+
+function normalizeBaseUrl(baseUrl: string) {
+  const trimmed = (baseUrl || "").trim();
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+}
+
+function loadSecretFromDisk() {
+  try {
+    const secretFilePath = getSecretFilePath();
+    if (!fs.existsSync(secretFilePath)) return null;
+    const secret = fs.readFileSync(secretFilePath, "utf8").trim();
+    return secret || null;
+  } catch {
+    return null;
+  }
+}
+
+async function postJson(url: string, body: any, timeoutMs: number) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+      signal: ctrl.signal,
+    });
+
+    const text = await res.text().catch(() => "");
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+
+    return { ok: res.ok, status: res.status, json, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function waitForHealthDown(baseUrl: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${baseUrl}/health`, { method: "GET" });
+      if (!res.ok) return;
+    } catch {
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
+async function waitForHealthUp(baseUrl: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${baseUrl}/health`, { method: "GET" });
+      if (res.ok) return true;
+    } catch {
+      // ignore
+    }
+
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return false;
+}
+
+function startServerInBackground(restart: ServerRestartCommand) {
+  const child = spawn(restart.command, restart.args, {
+    cwd: restart.cwd || process.cwd(),
+    env: { ...process.env, ...(restart.env || {}) },
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+
+  child.unref();
+}
+
+async function withServerStopped<T>(fn: () => Promise<T>) {
+  const cfg = readServerConfig();
+  const baseUrl = normalizeBaseUrl(cfg?.baseUrl || "http://localhost:4000");
+  const stopEndpoint = cfg?.stopEndpoint || "/maintenance/stop";
+  const restart = cfg?.restart;
+
+  const secret = loadSecretFromDisk();
+  let didStop = false;
+
+  if (secret) {
+    try {
+      const stopUrl = `${baseUrl}${stopEndpoint.startsWith("/") ? stopEndpoint : `/${stopEndpoint}`}`;
+      const res = await postJson(stopUrl, { secret }, 1500);
+      if (res.ok) {
+        didStop = true;
+        await waitForHealthDown(baseUrl, 8000);
+      }
+    } catch {
+      // ignore (server likely not running)
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (didStop && restart) {
+      try {
+        startServerInBackground(restart);
+        await waitForHealthUp(baseUrl, 12_000);
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 async function listUsers() {
@@ -177,31 +301,33 @@ async function setPassword(username: string, password: string) {
 async function main() {
   requireRootUser();
 
-  const [command, ...args] = getCommandArgs();
+  await withServerStopped(async () => {
+    const [command, ...args] = getCommandArgs();
 
-  if (!command || command === "help" || command === "--help" || command === "-h") {
-    printUsage();
-    return;
-  }
-
-  switch (command) {
-    case "list":
-      await listUsers();
-      break;
-    case "create":
-      await createUser(args[0], args[1]);
-      break;
-    case "delete":
-      await deleteUser(args[0]);
-      break;
-    case "set-password":
-      await setPassword(args[0], args[1]);
-      break;
-    default:
-      console.error(`Unknown command: ${command}`);
+    if (!command || command === "help" || command === "--help" || command === "-h") {
       printUsage();
-      process.exit(1);
-  }
+      return;
+    }
+
+    switch (command) {
+      case "list":
+        await listUsers();
+        break;
+      case "create":
+        await createUser(args[0], args[1]);
+        break;
+      case "delete":
+        await deleteUser(args[0]);
+        break;
+      case "set-password":
+        await setPassword(args[0], args[1]);
+        break;
+      default:
+        console.error(`Unknown command: ${command}`);
+        printUsage();
+        process.exit(1);
+    }
+  });
 }
 
 main()

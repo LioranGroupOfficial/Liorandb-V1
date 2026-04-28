@@ -9,6 +9,8 @@ import {
 import { manager } from "../config/database";
 import { listDatabaseNames } from "../utils/coreStorage";
 import { sendApiError } from "../utils/apiError";
+import { JWT_SECRET } from "../utils/token";
+import { requestShutdown } from "../utils/shutdown";
 
 function requireAdmin(req: Request, res: Response) {
   const auth = getRequestAuth(req);
@@ -72,4 +74,27 @@ export const compactAllDatabases = async (req: Request, res: Response) => {
   } catch (error) {
     return sendApiError(res, error, 500);
   }
+};
+
+export const stopServer = async (req: Request, res: Response) => {
+  const { secret } = (req.body || {}) as { secret?: string };
+
+  if (!secret) {
+    return res.status(400).json({ ok: false, error: "secret required" });
+  }
+
+  if (secret !== JWT_SECRET) {
+    return res.status(401).json({ ok: false, error: "invalid secret" });
+  }
+
+  res.json({ ok: true, shuttingDown: true });
+
+  const timer = setTimeout(() => {
+    requestShutdown("maintenance/stop").catch((err) => {
+      console.error("Failed to shutdown via stop endpoint:", err);
+    });
+  }, 50);
+
+  // best-effort: don't keep process alive for this timer
+  (timer as any).unref?.();
 };
