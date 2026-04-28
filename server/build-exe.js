@@ -5,6 +5,7 @@ const { execSync } = require("child_process");
 const ROOT = process.cwd();
 
 const DIST = path.join(ROOT, "dist");
+const PUBLIC = path.join(ROOT, "public");
 const NODE_MODULES = path.join(ROOT, "node_modules");
 
 const PKG = require(path.join(ROOT, "package.json"));
@@ -126,6 +127,13 @@ const baseAssets = {
     NODE_MODULES,
     shouldIncludeNodeModulesAsset,
     "node_modules/"
+  ),
+  
+  ...getFiles(
+    PUBLIC,
+    PUBLIC,
+    null,
+    "public/"
   ),
 };
 
