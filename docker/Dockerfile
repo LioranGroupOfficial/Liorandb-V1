@@ -5,7 +5,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install your package globally
-RUN npm install -g @liorandb/db@1.1.8
+RUN npm install -g @liorandb/db@1.1.11
 
 # Create data directory
 RUN mkdir -p /data
