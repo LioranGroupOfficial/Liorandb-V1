@@ -17,12 +17,18 @@ type WindowsRelease = {
 type ReleaseJson = {
   currentVersion?: string;
   earlyProductionVersion?: string;
-  windows?: WindowsRelease[];
+  windows?: unknown[];
 };
 
 type WindowsDownloads = {
   zip: WindowsRelease | null;
   exe: WindowsRelease | null;
+};
+
+type WindowsEntryLinks = {
+  version?: string;
+  ['zip-url']?: string;
+  ['exe-url']?: string;
 };
 
 function inferWindowsType(rel: WindowsRelease): 'zip' | 'exe' | null {
@@ -35,7 +41,30 @@ function inferWindowsType(rel: WindowsRelease): 'zip' | 'exe' | null {
 }
 
 function pickWindowsDownloads(data: ReleaseJson | null): WindowsDownloads {
-  const releases = (data?.windows ?? []).filter((r) => Boolean(r?.url));
+  const windowsRaw = data?.windows ?? [];
+
+  // New schema support:
+  // windows: [{ version, "exe-url": "...", "zip-url": "..." }]
+  for (const entry of windowsRaw) {
+    const obj = entry as WindowsEntryLinks;
+    const zipUrl = obj?.['zip-url'];
+    const exeUrl = obj?.['exe-url'];
+    if (zipUrl || exeUrl) {
+      const version = obj?.version ?? data?.currentVersion ?? data?.earlyProductionVersion ?? '';
+      return {
+        zip: zipUrl ? { version, url: zipUrl, type: 'zip' } : null,
+        exe: exeUrl ? { version, url: exeUrl, type: 'exe' } : null,
+      };
+    }
+  }
+
+  // Legacy schema support:
+  // windows: [{ version, url, type? }, ...]
+  const releases = windowsRaw
+    .filter((r) => typeof r === 'object' && r !== null)
+    .map((r) => r as Partial<WindowsRelease>)
+    .filter((r): r is WindowsRelease => typeof r.url === 'string' && typeof r.version === 'string');
+
   let zip: WindowsRelease | null = null;
   let exe: WindowsRelease | null = null;
 
