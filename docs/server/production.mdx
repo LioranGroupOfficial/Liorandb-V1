@@ -30,30 +30,34 @@ Use `--root` to place data on a dedicated volume/disk.
 
 ## Docker example
 
-This example assumes you are building an image from the `@liorandb/db` server repository output (a `dist/` folder that contains `server.js`).
+Use the published Docker image (recommended) and mount a local folder for persistence.
 
-Example `Dockerfile`:
+Example `docker run` (Windows PowerShell, one line):
 
-```dockerfile
-FROM node:20-alpine
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-COPY dist ./dist
-
-EXPOSE 4000
-CMD ["node", "dist/server.js"]
+```powershell
+docker run -d -p 4000:4000 -v "${PWD}\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest
 ```
 
-Example `docker run` (mount data):
+This creates (or reuses) a local folder at `.\liorandb-data` next to where you run the command.
+
+Then open Studio:
+
+- `http://localhost:4000`
+
+### User management (inside container)
+
+To manage server users with `ldb-users`, open a shell inside the container:
 
 ```bash
-docker run -d \
-  -p 4000:4000 \
-  -v liorandb-data:/app/data \
-  --name liorandb-server \
-  liorandb-server
+docker exec -it liorandb sh
+```
+
+If the image has `bash`, you can use `bash` instead of `sh`.
+
+See: [User management (ldb-users)](./users)
+
+Example:
+
+```bash
+ldb-users list
 ```

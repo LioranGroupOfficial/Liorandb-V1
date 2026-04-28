@@ -188,14 +188,14 @@ export default function DownloadPage(): ReactNode {
   const chosenWindows = winChoice === 'zip' ? windows.zip : windows.exe;
 
   return (
-    <Layout title="Download" description="Download Liorandb for Windows and get started with the server via npm.">
+    <Layout title="Download" description="Download Liorandb for Windows and get started via npm or Docker.">
       <header className={clsx('hero hero--primary', styles.heroBanner)}>
         <div className="container">
           <Heading as="h1" className="hero__title">
             Download
           </Heading>
           <p className="hero__subtitle">
-            Windows installer + npm server package{headlineVersion ? ` (v${headlineVersion})` : ''}.
+            Windows installer + npm server package + Docker image{headlineVersion ? ` (v${headlineVersion})` : ''}.
           </p>
         </div>
       </header>
@@ -285,9 +285,21 @@ export default function DownloadPage(): ReactNode {
                 <Link className="button button--secondary" to="/docs/server/server-quickstart">
                   Continue to quickstart
                 </Link>
+                <Link className="button button--primary" to="/docs/server/production#docker-example">
+                  Continue with Docker
+                </Link>
                 <a className="button button--link" href="https://db.lioransolutions.com/docs/server/server-quickstart">
                   Open docs site
                 </a>
+              </div>
+
+              <div className={styles.actions}>
+                <Link className="button button--secondary" to="/docs/driver/getting-started">
+                  Node.js driver
+                </Link>
+                <Link className="button button--secondary" to="/docs/driver-python/getting-started">
+                  Python driver
+                </Link>
               </div>
               <p className={styles.finePrint}>macOS and Linux downloads are coming soon.</p>
             </div>
