@@ -3,12 +3,12 @@
   "defaultChannel": "earlyProduction",
   "channels": {
     "earlyProduction": {
-      "version": "1.1.6",
+      "version": "1.1.11",
       "platforms": {
         "windows": {
           "artifacts": {
             "zip": {
-              "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB-1.1.6.zip"
+              "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB-1.1.11.zip"
             },
             "exe": {
               "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB_Setup.exe"
