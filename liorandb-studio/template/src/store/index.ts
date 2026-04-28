@@ -18,7 +18,7 @@ interface AppStore extends StoreState {
   setSelectedCollection: (col: string | null) => void;
   setDatabases: (databases: Database[]) => void;
   setCollections: (dbName: string, collections: Collection[]) => void;
-  setDocuments: (documents: Document[]) => void;
+  setDocuments: (payload: { documents: Document[]; count?: number }) => void;
   setQueryResults: (results: QueryResult | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -44,6 +44,7 @@ export const useAppStore = create<AppStore>((set) => ({
   databases: [],
   collections: {},
   documents: [],
+  documentsCount: 0,
   queryResults: null,
   isLoading: false,
   error: null,
@@ -91,6 +92,7 @@ export const useAppStore = create<AppStore>((set) => ({
       databases: [],
       collections: {},
       documents: [],
+      documentsCount: 0,
       queryResults: null,
       currentDatabase: null,
       selectedCollection: null,
@@ -104,7 +106,8 @@ export const useAppStore = create<AppStore>((set) => ({
     }
   },
 
-  setCurrentDatabase: (db) => set({ currentDatabase: db, selectedCollection: null, documents: [] }),
+  setCurrentDatabase: (db) =>
+    set({ currentDatabase: db, selectedCollection: null, documents: [], documentsCount: 0 }),
   setSelectedCollection: (col) => set({ selectedCollection: col, queryResults: null }),
   setDatabases: (databases) => set({ databases }),
   setCollections: (dbName, collections) =>
@@ -114,7 +117,8 @@ export const useAppStore = create<AppStore>((set) => ({
         [dbName]: collections,
       },
     })),
-  setDocuments: (documents) => set({ documents }),
+  setDocuments: ({ documents, count }) =>
+    set((state) => ({ documents, documentsCount: typeof count === 'number' ? count : state.documentsCount })),
   setQueryResults: (results) => set({ queryResults: results }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),

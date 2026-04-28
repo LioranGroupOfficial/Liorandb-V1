@@ -16,7 +16,7 @@ export function Navbar({ onLogout, onToggleSidebar }: NavbarProps) {
   const { theme, toggleTheme } = useThemeStore();
 
   return (
-    <header className="flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 text-slate-900 dark:border-slate-800 dark:bg-black dark:text-slate-100">
+    <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 text-slate-900 dark:border-slate-800 dark:bg-black dark:text-slate-100">
       <div className="flex min-w-0 items-center gap-3">
         {onToggleSidebar ? (
           <button
@@ -61,7 +61,7 @@ export function Navbar({ onLogout, onToggleSidebar }: NavbarProps) {
           </div>
         ) : null}
 
-        <button
+        {/* <button
           type="button"
           onClick={toggleTheme}
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
@@ -69,7 +69,7 @@ export function Navbar({ onLogout, onToggleSidebar }: NavbarProps) {
           aria-label="Toggle theme"
         >
           {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
+        </button> */}
 
         <button
           onClick={onLogout}

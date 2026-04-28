@@ -67,6 +67,7 @@ export interface StoreState {
   databases: Database[];
   collections: Record<string, Collection[]>;
   documents: Document[];
+  documentsCount: number;
   queryResults: QueryResult | null;
   isLoading: boolean;
   error: string | null;

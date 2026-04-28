@@ -134,7 +134,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <button
+            {/*<button
               type="button"
               onClick={toggleTheme}
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
@@ -143,6 +143,7 @@ export default function LoginPage() {
             >
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
+            */}
           </div>
 
           <div className="mb-6 flex gap-2 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">

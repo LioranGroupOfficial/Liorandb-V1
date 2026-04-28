@@ -93,8 +93,8 @@ export function QueryEditor() {
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 flex-col gap-4 overflow-auto rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Query</h3>
           <div className="flex gap-2">
@@ -131,7 +131,7 @@ export function QueryEditor() {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder={queryMode === 'find' ? '{"field": "value"}' : '[{ "$match": { "field": "value" } }]'}
-          className="min-h-0 flex-1 resize-none rounded-lg border border-slate-200 bg-white p-3 font-mono text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100"
+          className="h-40 resize-none rounded-lg border border-slate-200 bg-white p-3 font-mono text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-black dark:text-slate-100 sm:h-48 lg:h-56"
         />
 
         <button
@@ -146,7 +146,7 @@ export function QueryEditor() {
 
       {queryResults ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
-          <div className="flex items-center justify-between">
+          <div className="sticky top-0 z-10 flex items-center justify-between bg-white pb-2 dark:bg-slate-950">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Results</h3>
               <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -185,7 +185,7 @@ export function QueryEditor() {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-black">
+          <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-black">
             {resultMode === 'count' ? (
               <div className="text-center text-slate-700 dark:text-slate-300">
                 <div className="mb-2 text-4xl font-bold text-emerald-600 dark:text-emerald-400">

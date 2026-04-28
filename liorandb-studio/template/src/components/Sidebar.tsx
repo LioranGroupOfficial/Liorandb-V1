@@ -109,7 +109,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className="min-h-0 w-[300px] shrink-0 border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 md:w-[320px]">
+    <aside className="flex h-full min-h-0 w-[300px] shrink-0 flex-col border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 md:w-[320px]">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Explorer</p>
@@ -130,7 +130,7 @@ export function Sidebar({
         <MetricCard label="Collections" value={formatCompactNumber(totalCollections)} />
       </div>
 
-      <div className="min-h-0 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {databases.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600 dark:border-slate-800 dark:bg-black dark:text-slate-400">
             Create your first database to unlock the collection explorer.

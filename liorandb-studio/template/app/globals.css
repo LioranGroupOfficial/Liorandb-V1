@@ -66,6 +66,10 @@ body {
   scrollbar-gutter: stable both-edges;
 }
 
+.scrollbar-stable {
+  scrollbar-gutter: stable both-edges;
+}
+
 a {
   color: inherit;
   text-decoration: none;

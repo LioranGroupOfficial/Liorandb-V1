@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Copy, Edit2, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Edit2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { LioranDBService } from '@/lib/lioran';
 import { Document } from '@/types';
@@ -15,23 +15,35 @@ interface DocumentViewerProps {
 }
 
 export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewerProps) {
-  const { currentDatabase, selectedCollection, documents, isLoading } = useAppStore();
+  const { currentDatabase, selectedCollection, documents, documentsCount, isLoading } = useAppStore();
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
+  const [page, setPage] = useState(0);
   const { addToast } = useToast();
 
   useEffect(() => {
     if (!currentDatabase || !selectedCollection) return;
-    void loadDocuments();
+    void loadDocuments(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDatabase, selectedCollection]);
 
-  async function loadDocuments() {
+  useEffect(() => {
+    function handleReload() {
+      void loadDocuments(true);
+    }
+
+    window.addEventListener('liorandb:reload-documents', handleReload as EventListener);
+    return () => window.removeEventListener('liorandb:reload-documents', handleReload as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDatabase, selectedCollection]);
+
+  async function loadDocuments(resetPage = false) {
     if (!currentDatabase || !selectedCollection) return;
 
     try {
       useAppStore.setState({ isLoading: true });
-      const { documents: docs } = await LioranDBService.find(currentDatabase, selectedCollection, {}, 100);
-      useAppStore.setState({ documents: docs });
+      const { documents: docs, count } = await LioranDBService.find(currentDatabase, selectedCollection, {}, 100);
+      useAppStore.setState({ documents: docs, documentsCount: count });
+      if (resetPage) setPage(0);
     } catch (error) {
       addToast(error instanceof Error ? error.message : 'Failed to load documents', 'error');
     } finally {
@@ -46,8 +58,9 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
     try {
       useAppStore.setState({ isLoading: true });
       await LioranDBService.deleteMany(currentDatabase, selectedCollection, { _id: doc._id });
-      await loadDocuments();
+      await loadDocuments(true);
       addToast('Document deleted', 'success');
+      window.dispatchEvent(new CustomEvent('liorandb:refresh-metadata'));
     } catch (error) {
       addToast(error instanceof Error ? error.message : 'Failed to delete document', 'error');
     } finally {
@@ -72,11 +85,18 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
     );
   }
 
+  const pageSize = 10;
+  const totalDocuments = documentsCount || documents.length;
+  const maxPage = Math.max(0, Math.ceil(totalDocuments / pageSize) - 1);
+  const safePage = Math.min(page, maxPage);
+  const pageStartIndex = safePage * pageSize;
+  const pageDocuments = documents.slice(pageStartIndex, pageStartIndex + pageSize);
+
   return (
-    <div className="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+    <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Documents <span className="text-slate-500 dark:text-slate-400">({documents.length})</span>
+          Documents <span className="text-slate-500 dark:text-slate-400">({totalDocuments})</span>
         </h3>
 
         <div className="flex items-center gap-3">
@@ -111,6 +131,17 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
             <Plus size={16} />
             <span className="text-sm">Add Document</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => loadDocuments(true)}
+            disabled={isLoading}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+            title="Refresh documents"
+            aria-label="Refresh documents"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
@@ -124,10 +155,37 @@ export function DocumentViewer({ onAddDocument, onEditDocument }: DocumentViewer
             <p>No documents in this collection</p>
           </div>
         ) : viewMode === 'table' ? (
-          <DocumentTable documents={documents} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
+          <DocumentTable documents={pageDocuments} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
         ) : (
-          <JsonViewMode documents={documents} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
+          <JsonViewMode documents={pageDocuments} onEdit={onEditDocument} onDelete={handleDelete} onCopy={handleCopy} />
         )}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-xs text-slate-600 dark:border-slate-800 dark:text-slate-400">
+        <span>
+          Showing {Math.min(totalDocuments, pageStartIndex + 1)}–{Math.min(totalDocuments, pageStartIndex + pageDocuments.length)} of {totalDocuments}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
+            disabled={safePage === 0 || isLoading}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+          >
+            Previous
+          </button>
+          <span className="tabular-nums">
+            Page {safePage + 1} / {maxPage + 1}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.min(maxPage, current + 1))}
+            disabled={safePage >= maxPage || isLoading}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   );

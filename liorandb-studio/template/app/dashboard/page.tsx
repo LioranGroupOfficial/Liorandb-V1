@@ -61,6 +61,17 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
+    function handleRefreshMetadata() {
+      if (!currentDatabase) return;
+      void loadDatabases();
+      void loadCollections(currentDatabase);
+    }
+
+    window.addEventListener('liorandb:refresh-metadata', handleRefreshMetadata as EventListener);
+    return () => window.removeEventListener('liorandb:refresh-metadata', handleRefreshMetadata as EventListener);
+  }, [currentDatabase, loadCollections, loadDatabases]);
+
+  useEffect(() => {
     if (!isLoggedIn) {
       router.replace('/login');
     }
@@ -101,6 +112,7 @@ export default function DashboardPage() {
     addToast('Document inserted', 'success');
     setAddDocModal(false);
     window.dispatchEvent(new CustomEvent('liorandb:reload-documents'));
+    window.dispatchEvent(new CustomEvent('liorandb:refresh-metadata'));
   }
 
   async function handleEditDocument(doc: Record<string, unknown>) {
@@ -112,6 +124,7 @@ export default function DashboardPage() {
     setEditDocModal(false);
     setEditingDoc(null);
     window.dispatchEvent(new CustomEvent('liorandb:reload-documents'));
+    window.dispatchEvent(new CustomEvent('liorandb:refresh-metadata'));
   }
 
   function handleLogout() {
@@ -121,7 +134,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-auto md:overflow-hidden">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
       <Navbar onLogout={handleLogout} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
 
       {sidebarOpen ? (
@@ -166,25 +179,29 @@ export default function DashboardPage() {
           />
         </div>
 
-        <main className="min-h-0 flex-1 overflow-auto bg-slate-100 p-3 dark:bg-black md:p-4">
+        <main className="flex min-h-0 flex-1 flex-col overflow-auto bg-slate-100 p-3 dark:bg-black md:p-4 lg:overflow-hidden">
           {!currentDatabase ? (
-            <EmptyState
-              icon={<DatabaseZap className="h-10 w-10 text-emerald-600 dark:text-emerald-400" />}
-              title="Start with a database"
-              description="Create a database on the left and the studio will build the rest of the workspace around it."
-              actionLabel="Create database"
-              onAction={() => setCreateDbModal(true)}
-            />
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto">
+              <EmptyState
+                icon={<DatabaseZap className="h-10 w-10 text-emerald-600 dark:text-emerald-400" />}
+                title="Start with a database"
+                description="Create a database on the left and the studio will build the rest of the workspace around it."
+                actionLabel="Create database"
+                onAction={() => setCreateDbModal(true)}
+              />
+            </div>
           ) : !selectedCollection ? (
-            <EmptyState
-              icon={<TableProperties className="h-10 w-10 text-sky-600 dark:text-sky-400" />}
-              title={`Inside ${currentDatabase}`}
-              description="Pick a collection from the explorer or create a new one to inspect documents and run filters."
-              actionLabel="Create collection"
-              onAction={() => setCreateColModal(true)}
-            />
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto">
+              <EmptyState
+                icon={<TableProperties className="h-10 w-10 text-sky-600 dark:text-sky-400" />}
+                title={`Inside ${currentDatabase}`}
+                description="Pick a collection from the explorer or create a new one to inspect documents and run filters."
+                actionLabel="Create collection"
+                onAction={() => setCreateColModal(true)}
+              />
+            </div>
           ) : (
-            <div className="grid min-h-0 gap-4 md:h-full lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,480px)]">
+            <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] lg:grid-rows-1 lg:overflow-hidden xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,480px)]">
               <DocumentViewer
                 onAddDocument={() => setAddDocModal(true)}
                 onEditDocument={(doc) => {
