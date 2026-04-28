@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "child_process";
-import { spawn } from "child_process";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 import { getAuthCollection, manager } from "../config/database";
 import { AuthUser } from "../types/auth-user";
 import { getSecretFilePath } from "../utils/secret";
-import { readServerConfig, ServerRestartCommand } from "../utils/serverConfig";
+import { readServerConfig } from "../utils/serverConfig";
 
 function printUsage() {
   console.log(`Usage:
@@ -123,65 +122,20 @@ async function postJson(url: string, body: any, timeoutMs: number) {
   }
 }
 
-async function waitForHealthDown(baseUrl: string, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${baseUrl}/health`, { method: "GET" });
-      if (!res.ok) return;
-    } catch {
-      return;
-    }
-
-    await new Promise((r) => setTimeout(r, 150));
-  }
-}
-
-async function waitForHealthUp(baseUrl: string, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${baseUrl}/health`, { method: "GET" });
-      if (res.ok) return true;
-    } catch {
-      // ignore
-    }
-
-    await new Promise((r) => setTimeout(r, 200));
-  }
-
-  return false;
-}
-
-function startServerInBackground(restart: ServerRestartCommand) {
-  const child = spawn(restart.command, restart.args, {
-    cwd: restart.cwd || process.cwd(),
-    env: { ...process.env, ...(restart.env || {}) },
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-
-  child.unref();
-}
-
-async function withServerStopped<T>(fn: () => Promise<T>) {
+async function withServerPaused<T>(fn: () => Promise<T>) {
   const cfg = readServerConfig();
   const baseUrl = normalizeBaseUrl(cfg?.baseUrl || "http://localhost:4000");
-  const stopEndpoint = cfg?.stopEndpoint || "/maintenance/stop";
-  const restart = cfg?.restart;
+  const pauseEndpoint = cfg?.pauseEndpoint || "/maintenance/pause";
+  const resumeEndpoint = cfg?.resumeEndpoint || "/maintenance/resume";
 
   const secret = loadSecretFromDisk();
-  let didStop = false;
+  let didPause = false;
 
   if (secret) {
     try {
-      const stopUrl = `${baseUrl}${stopEndpoint.startsWith("/") ? stopEndpoint : `/${stopEndpoint}`}`;
-      const res = await postJson(stopUrl, { secret }, 1500);
-      if (res.ok) {
-        didStop = true;
-        await waitForHealthDown(baseUrl, 8000);
-      }
+      const pauseUrl = `${baseUrl}${pauseEndpoint.startsWith("/") ? pauseEndpoint : `/${pauseEndpoint}`}`;
+      const res = await postJson(pauseUrl, { secret }, 4000);
+      if (res.ok) didPause = true;
     } catch {
       // ignore (server likely not running)
     }
@@ -190,10 +144,10 @@ async function withServerStopped<T>(fn: () => Promise<T>) {
   try {
     return await fn();
   } finally {
-    if (didStop && restart) {
+    if (didPause && secret) {
       try {
-        startServerInBackground(restart);
-        await waitForHealthUp(baseUrl, 12_000);
+        const resumeUrl = `${baseUrl}${resumeEndpoint.startsWith("/") ? resumeEndpoint : `/${resumeEndpoint}`}`;
+        await postJson(resumeUrl, { secret }, 7000);
       } catch {
         // ignore
       }
@@ -301,7 +255,7 @@ async function setPassword(username: string, password: string) {
 async function main() {
   requireRootUser();
 
-  await withServerStopped(async () => {
+  await withServerPaused(async () => {
     const [command, ...args] = getCommandArgs();
 
     if (!command || command === "help" || command === "--help" || command === "-h") {

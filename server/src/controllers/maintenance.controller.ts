@@ -6,11 +6,12 @@ import {
   runSnapshot,
   getSnapshotConfig,
 } from "../utils/snapshots";
-import { manager } from "../config/database";
+import { closeManager, manager, recreateManager } from "../config/database";
 import { listDatabaseNames } from "../utils/coreStorage";
 import { sendApiError } from "../utils/apiError";
 import { JWT_SECRET } from "../utils/token";
 import { requestShutdown } from "../utils/shutdown";
+import { getPaused, setPaused } from "../utils/pause";
 
 function requireAdmin(req: Request, res: Response) {
   const auth = getRequestAuth(req);
@@ -97,4 +98,56 @@ export const stopServer = async (req: Request, res: Response) => {
 
   // best-effort: don't keep process alive for this timer
   (timer as any).unref?.();
+};
+
+function requireSecret(req: Request, res: Response) {
+  const { secret } = (req.body || {}) as { secret?: string };
+
+  if (!secret) {
+    res.status(400).json({ ok: false, error: "secret required" });
+    return null;
+  }
+
+  if (secret !== JWT_SECRET) {
+    res.status(401).json({ ok: false, error: "invalid secret" });
+    return null;
+  }
+
+  return secret;
+}
+
+export const pauseServer = async (req: Request, res: Response) => {
+  const secret = requireSecret(req, res);
+  if (!secret) return;
+
+  if (getPaused()) {
+    return res.json({ ok: true, paused: true, already: true });
+  }
+
+  setPaused(true);
+
+  try {
+    await closeManager();
+    return res.json({ ok: true, paused: true });
+  } catch (error) {
+    setPaused(false);
+    return sendApiError(res, error, 500);
+  }
+};
+
+export const resumeServer = async (req: Request, res: Response) => {
+  const secret = requireSecret(req, res);
+  if (!secret) return;
+
+  if (!getPaused()) {
+    return res.json({ ok: true, paused: false, already: true });
+  }
+
+  try {
+    await recreateManager();
+    setPaused(false);
+    return res.json({ ok: true, paused: false });
+  } catch (error) {
+    return sendApiError(res, error, 500);
+  }
 };

@@ -12,7 +12,9 @@ export type ServerRestartCommand = {
 export type ServerConfigFileV1 = {
   version: 1;
   baseUrl: string;
-  stopEndpoint: string;
+  stopEndpoint?: string;
+  pauseEndpoint?: string;
+  resumeEndpoint?: string;
   restart?: ServerRestartCommand;
   lastStartedAt?: string;
   lastStoppedAt?: string;
@@ -33,7 +35,9 @@ export function readServerConfig(): ServerConfigFileV1 | null {
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.version !== 1) return null;
     if (typeof parsed.baseUrl !== "string") return null;
-    if (typeof parsed.stopEndpoint !== "string") return null;
+    if (parsed.stopEndpoint !== undefined && typeof parsed.stopEndpoint !== "string") return null;
+    if (parsed.pauseEndpoint !== undefined && typeof parsed.pauseEndpoint !== "string") return null;
+    if (parsed.resumeEndpoint !== undefined && typeof parsed.resumeEndpoint !== "string") return null;
     return parsed as ServerConfigFileV1;
   } catch {
     return null;
@@ -52,4 +56,3 @@ export function writeServerConfig(config: ServerConfigFileV1) {
   fs.writeFileSync(tmp, JSON.stringify(config, null, 2), { encoding: "utf8" });
   fs.renameSync(tmp, file);
 }
-

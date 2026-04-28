@@ -84,6 +84,8 @@ async function start() {
     version: 1,
     baseUrl,
     stopEndpoint: "/maintenance/stop",
+    pauseEndpoint: "/maintenance/pause",
+    resumeEndpoint: "/maintenance/resume",
     restart: {
       command: process.execPath,
       args: process.argv.slice(1),
