@@ -1,4 +1,6 @@
 # Others
+installer.iss
+installer_output
 app.py
 log.txt
 logs
