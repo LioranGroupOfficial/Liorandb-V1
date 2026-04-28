@@ -4,7 +4,8 @@
     "windows": [
         {
             "version": "1.1.6",
-            "url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB_Setup.exe"
+            "exe-url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB_Setup.exe",
+            "zip-url": "https://github.com/LioranGroupOfficial/Liorandb/releases/download/EarlyProduction/LioranDB-1.1.6.zip"
         }
     ]
 }

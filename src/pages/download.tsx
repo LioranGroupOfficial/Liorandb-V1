@@ -11,6 +11,7 @@ import styles from './download.module.css';
 type WindowsRelease = {
   version: string;
   url: string;
+  type?: 'zip' | 'exe' | string;
 };
 
 type ReleaseJson = {
@@ -19,15 +20,41 @@ type ReleaseJson = {
   windows?: WindowsRelease[];
 };
 
-function pickWindowsRelease(data: ReleaseJson | null): WindowsRelease | null {
-  const first = data?.windows?.[0];
-  if (!first?.url) return null;
-  return first;
+type WindowsDownloads = {
+  zip: WindowsRelease | null;
+  exe: WindowsRelease | null;
+};
+
+function inferWindowsType(rel: WindowsRelease): 'zip' | 'exe' | null {
+  const explicit = (rel.type ?? '').toLowerCase();
+  if (explicit === 'zip' || explicit === 'exe') return explicit;
+  const url = rel.url.toLowerCase();
+  if (url.endsWith('.zip')) return 'zip';
+  if (url.endsWith('.exe')) return 'exe';
+  return null;
+}
+
+function pickWindowsDownloads(data: ReleaseJson | null): WindowsDownloads {
+  const releases = (data?.windows ?? []).filter((r) => Boolean(r?.url));
+  let zip: WindowsRelease | null = null;
+  let exe: WindowsRelease | null = null;
+
+  for (const rel of releases) {
+    const kind = inferWindowsType(rel);
+    if (kind === 'zip' && !zip) zip = rel;
+    if (kind === 'exe' && !exe) exe = rel;
+  }
+
+  if (!zip) zip = releases.find((r) => !inferWindowsType(r)) ?? null;
+  if (!exe) exe = releases.find((r) => !inferWindowsType(r) && r !== zip) ?? null;
+
+  return { zip, exe };
 }
 
 export default function DownloadPage(): ReactNode {
   const [releaseData, setReleaseData] = useState<ReleaseJson | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [winChoice, setWinChoice] = useState<'zip' | 'exe'>('zip');
 
   useEffect(() => {
     let cancelled = false;
@@ -47,8 +74,15 @@ export default function DownloadPage(): ReactNode {
     };
   }, []);
 
-  const windows = useMemo(() => pickWindowsRelease(releaseData), [releaseData]);
-  const headlineVersion = releaseData?.currentVersion ?? windows?.version;
+  const windows = useMemo(() => pickWindowsDownloads(releaseData), [releaseData]);
+  const headlineVersion = releaseData?.currentVersion ?? windows.zip?.version ?? windows.exe?.version;
+
+  useEffect(() => {
+    if (windows.zip) setWinChoice('zip');
+    else if (windows.exe) setWinChoice('exe');
+  }, [windows.zip, windows.exe]);
+
+  const chosenWindows = winChoice === 'zip' ? windows.zip : windows.exe;
 
   return (
     <Layout title="Download" description="Download Liorandb for Windows and get started with the server via npm.">
@@ -68,26 +102,60 @@ export default function DownloadPage(): ReactNode {
           <div className="col col--6">
             <div className={styles.card}>
               <Heading as="h2" className={styles.cardTitle}>
-                Windows Installer
+                Windows Download
               </Heading>
               <p className={styles.muted}>
-                {windows?.version ? `Installer version: v${windows.version}` : 'Installer version: loading…'}
+                {chosenWindows?.version ? `Version: v${chosenWindows.version}` : 'Version: loading…'}
               </p>
 
               <div className={styles.actions}>
-                {windows?.url ? (
-                  <a className="button button--primary button--lg" href={windows.url}>
-                    Download for Windows
+                <div className="button-group" role="group" aria-label="Windows download format">
+                  <button
+                    type="button"
+                    className={clsx('button', winChoice === 'zip' ? 'button--primary' : 'button--secondary')}
+                    onClick={() => setWinChoice('zip')}
+                    disabled={!windows.zip}
+                  >
+                    ZIP (portable)
+                  </button>
+                  <button
+                    type="button"
+                    className={clsx('button', winChoice === 'exe' ? 'button--primary' : 'button--secondary')}
+                    onClick={() => setWinChoice('exe')}
+                    disabled={!windows.exe}
+                  >
+                    EXE (installer)
+                  </button>
+                </div>
+
+                {chosenWindows?.url ? (
+                  <a className="button button--primary button--lg" href={chosenWindows.url}>
+                    Download {winChoice.toUpperCase()}
                   </a>
                 ) : (
                   <span className={clsx('button button--primary button--lg', 'button--disabled')} aria-disabled="true">
-                    Download for Windows
+                    Download {winChoice.toUpperCase()}
                   </span>
                 )}
                 <Link className="button button--secondary button--lg" to="/docs/server/server-quickstart">
                   Server quickstart
                 </Link>
               </div>
+
+              {winChoice === 'zip' && (
+                <>
+                  <p className={styles.finePrint}>
+                    After downloading, unzip it somewhere permanent (example: <code>C:\Program Files\LioranDB</code> or{' '}
+                    <code>C:\LioranDB</code>), then add that folder to your system <code>PATH</code>.
+                  </p>
+                  <CodeBlock language="text">{`Windows steps (portable ZIP):
+1) Download ZIP
+2) Unzip to a folder (e.g. C:\\LioranDB)
+3) Add that folder to PATH (Environment Variables)
+4) Open a new terminal (PATH refresh)
+5) Run: ldb-serve`}</CodeBlock>
+                </>
+              )}
 
               {loadError ? (
                 <p className={styles.finePrint}>
