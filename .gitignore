@@ -174,3 +174,6 @@ sidebars.js
 log-c.txt
 log-d.txt
 log-s.txt
+
+installer_output
+installer.iss
