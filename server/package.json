@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/db",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "LioranDB server and CLI",
   "main": "dist/server.js",
   "bin": {
@@ -18,7 +18,8 @@
     "users": "ts-node src/cli/users.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "public"
   ],
   "keywords": [
     "database",
