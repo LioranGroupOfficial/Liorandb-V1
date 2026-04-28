@@ -7,9 +7,6 @@ WORKDIR /app
 # Install your package globally
 RUN npm install -g @liorandb/db@1.1.11
 
-# Create data directory
-RUN mkdir -p /data
-
 # Expose default port
 EXPOSE 4000
 
@@ -18,4 +15,4 @@ ENV PORT=4000
 ENV NODE_ENV=production
 
 # Default command
-CMD ["ldb-serve", "--root", "/data"]
+CMD ["ldb-serve"]
