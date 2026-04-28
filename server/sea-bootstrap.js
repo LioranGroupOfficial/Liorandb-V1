@@ -10,6 +10,7 @@ if (!sea.isSea()) {
 }
 
 const APP_NAME = "ldb-runtime";
+const APP_VERSION = "1.0.0";
 
 /**
  * Use versioned temp dir so updates refresh automatically
@@ -17,7 +18,7 @@ const APP_NAME = "ldb-runtime";
 const tmpDir = path.join(
   os.tmpdir(),
   APP_NAME,
-  process.version
+  APP_VERSION
 );
 
 /**

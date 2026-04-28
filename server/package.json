@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "bin": {
     "ldb-cli": "dist/cli/index.js",
+    "ldb": "dist/cli/ldb.js",
     "ldb-users": "dist/cli/users.js",
     "ldb-serve": "dist/server.js"
   },

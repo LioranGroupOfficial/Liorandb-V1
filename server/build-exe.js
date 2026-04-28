@@ -14,8 +14,14 @@ fs.mkdirSync(BUILD, { recursive: true });
 
 /**
  * Recursively collect files
+ * and optionally add a prefix
  */
-function getFiles(dir, base = dir) {
+function getFiles(
+  dir,
+  base = dir,
+  shouldInclude = null,
+  prefix = ""
+) {
   let files = {};
 
   if (!fs.existsSync(dir)) return files;
@@ -28,12 +34,25 @@ function getFiles(dir, base = dir) {
     if (stat.isDirectory()) {
       Object.assign(
         files,
-        getFiles(full, base)
+        getFiles(
+          full,
+          base,
+          shouldInclude,
+          prefix
+        )
       );
     } else {
-      const rel = path
+      let rel = path
         .relative(base, full)
         .replace(/\\/g, "/");
+
+      if (typeof shouldInclude === "function") {
+        if (!shouldInclude(rel, full)) continue;
+      }
+
+      if (prefix) {
+        rel = prefix + rel;
+      }
 
       files[rel] = full;
     }
@@ -44,13 +63,41 @@ function getFiles(dir, base = dir) {
 
 console.log("Collecting assets...");
 
+function shouldIncludeNodeModulesAsset(rel) {
+  if (rel.startsWith("@types/")) return false;
+  if (rel.endsWith(".d.ts")) return false;
+
+  if (rel.endsWith(".map")) return false;
+
+  if (rel.includes("/test/")) return false;
+  if (rel.includes("/tests/")) return false;
+  if (rel.includes("/__tests__/")) return false;
+
+  return true;
+}
+
 /**
- * Include BOTH dist and node_modules
+ * IMPORTANT:
+ * We explicitly add prefixes
  */
 const baseAssets = {
-  ...getFiles(DIST),
-  ...getFiles(NODE_MODULES),
+  ...getFiles(
+    DIST,
+    DIST,
+    null,
+    "dist/"
+  ),
+
+  ...getFiles(
+    NODE_MODULES,
+    NODE_MODULES,
+    shouldIncludeNodeModulesAsset,
+    "node_modules/"
+  ),
 };
+
+// console.log(baseAssets);
+// process.exit(0);
 
 console.log(
   "Total assets:",
@@ -59,16 +106,8 @@ console.log(
 
 const targets = [
   {
-    name: "ldb-cli",
-    entry: "cli/index.js",
-  },
-  {
-    name: "ldb-users",
-    entry: "cli/users.js",
-  },
-  {
     name: "ldb-serve",
-    entry: "server.js",
+    entry: "dist/server.js",
   },
 ];
 
@@ -79,7 +118,10 @@ for (const t of targets) {
     path.join(BUILD, `${t.name}.json`);
 
   const entryFile =
-    path.join(BUILD, `${t.name}-entry.txt`);
+    path.join(
+      BUILD,
+      `${t.name}-entry.txt`
+    );
 
   fs.writeFileSync(
     entryFile,
@@ -133,4 +175,6 @@ for (const t of targets) {
   fs.unlinkSync(entryFile);
 }
 
-console.log("\nAll executables generated in ./build 🚀");
+console.log(
+  "\nAll executables generated in ./build 🚀"
+);
