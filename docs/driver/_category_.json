@@ -3,7 +3,7 @@
   "position": 4,
   "link": {
     "type": "generated-index",
-    "description": "Type-safe HTTP client for talking to a LioranDB server."
+    "description": "Type-safe HTTP client for talking to a LioranDB server from Node.js/TypeScript."
   }
 }
 

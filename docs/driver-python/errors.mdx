@@ -1,0 +1,55 @@
+---
+title: Errors and HTTP layer
+sidebar_position: 6
+---
+
+The Python driver is implemented on top of `httpx.AsyncClient`.
+
+## `HttpError`
+
+All non-2xx responses raise `HttpError`:
+
+- `message`: best-effort error string extracted from the JSON response (or a fallback like `POST /path failed with status 400`)
+- `status`: HTTP status code
+- `data`: response JSON (if parseable) or response text
+
+```py
+import asyncio
+
+from liorandb_driver import HttpError, LioranClient
+
+
+async def main() -> None:
+    client = LioranClient("http://localhost:4000")
+    try:
+        await client.login("bad-user", "bad-pass")
+    except HttpError as e:
+        print(e.status)
+        print(e.message)
+        print(e.data)
+    finally:
+        await client.aclose()
+
+
+asyncio.run(main())
+```
+
+## `HttpClient` (internal)
+
+Most apps never need to touch `HttpClient` directly; it is used internally by:
+
+- `LioranClient`
+- `DB`
+- `Collection`
+
+It supports:
+
+- `set_token(token)` / `clear_token()`
+- `set_connection_string(connection_string)` / `clear_connection_string()`
+- `get/post/put/patch/delete(path, body=None)`
+- `request(method, path, body=None)`
+
+The auth headers sent are:
+
+- Bearer token: `Authorization: Bearer <token>`
+- Connection string: `X-LioranDB-Connection-String: <connection_string>`

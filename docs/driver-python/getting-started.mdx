@@ -1,0 +1,71 @@
+---
+title: Getting started
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## Install
+
+<Tabs groupId="driver-pkg" defaultValue="pip" values={[
+  { label: 'pip (Python)', value: 'pip' },
+  { label: 'npm (Node.js)', value: 'npm' },
+]}>
+<TabItem value="pip">
+
+```bash
+pip install liorandb-driver
+```
+
+</TabItem>
+<TabItem value="npm">
+
+```bash
+npm i @liorandb/driver
+```
+
+</TabItem>
+</Tabs>
+
+## Quickstart
+
+```py
+import asyncio
+
+from liorandb_driver import LioranClient
+
+
+async def main() -> None:
+    client = LioranClient("lioran://admin:password123@localhost:4000")
+    try:
+        await client.connect()
+
+        db = client.db("default")
+        items = db.collection("items")
+
+        await items.insert_one({"sku": "A", "qty": 1})
+        found = await items.find_one({"sku": "A"})
+        print(found)
+    finally:
+        await client.aclose()
+
+
+asyncio.run(main())
+```
+
+## URI formats and authentication
+
+`LioranClient.connect()` behaves differently depending on the URI:
+
+- `lioran://username:password@host:port` → logs in via `/auth/login` and stores a JWT token
+- `liorandb://dbUsername:dbPassword@host[:port]/databaseName` (or `liorandbs://...`) → enables **connection string mode**
+- `http(s)://host:port` → does **not** auto-login (call `login()`, `super_admin_login()`, `set_token()`, or `set_connection_string()`)
+
+If you prefer manual auth (recommended for many apps), start with `http://host:port` and then call one of:
+
+- `await client.login(username, password)`
+- `await client.super_admin_login(secret)`
+- `client.set_token(token)`
+- `client.set_connection_string(connection_string)`
+

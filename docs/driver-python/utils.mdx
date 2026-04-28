@@ -1,0 +1,35 @@
+---
+title: URI parsing (parse_uri)
+sidebar_position: 7
+---
+
+The driver accepts multiple URI formats. Internally, `parse_uri(uri)` returns a `ParsedURI` dataclass:
+
+- `protocol`: `"http"` or `"https"`
+- `host`: hostname
+- `port`: integer port
+- `scheme`: `"http"`, `"lioran"`, or `"liorandb"`
+- `username`, `password` (optional)
+- `database_name` (optional, connection-string mode)
+- `connection_string` (optional, connection-string mode)
+
+## `parse_uri(uri)`
+
+Supported prefixes:
+
+- `http://...` or `https://...`
+- `lioran://...` (legacy, HTTP)
+- `liorandb://...` (connection string, HTTP)
+- `liorandbs://...` (connection string, HTTPS)
+
+Examples:
+
+```py
+from liorandb_driver.utils.parse_uri import parse_uri
+
+print(parse_uri("http://localhost:4000"))
+print(parse_uri("lioran://admin:password123@localhost:4000"))
+print(parse_uri("liorandb://dbUser:dbPass@localhost:4000/default"))
+```
+
+If the URI is invalid, `parse_uri` raises `ValueError`.

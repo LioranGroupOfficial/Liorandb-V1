@@ -1,0 +1,37 @@
+---
+title: Types
+sidebar_position: 8
+---
+
+The package exports a few lightweight typing helpers.
+
+## Roles and auth types
+
+```py
+from liorandb_driver.types import LioranAuthType, LioranRole
+
+# LioranRole: "super_admin" | "admin" | "user"
+# LioranAuthType: "jwt" | "connection_string"
+```
+
+## `LioranUser`
+
+TypedDict (all keys optional):
+
+- `userId: str`
+- `username: str`
+- `role: LioranRole`
+- `authType: LioranAuthType`
+- `externalUserId: str | None`
+
+```py
+from liorandb_driver.types import LioranUser
+
+u: LioranUser = {"userId": "alice", "role": "user"}
+```
+
+## Generic dict aliases
+
+```py
+from liorandb_driver.types import DocumentData, Filter, UpdateQuery
+```

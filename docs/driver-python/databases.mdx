@@ -1,0 +1,163 @@
+---
+title: Databases (DB)
+sidebar_position: 4
+---
+
+The `DB` class is a scoped handle for a single database. You create it from a `LioranClient`:
+
+```py
+db = client.db("default")
+```
+
+## Collections
+
+### `db.collection(name) -> Collection`
+
+```py
+items = db.collection("items")
+```
+
+### `await db.list_collections()` / `await db.listCollections()`
+
+```py
+names = await db.list_collections()
+```
+
+### `await db.create_collection(name)` / `await db.createCollection(name)`
+
+```py
+await db.create_collection("items")
+```
+
+### `await db.drop_collection(name)` / `await db.dropCollection(name)`
+
+```py
+await db.drop_collection("old_items")
+```
+
+### `await db.rename_collection(old_name, new_name)` / `await db.renameCollection(oldName, newName)`
+
+```py
+await db.rename_collection("items", "inventory")
+```
+
+## Database maintenance
+
+### `await db.stats()`
+
+```py
+print(await db.stats())
+```
+
+### `await db.compact_all()` / `await db.compactAll()`
+
+Compacts all collections in the database.
+
+```py
+await db.compact_all()
+```
+
+### `await db.compact_collection(collection)` / `await db.compactCollection(collection)`
+
+```py
+await db.compact_collection("items")
+```
+
+## Indexes (database-level helpers)
+
+These are convenience wrappers around collection index endpoints.
+
+### `await db.create_index(collection, field, unique=False)` / `await db.createIndex(collection, field, options=None)`
+
+```py
+await db.create_index("items", "sku", unique=True)
+await db.createIndex("items", "qty", options={"unique": False})
+```
+
+### `await db.list_indexes(collection)` / `await db.listIndexes(collection)`
+
+```py
+indexes = await db.list_indexes("items")
+```
+
+### `await db.drop_index(collection, field)` / `await db.dropIndex(collection, field)`
+
+```py
+await db.drop_index("items", "qty")
+```
+
+### `await db.rebuild_index(collection, field)` / `await db.rebuildIndex(collection, field)`
+
+```py
+await db.rebuild_index("items", "sku")
+```
+
+### `await db.rebuild_indexes(collection)` / `await db.rebuildIndexes(collection)`
+
+```py
+await db.rebuild_indexes("items")
+```
+
+## Query planning
+
+### `await db.explain(collection, query=None, options=None)`
+
+Runs an explain plan for a query.
+
+```py
+plan = await db.explain("items", query={"sku": "A"})
+print(plan)
+```
+
+## Transactions
+
+The Python driver supports the same transaction wire format as the server:
+
+- Each transaction is a list of operations (collection + op name + args)
+- You can provide ops directly, or build them using a callback + `TransactionContext`
+
+### `await db.transaction(ops)`
+
+```py
+result = await db.transaction([
+    {"col": "items", "op": "insertOne", "args": [{"sku": "A", "qty": 1}]},
+    {"col": "items", "op": "updateOne", "args": [{"sku": "A"}, {"$set": {"qty": 2}}, {}]},
+])
+print(result)
+```
+
+### `await db.transaction(fn)`
+
+```py
+async def build(tx):
+    await tx.collection("items").insert_one({"sku": "B", "qty": 1})
+    await tx.collection("items").update_one({"sku": "B"}, {"$set": {"qty": 2}})
+
+result = await db.transaction(build)
+print(result)
+```
+
+## Credentials and connection strings
+
+These are database-scoped credentials (not the same as server user accounts).
+
+### `await db.get_credentials()` / `await db.getCredentials()`
+
+```py
+creds = await db.get_credentials()
+print(creds)
+```
+
+### `await db.set_credentials(username, password)` / `await db.setCredentials(input)`
+
+```py
+await db.set_credentials("dbUser", "dbPass")
+await db.setCredentials({"username": "dbUser", "password": "dbPass"})
+```
+
+### `await db.get_connection_string()` / `await db.getConnectionString()`
+
+```py
+res = await db.get_connection_string()
+print(res["connectionString"])
+```

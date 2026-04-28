@@ -1,0 +1,27 @@
+---
+title: Manager (LioranManager)
+sidebar_position: 3
+---
+
+`LioranManager` is a small compatibility wrapper around `LioranClient`.
+
+It accepts either:
+
+- a URI string, or
+- an options dict containing `{ "uri": "..." }`
+
+```py
+from liorandb_driver import LioranManager
+
+mgr = LioranManager("http://localhost:4000")
+await mgr.login("admin", "password123")
+```
+
+## `await mgr.close_all()`
+
+No-op for the HTTP driver (kept for API compatibility with other LioranDB components).
+
+## `await mgr.close()`
+
+Calls `close_all()`.
+

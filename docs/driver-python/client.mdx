@@ -1,0 +1,259 @@
+---
+title: Client (LioranClient)
+sidebar_position: 2
+---
+
+`LioranClient` is the top-level entry point of the Python driver. It stores auth state (JWT token or connection string) and exposes:
+
+- Auth & users (`/auth/*`)
+- Server info (`/health`, `/`, `/docs`)
+- Maintenance (`/maintenance/*`)
+- Database management (`/databases/*`)
+- Database handles via `client.db(name)` (returns `DB`)
+
+Examples below assume you are inside an `async def main()` (or similar) and you call it with `asyncio.run(...)`.
+
+## Create a client
+
+```py
+from liorandb_driver import LioranClient
+
+client = LioranClient("lioran://admin:password123@localhost:4000")
+```
+
+The constructor parses the URI and builds an internal `HttpClient` with a base URL like `http://host:port` or `https://host:port`.
+
+## Lifecycle
+
+### `await client.aclose()`
+
+Closes the underlying HTTP session (httpx async client).
+
+```py
+client = LioranClient("http://localhost:4000")
+try:
+    ...
+finally:
+    await client.aclose()
+```
+
+## Authentication
+
+### `await client.connect()`
+
+Convenience method that uses the credentials embedded in the URI.
+
+```py
+client = LioranClient("lioran://admin:password123@localhost:4000")
+await client.connect()
+```
+
+Connection string mode:
+
+```py
+client = LioranClient("liorandb://dbUser:dbPass@localhost:4000/default")
+await client.connect()  # sets connection-string auth, no /auth/login call
+```
+
+If the URI does not contain credentials, `connect()` raises an error telling you to call one of the explicit auth methods below.
+
+### `await client.login(username, password)`
+
+Logs in via `/auth/login`, stores the returned JWT token, and returns the full response dict.
+
+```py
+client = LioranClient("http://localhost:4000")
+auth = await client.login("admin", "password123")
+print(auth["token"])
+```
+
+### `await client.super_admin_login(secret)`
+
+Logs in via `/auth/super-admin/login` (for super admin flows).
+
+```py
+auth = await client.super_admin_login("my-super-admin-secret")
+```
+
+### `client.set_token(token)`
+
+Sets bearer token authentication (clears any connection-string auth).
+
+```py
+client.set_token("eyJhbGciOi...")
+```
+
+### `client.set_connection_string(connection_string)`
+
+Sets connection-string authentication (clears any bearer token auth).
+
+```py
+client.set_connection_string("liorandb://dbUser:dbPass@localhost:4000/default")
+```
+
+### `client.logout()`
+
+Clears all auth state (token, connection string, cached user).
+
+```py
+client.logout()
+```
+
+### Auth state getters
+
+- `client.get_token()` / `client.getToken()`
+- `client.get_connection_string()` / `client.getConnectionString()`
+- `client.get_user()` / `client.getUser()`
+- `client.is_authenticated()` / `client.isAuthenticated()`
+
+```py
+if client.is_authenticated():
+    print("ready")
+```
+
+## Users and CORS
+
+All of these require the client to be authenticated first.
+
+### `await client.register(user_id, username=None, password=None, role="user", external_user_id=None)`
+
+Creates a new user via `/auth/register`.
+
+```py
+await client.register("alice", password="p@ssw0rd", role="user")
+```
+
+### `await client.me()`
+
+Fetches `/auth/me` and refreshes the cached `client.get_user()`.
+
+```py
+me = await client.me()
+print(me["user"]["username"])
+```
+
+### `await client.list_users()` / `await client.listUsers()`
+
+Lists users via `/auth/users`.
+
+```py
+users = await client.list_users()
+print(len(users))
+```
+
+### `await client.update_my_cors(origins)` / `await client.updateMyCors(origins)`
+
+Updates your own allowed CORS origins via `/auth/me/cors`.
+
+```py
+await client.update_my_cors(["http://localhost:5173", "https://myapp.com"])
+```
+
+### `await client.update_user_cors(user_id, origins)` / `await client.updateUserCors(...)`
+
+Updates another user's allowed origins via `/auth/users/:userId/cors`.
+
+```py
+await client.update_user_cors("alice", ["https://alice-app.com"])
+```
+
+### `await client.issue_user_token(user_id)` / `await client.issueUserToken(user_id)`
+
+Issues a token for a given user via `/auth/users/:userId/token`.
+
+```py
+res = await client.issue_user_token("alice")
+print(res["token"])
+```
+
+## Server info
+
+### `await client.health()`
+
+```py
+print(await client.health())
+```
+
+### `await client.info()`
+
+```py
+print(await client.info())
+```
+
+### Docs endpoints
+
+- `await client.list_docs()` / `await client.listDocs()`
+- `await client.get_doc(doc_id)` / `await client.getDoc(doc_id)`
+
+```py
+docs = await client.list_docs()
+one = await client.get_doc("getting-started")
+```
+
+## Maintenance
+
+These require authentication.
+
+- `await client.maintenance_status()` / `await client.maintenanceStatus()`
+- `await client.list_snapshots()` / `await client.listSnapshots()`
+- `await client.create_snapshot_now()` / `await client.createSnapshotNow()`
+- `await client.compact_all_databases()` / `await client.compactAllDatabases()`
+
+```py
+print(await client.maintenance_status())
+print(await client.list_snapshots())
+await client.create_snapshot_now()
+await client.compact_all_databases()
+```
+
+## Databases (admin / management)
+
+These require authentication.
+
+### `client.db(name) -> DB`
+
+Creates a `DB` handle (a thin wrapper around HTTP endpoints for that database).
+
+```py
+db = client.db("default")
+items = db.collection("items")
+```
+
+### `await client.list_databases()` / `await client.listDatabases()`
+
+```py
+dbs = await client.list_databases()
+```
+
+### `await client.count_databases(user_id=None)` / `await client.countDatabases(user_id=None)`
+
+```py
+print(await client.count_databases())
+print(await client.count_databases(user_id="alice"))
+```
+
+### `await client.list_user_databases(user_id)` / `await client.listUserDatabases(user_id)`
+
+```py
+print(await client.list_user_databases("alice"))
+```
+
+### `await client.create_database(name, owner_user_id=None)` / `await client.createDatabase(name, ownerUserId=None)`
+
+```py
+await client.create_database("mydb")
+await client.create_database("teamdb", owner_user_id="alice")
+```
+
+### `await client.drop_database(name)` / `await client.dropDatabase(name)`
+
+```py
+await client.drop_database("mydb")
+```
+
+### `await client.database_stats(name)` / `await client.databaseStats(name)`
+
+```py
+stats = await client.database_stats("default")
+print(stats)
+```

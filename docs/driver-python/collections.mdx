@@ -1,0 +1,156 @@
+---
+title: Collections (Collection)
+sidebar_position: 5
+---
+
+`Collection` is a typed wrapper around a single collection in a database.
+
+```py
+db = client.db("default")
+items = db.collection("items")
+```
+
+## Inserts
+
+### `await col.insert_one(doc)` / `await col.insertOne(doc)`
+
+```py
+doc = await items.insert_one({"sku": "A", "qty": 1})
+print(doc.get("_id"))
+```
+
+### `await col.insert_many(docs)` / `await col.insertMany(docs)`
+
+```py
+docs = await items.insert_many([{"sku": "B", "qty": 1}, {"sku": "C", "qty": 2}])
+```
+
+## Finds
+
+### `await col.find(filter=None, options=None)`
+
+```py
+results = await items.find({"qty": {"$gte": 1}}, options={"limit": 50})
+```
+
+### `await col.find_one(filter=None, options=None)` / `await col.findOne(...)`
+
+```py
+one = await items.find_one({"sku": "A"})
+if one is None:
+    print("not found")
+```
+
+## Updates
+
+### `await col.update_one(filter, update, options=None)` / `await col.updateOne(...)`
+
+```py
+updated = await items.update_one({"sku": "A"}, {"$set": {"qty": 2}})
+print(updated)
+```
+
+### `await col.update_many(filter, update)` / `await col.updateMany(...)`
+
+```py
+res = await items.update_many({"qty": {"$lt": 0}}, {"$set": {"qty": 0}})
+print(res)
+```
+
+## Deletes
+
+### `await col.delete_one(filter)` / `await col.deleteOne(filter)`
+
+```py
+deleted = await items.delete_one({"sku": "A"})
+print(deleted)
+```
+
+### `await col.delete_many(filter)` / `await col.deleteMany(filter)`
+
+```py
+res = await items.delete_many({"sku": {"$in": ["B", "C"]}})
+print(res)
+```
+
+## Counts
+
+### `await col.count(filter=None)`
+
+```py
+n = await items.count({"qty": {"$gte": 1}})
+print(n)
+```
+
+### `await col.count_documents(filter=None)` / `await col.countDocuments(...)`
+
+```py
+n = await items.count_documents()
+```
+
+## Aggregation
+
+### `await col.aggregate(pipeline=None)`
+
+```py
+pipeline = [
+    {"$match": {"qty": {"$gte": 1}}},
+    {"$group": {"_id": "$sku", "total": {"$sum": "$qty"}}},
+]
+rows = await items.aggregate(pipeline)
+print(rows)
+```
+
+## Indexes
+
+### `await col.list_indexes()` / `await col.listIndexes()`
+
+```py
+indexes = await items.list_indexes()
+```
+
+### `await col.create_index(field, unique=False)` / `await col.createIndex(field, options=None)`
+
+```py
+await items.create_index("sku", unique=True)
+await items.createIndex("qty", options={"unique": False})
+```
+
+### `await col.drop_index(field)` / `await col.dropIndex(field)`
+
+```py
+await items.drop_index("qty")
+```
+
+### `await col.rebuild_index(field)` / `await col.rebuildIndex(field)`
+
+```py
+await items.rebuild_index("sku")
+```
+
+### `await col.rebuild_indexes()` / `await col.rebuildIndexes()`
+
+```py
+await items.rebuild_indexes()
+```
+
+## Explain, stats, compact
+
+### `await col.explain(query=None, options=None)`
+
+```py
+plan = await items.explain(query={"sku": "A"})
+print(plan)
+```
+
+### `await col.stats()`
+
+```py
+print(await items.stats())
+```
+
+### `await col.compact()`
+
+```py
+await items.compact()
+```
