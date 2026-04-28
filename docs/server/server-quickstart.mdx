@@ -9,6 +9,11 @@ Install the server package globally (recommended for ops/dev machines):
 npm i -g @liorandb/db
 ```
 
+Install without npm:
+
+- Visit `https://db.lioransolutions.com/download` and download the server
+- After downloading, run `ldb-serve`
+
 Start the server:
 
 ```bash
@@ -18,7 +23,9 @@ ldb-serve
 Defaults:
 
 - HTTP: `http://localhost:4000`
+- Auth: username `admin`, password `admin` (change in production)
 - Storage: file-based local directories (no external DB required)
+- Studio: open `http://localhost:4000` (bundled with the server) or use `https://studio.lioransolutions.com`
 
 ## CLI flags (shared)
 

@@ -108,6 +108,11 @@ const config: Config = {
         },
         // {to: '/blog', label: 'Blog', position: 'left'},
         {
+          href: 'https://discord.gg/WsWWThjPMp',
+          label: 'Discord',
+          position: 'right',
+        },
+        {
           href: 'https://github.com/LioranGroupOfficial/Liorandb',
           label: 'GitHub',
           position: 'right',

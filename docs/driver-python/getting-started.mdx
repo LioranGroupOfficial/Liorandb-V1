@@ -12,6 +12,16 @@ import TabItem from '@theme/TabItem';
 pip install liorandb-driver
 ```
 
+## Download and run the server
+
+Visit `https://db.lioransolutions.com/download` and download the server.
+
+After downloading, start it:
+
+```bash
+ldb-serve
+```
+
 ## Quickstart
 
 ```py
@@ -21,7 +31,7 @@ from liorandb_driver import LioranClient
 
 
 async def main() -> None:
-    client = LioranClient("lioran://admin:password123@localhost:4000")
+    client = LioranClient("lioran://admin:admin@localhost:4000")
     try:
         await client.connect()
 
@@ -52,4 +62,3 @@ If you prefer manual auth (recommended for many apps), start with `http://host:p
 - `await client.super_admin_login(secret)`
 - `client.set_token(token)`
 - `client.set_connection_string(connection_string)`
-

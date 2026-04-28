@@ -6,7 +6,14 @@ sidebar_position: 1
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Install:
+Install the server and start it:
+
+```bash
+npm i -g @liorandb/db
+ldb-serve
+```
+
+Install the driver:
 
 ```bash
 npm i @liorandb/driver
@@ -25,7 +32,7 @@ Looking for the Python driver? Go to **Driver (Python: liorandb-driver) → Gett
 ```ts
 import { LioranClient } from "@liorandb/driver";
 
-const client = new LioranClient("lioran://admin:password123@localhost:4000");
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
 await client.connect();
 
 const db = client.db("default");
@@ -41,7 +48,7 @@ console.log(await items.findOne({ sku: "A" }));
 ```js
 import { LioranClient } from "@liorandb/driver";
 
-const client = new LioranClient("lioran://admin:password123@localhost:4000");
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
 await client.connect();
 
 const db = client.db("default");
