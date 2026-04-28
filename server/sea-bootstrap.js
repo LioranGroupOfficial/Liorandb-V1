@@ -17,7 +17,7 @@ if (!sea.isSea()) {
 const APP_NAME = "ldb-runtime";
 
 const APP_VERSION =
-  "1.0.0";
+  "1.1.6";
   // PKG.version;
 
 /**
