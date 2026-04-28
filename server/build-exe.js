@@ -172,6 +172,7 @@ for (const t of targets) {
   const assets = {
     ...baseAssets,
     "entry.txt": entryFile,
+    "package.json": path.join(ROOT, "package.json"),
   };
 
   const outputFile =

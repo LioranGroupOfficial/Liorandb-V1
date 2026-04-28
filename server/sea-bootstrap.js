@@ -12,12 +12,13 @@ if (!sea.isSea()) {
   process.exit(1);
 }
 
-const PKG = require("./package.json");
+// const PKG = require("./package.json");
 
 const APP_NAME = "ldb-runtime";
 
 const APP_VERSION =
-  PKG.version;
+  "1.0.0";
+  // PKG.version;
 
 /**
  * Shared runtime directory
