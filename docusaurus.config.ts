@@ -101,6 +101,11 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
+        {
+          to: '/download',
+          label: 'Download',
+          position: 'left',
+        },
         // {to: '/blog', label: 'Blog', position: 'left'},
         {
           href: 'https://github.com/LioranGroupOfficial/Liorandb',
