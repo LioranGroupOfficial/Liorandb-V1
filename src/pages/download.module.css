@@ -128,6 +128,19 @@
   justify-content: center;
 }
 
+/* Code block styling in cards - limit width and enable scroll */
+.card :global(pre) {
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.card :global(code) {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .card :global(.button--block) {
   margin-bottom: 0.5rem;
 }
