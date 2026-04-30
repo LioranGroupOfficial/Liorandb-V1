@@ -178,6 +178,16 @@ export default function DownloadPage(): ReactNode {
                 Download ZIP
               </span>
             )}
+            <div className={styles.steps}>
+              <p className={styles.stepTitle}>Steps:</p>
+              <ol className={styles.stepsList}>
+                <li>Download the ZIP file</li>
+                <li>Extract to a folder (e.g., <code>C:\LioranDB</code>)</li>
+                <li>Copy the extracted folder path</li>
+                <li>Add path to Environment Variables</li>
+                <li>Open new terminal and run: <code>ldb-serve</code></li>
+              </ol>
+            </div>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
@@ -243,6 +253,15 @@ export default function DownloadPage(): ReactNode {
               Run LioranDB in a containerized environment.
             </p>
             <CodeBlock language="bash">{`docker run -d -p 4000:4000 -v ".\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest`}</CodeBlock>
+            <p className={styles.muted}>After running the command:</p>
+            <p className={styles.description}>
+              Visit <a href="http://localhost:4000" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--ifm-link-color)', fontWeight: 'bold' }}>localhost:4000</a> for Studio
+            </p>
+            <p className={styles.finePrint}>
+              <strong>Default credentials:</strong><br />
+              Username: <code>admin</code><br />
+              Password: <code>admin</code>
+            </p>
             <Link className="button button--secondary button--block" to="/docs/server/production#docker-example">
               Docker guide
             </Link>
@@ -273,6 +292,42 @@ export default function DownloadPage(): ReactNode {
             <Link className="button button--link" to="/docs/server/users">
               → Users & Auth
             </Link>
+          </div>
+        </div>
+
+        {/* Next Steps Section */}
+        <div className={clsx('margin-top--xl', styles.nextStepsSection)}>
+          <Heading as="h2" className="text--center">
+            🚀 Next Steps
+          </Heading>
+          <p className="text--center" style={{ marginBottom: '2rem', color: 'var(--ifm-color-emphasis-700)' }}>
+            Continue with the driver of your choice to interact with LioranDB
+          </p>
+          <div className={clsx(styles.gridNextSteps)}>
+            <div className={styles.nextStepCard}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📘</div>
+              <Heading as="h3" style={{ marginBottom: '0.75rem' }}>
+                Node.js
+              </Heading>
+              <p style={{ marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--ifm-color-emphasis-700)' }}>
+                Build server-side applications with JavaScript
+              </p>
+              <Link className="button button--secondary button--block" to="/docs/driver/getting-started">
+                Get started
+              </Link>
+            </div>
+            <div className={styles.nextStepCard}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🐍</div>
+              <Heading as="h3" style={{ marginBottom: '0.75rem' }}>
+                Python
+              </Heading>
+              <p style={{ marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--ifm-color-emphasis-700)' }}>
+                Build applications with Python for data science and more
+              </p>
+              <Link className="button button--secondary button--block" to="/docs/driver-python/getting-started">
+                Get started
+              </Link>
+            </div>
           </div>
         </div>
       </main>
