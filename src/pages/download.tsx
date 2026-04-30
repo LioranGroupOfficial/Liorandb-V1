@@ -170,11 +170,11 @@ export default function DownloadPage(): ReactNode {
               {winZip?.version ? `Version: v${winZip.version}` : 'Version: loading…'}
             </p>
             {winZip?.url ? (
-              <a className="button button--primary button--lg" href={winZip.url} style={{ marginBottom: '0.4rem' }}>
+              <a className="button button--primary button--lg" href={winZip.url} style={{ marginBottom: '0.75rem' }}>
                 Download ZIP
               </a>
             ) : (
-              <span className={clsx('button button--primary button--lg', 'button--disabled')} aria-disabled="true" style={{ marginBottom: '0.4rem' }}>
+              <span className={clsx('button button--primary button--lg', 'button--disabled')} aria-disabled="true" style={{ marginBottom: '0.75rem' }}>
                 Download ZIP
               </span>
             )}
@@ -236,7 +236,7 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Run LioranDB in a containerized environment.
             </p>
-            <CodeBlock language="bash">{`docker run -d -p 4000:4000 -v ".\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest`}</CodeBlock>
+            <CodeBlock language="bash">{`docker run -p 9080:9080 liorandb/server:latest`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/production#docker-example">
               Docker guide
             </Link>
