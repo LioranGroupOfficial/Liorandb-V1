@@ -1,0 +1,24 @@
+LioranDB - Terms and Conditions
+
+Effective Date: 28 April 2026
+
+This software is developed and maintained by Lioran Software Solutions.
+
+1. Usage
+You are allowed to use LioranDB for personal and commercial purposes.
+
+2. Restrictions
+- You may not redistribute this software without permission.
+- You may not reverse engineer or modify core binaries.
+
+3. Liability
+Lioran Software Solutions is not responsible for any data loss, damages, or issues arising from the use of this software.
+
+4. Updates
+The software may receive updates which can modify features and functionality.
+
+5. Ownership
+All rights reserved by Lioran Software Solutions.
+
+Developer: Swaraj Puppalwar  
+Website: https://db.lioransolutions.com
