@@ -200,7 +200,8 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Install globally and get both the server and CLI tools.
             </p>
-            <CodeBlock language="bash">{`npm i -g @liorandb/db\nldb-serve`}</CodeBlock>
+            <CodeBlock language="bash">{`npm i -g @liorandb/db`}</CodeBlock>
+            <CodeBlock language="bash">{`ldb-serve`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
@@ -218,7 +219,8 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Installs Windows portable ZIP with auto-PATH setup.
             </p>
-            <CodeBlock language="bash">{`pip install liorandb-server-windows\nliorandb-server-windows`}</CodeBlock>
+            <CodeBlock language="bash">{`pip install liorandb-server-windows`}</CodeBlock>
+            <CodeBlock language="bash">{`liorandb-server-windows`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
@@ -236,7 +238,7 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Run LioranDB in a containerized environment.
             </p>
-            <CodeBlock language="bash">{`docker run -p 9080:9080 liorandb/server:latest`}</CodeBlock>
+            <CodeBlock language="bash">{`docker run -d -p 4000:4000 -v ".\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/production#docker-example">
               Docker guide
             </Link>
