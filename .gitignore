@@ -164,3 +164,6 @@ vite.config.ts.timestamp-*
 build
 __tests__
 log-s.txt
+log-c.txt
+log-d.txt
+log-pd.txt
