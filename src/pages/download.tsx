@@ -200,7 +200,10 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Install globally and get both the server and CLI tools.
             </p>
-            <CodeBlock language="bash">{`npm i -g @liorandb/db\nldb-serve`}</CodeBlock>
+            <p className={styles.finePrint}>Install using:</p>
+            <CodeBlock language="bash">{`npm i -g @liorandb/db`}</CodeBlock>
+            <p className={styles.finePrint}>Run server using:</p>
+            <CodeBlock language="bash">{`ldb-serve`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
@@ -218,7 +221,10 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Installs Windows portable ZIP with auto-PATH setup.
             </p>
-            <CodeBlock language="bash">{`pip install liorandb-server-windows\nliorandb-server-windows`}</CodeBlock>
+            <p className={styles.finePrint}>Install using:</p>
+            <CodeBlock language="bash">{`pip install liorandb-server-windows`}</CodeBlock>
+            <p className={styles.finePrint}>Run server using:</p>
+            <CodeBlock language="bash">{`liorandb-server-windows\nldb-serve`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
