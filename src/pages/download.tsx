@@ -170,11 +170,11 @@ export default function DownloadPage(): ReactNode {
               {winZip?.version ? `Version: v${winZip.version}` : 'Version: loading…'}
             </p>
             {winZip?.url ? (
-              <a className="button button--primary button--lg" href={winZip.url} style={{ marginBottom: '0.75rem' }}>
+              <a className="button button--primary button--lg" href={winZip.url} style={{ marginBottom: '0.4rem' }}>
                 Download ZIP
               </a>
             ) : (
-              <span className={clsx('button button--primary button--lg', 'button--disabled')} aria-disabled="true" style={{ marginBottom: '0.75rem' }}>
+              <span className={clsx('button button--primary button--lg', 'button--disabled')} aria-disabled="true" style={{ marginBottom: '0.4rem' }}>
                 Download ZIP
               </span>
             )}
@@ -200,8 +200,7 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Install globally and get both the server and CLI tools.
             </p>
-            <CodeBlock language="bash">{`npm i -g @liorandb/db`}</CodeBlock>
-            <CodeBlock language="bash">{`ldb-serve`}</CodeBlock>
+            <CodeBlock language="bash">{`npm i -g @liorandb/db\nldb-serve`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
@@ -219,8 +218,7 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Installs Windows portable ZIP with auto-PATH setup.
             </p>
-            <CodeBlock language="bash">{`pip install liorandb-server-windows`}</CodeBlock>
-            <CodeBlock language="bash">{`liorandb-server-windows`}</CodeBlock>
+            <CodeBlock language="bash">{`pip install liorandb-server-windows\nliorandb-server-windows`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/server-quickstart">
               Setup guide
             </Link>
