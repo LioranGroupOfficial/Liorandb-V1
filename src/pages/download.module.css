@@ -145,10 +145,39 @@
   margin-bottom: 0.5rem;
 }
 
-/* Code block styling in cards */
-.card :global(pre) {
-  margin: 0.75rem 0;
-  font-size: 0.85rem;
+/* Colorful syntax highlighting for bash commands */
+.card :global(.token.function) {
+  color: #7cb9ff;
+  font-weight: bold;
+}
+
+.card :global(.token.keyword) {
+  color: #ff7b72;
+  font-weight: bold;
+}
+
+.card :global(.token.string) {
+  color: #79c0ff;
+}
+
+.card :global(.token.parameter) {
+  color: #ffa657;
+}
+
+.card :global(.token.operator) {
+  color: #ff7b72;
+}
+
+.card :global(.token.flag) {
+  color: #d29922;
+}
+
+.card :global(.token.variable) {
+  color: #79c0ff;
+}
+
+.card :global(.token.punctuation) {
+  color: #c9d1d9;
 }
 
 
