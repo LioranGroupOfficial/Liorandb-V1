@@ -236,7 +236,7 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Run LioranDB in a containerized environment.
             </p>
-            <CodeBlock language="bash">{`docker run -p 9080:9080 liorandb/server:latest`}</CodeBlock>
+            <CodeBlock language="bash">{`docker run -d -p 4000:4000 -v ".\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest`}</CodeBlock>
             <Link className="button button--secondary button--block" to="/docs/server/production#docker-example">
               Docker guide
             </Link>
