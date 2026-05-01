@@ -471,6 +471,27 @@ export class WALManager {
     }
   }
 
+  async read(fromLSN: number, limit = 10_000): Promise<{ records: WALRecord[]; lastLSN: number }> {
+    const records: WALRecord[] = [];
+    let lastLSN = fromLSN;
+
+    await this.replay(fromLSN, async r => {
+      records.push(r);
+      lastLSN = Math.max(lastLSN, r.lsn);
+      if (records.length >= limit) {
+        // Abort replay early (caught below)
+        throw new LiorandbError("INTERNAL", "__WAL_READ_LIMIT__");
+      }
+    }).catch(err => {
+      if (err instanceof LiorandbError && err.message === "__WAL_READ_LIMIT__") {
+        return;
+      }
+      throw err;
+    });
+
+    return { records, lastLSN };
+  }
+
   /* -------------------------
      CLEANUP (Primary only)
   ------------------------- */

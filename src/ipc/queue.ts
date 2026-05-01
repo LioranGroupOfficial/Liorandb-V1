@@ -10,6 +10,7 @@ export type IPCAction =
   | "db:meta"
   | "op"
   | "index"
+  | "wal:fetch"
   | "compact:collection"
   | "compact:db"
   | "compact:all"
@@ -71,6 +72,14 @@ export class DBQueue {
       }
 
       /* ---------------- COMPACTION ---------------- */
+
+      /* ---------------- REPLICATION ---------------- */
+
+      case "wal:fetch": {
+        const { db, fromLSN, limit } = args;
+        const database = await this.manager.db(db);
+        return await (database as any).exportWAL(fromLSN ?? 0, limit ?? 10_000);
+      }
 
       case "compact:collection": {
         const { db, col } = args;

@@ -13,7 +13,8 @@ import { LiorandbError, asLiorandbError } from "./utils/errors.js";
 enum ProcessMode {
   PRIMARY = "primary",
   CLIENT = "client",
-  READONLY = "readonly"
+  READONLY = "readonly",
+  REPLICA = "replica"
 }
 
 /* ---------------- OPTIONS ---------------- */
@@ -21,7 +22,7 @@ enum ProcessMode {
 export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
-  ipc?: "primary" | "client" | "readonly";
+  ipc?: "primary" | "client" | "readonly" | "replica";
   writeQueue?: {
     maxSize?: number;
     mode?: "wait" | "reject";
@@ -40,6 +41,11 @@ export interface LioranManagerOptions {
     chunkSize?: number;
   };
   durability?: LioranDBRuntimeOptions["durability"];
+  replication?: {
+    leaderRootPath?: string;
+    pollMs?: number;
+    batchLimit?: number;
+  };
 }
 
 /* ---------------- MANAGER ---------------- */
@@ -53,6 +59,9 @@ export class LioranManager {
   private lifecycle = new LifecycleManager();
   private options: LioranManagerOptions;
   private shutdownHookCleanup?: () => void;
+  private ipcServer?: import("./ipc/pipe.js").IPCServer;
+  private ipcClient?: import("./ipc/pipe.js").IPCClient;
+  private replicaReplicator?: import("./replication/replicator.js").ReplicaReplicator;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
@@ -74,6 +83,8 @@ export class LioranManager {
 
     if (ipc === "readonly") {
       this.mode = ProcessMode.READONLY;
+    } else if (ipc === "replica") {
+      this.mode = ProcessMode.REPLICA;
     } else if (ipc === "client") {
       this.mode = ProcessMode.CLIENT;
     } else if (ipc === "primary") {
@@ -88,6 +99,11 @@ export class LioranManager {
 
     if (this.mode === ProcessMode.PRIMARY) {
       this._registerShutdownHooks();
+      void this._ensureIpcServer();
+    }
+
+    if (this.mode === ProcessMode.REPLICA) {
+      void this._ensureReplicaReplicator();
     }
   }
 
@@ -105,11 +121,45 @@ export class LioranManager {
     return this.mode === ProcessMode.READONLY;
   }
 
+  isReplica() {
+    return this.mode === ProcessMode.REPLICA;
+  }
+
   /* ---------------- QUEUE HELPER ---------------- */
 
   private async getQueue() {
-    const { dbQueue } = await import("./ipc/queue.js");
-    return dbQueue;
+    const leaderRootPath = this.options.replication?.leaderRootPath ?? this.rootPath;
+    if (!this.ipcClient) {
+      const { IPCClient } = await import("./ipc/pipe.js");
+      this.ipcClient = new IPCClient(leaderRootPath);
+      this.lifecycle.register(() => this.ipcClient?.close());
+    }
+    return this.ipcClient;
+  }
+
+  async _ipcExec(action: import("./ipc/queue.js").IPCAction, args: any) {
+    const q = await this.getQueue();
+    return q.exec(action, args);
+  }
+
+  private async _ensureIpcServer() {
+    if (this.ipcServer) return;
+    const { IPCServer } = await import("./ipc/pipe.js");
+    this.ipcServer = new IPCServer(this, this.rootPath);
+    await this.ipcServer.start();
+    this.lifecycle.register(() => this.ipcServer?.close());
+  }
+
+  private async _ensureReplicaReplicator() {
+    if (this.replicaReplicator) return;
+    const { ReplicaReplicator } = await import("./replication/replicator.js");
+    const leaderRootPath = this.options.replication?.leaderRootPath ?? this.rootPath;
+    this.replicaReplicator = new ReplicaReplicator(this, {
+      leaderRootPath,
+      pollMs: Math.max(10, Math.trunc(this.options.replication?.pollMs ?? 50)),
+      batchLimit: Math.max(1, Math.trunc(this.options.replication?.batchLimit ?? 10_000))
+    });
+    this.lifecycle.register(() => this.replicaReplicator?.stop());
   }
 
   /* ---------------- LOCK MANAGEMENT ---------------- */
@@ -166,7 +216,7 @@ export class LioranManager {
     if (this.mode === ProcessMode.CLIENT) {
       const queue = await this.getQueue();
       await queue.exec("db", { db: name });
-      return new IPCDatabase(name) as any;
+      return new IPCDatabase(name, (action, args) => queue.exec(action, args)) as any;
     }
 
     return this.openDatabase(name);
@@ -190,6 +240,11 @@ export class LioranManager {
       });
       await db.ready;
       this.openDBs.set(name, db);
+
+      if (this.mode === ProcessMode.REPLICA) {
+        await this._ensureReplicaReplicator();
+        this.replicaReplicator?.ensure(name, db);
+      }
       return db;
     } catch (err) {
       throw asLiorandbError(err, {
@@ -286,8 +341,9 @@ export class LioranManager {
     this.closed = true;
 
     if (this.mode === ProcessMode.CLIENT) {
-      const queue = await this.getQueue();
-      await queue.shutdown();
+      try {
+        await this.ipcClient?.close();
+      } catch {}
       return;
     }
 
@@ -344,20 +400,17 @@ export class LioranManager {
 /* ---------------- IPC PROXY DB ---------------- */
 
 class IPCDatabase {
-  constructor(private name: string) {}
+  constructor(
+    private name: string,
+    private exec: (action: import("./ipc/queue.js").IPCAction, args: any) => Promise<any>
+  ) {}
 
   collection(name: string) {
-    return new IPCCollection(this.name, name);
-  }
-
-  private async getQueue() {
-    const { dbQueue } = await import("./ipc/queue.js");
-    return dbQueue;
+    return new IPCCollection(this.name, name, this.exec);
   }
 
   private async call(method: string, params: any[]) {
-    const queue = await this.getQueue();
-    return queue.exec("db:meta", {
+    return this.exec("db:meta", {
       db: this.name,
       method,
       params
@@ -373,17 +426,12 @@ class IPCDatabase {
 class IPCCollection {
   constructor(
     private db: string,
-    private col: string
+    private col: string,
+    private exec: (action: import("./ipc/queue.js").IPCAction, args: any) => Promise<any>
   ) {}
 
-  private async getQueue() {
-    const { dbQueue } = await import("./ipc/queue.js");
-    return dbQueue;
-  }
-
   private async call(method: string, params: any[]) {
-    const queue = await this.getQueue();
-    return queue.exec("op", {
+    return this.exec("op", {
       db: this.db,
       col: this.col,
       method,

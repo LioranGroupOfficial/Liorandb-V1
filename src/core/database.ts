@@ -16,6 +16,7 @@ import { WALManager, type WALDurabilityOptions } from "./wal.js";
 import { CheckpointManager } from "./checkpoint.js";
 import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
 import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
+import type { WALRecord } from "./wal.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -111,6 +112,7 @@ export class LioranDB {
   private pendingIdIndexEnsure = new Set<string>();
 
   private readonly readonlyMode: boolean;
+  private readonly replicaMode: boolean;
   public readonly ready: Promise<void>;
 
   constructor(
@@ -126,6 +128,7 @@ export class LioranDB {
     this.runtimeOptions = options;
 
     this.readonlyMode = (manager as any)?.isReadonly?.() ?? false;
+    this.replicaMode = (manager as any)?.isReplica?.() ?? false;
 
     this.metaPath = path.join(basePath, META_FILE);
 
@@ -185,9 +188,12 @@ export class LioranDB {
     return this.readonlyMode;
   }
 
-  private assertWritable() {
+  private assertWritable(allowReplicaWrites = false) {
     if (this.readonlyMode) {
       throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
+    }
+    if (this.replicaMode && !allowReplicaWrites) {
+      throw new LiorandbError("READONLY_MODE", "Database is in read-replica mode");
     }
   }
 
@@ -268,6 +274,51 @@ export class LioranDB {
       this.checkpoint.save(lsn, this.wal.getCurrentGen());
       this.wal.cleanup(this.wal.getCurrentGen() - 1).catch(() => {});
     }
+  }
+
+  public getCheckpointLSN(): number {
+    if (this.readonlyMode) return 0;
+    return this.checkpoint.get().lsn;
+  }
+
+  public async exportWAL(fromLSN: number, limit = 10_000): Promise<{ records: WALRecord[]; lastLSN: number }> {
+    if (this.readonlyMode) {
+      return { records: [], lastLSN: fromLSN };
+    }
+    return this.wal.read(fromLSN, limit);
+  }
+
+  public async applyReplicatedWAL(records: WALRecord[]): Promise<number> {
+    // Replica-only: apply committed txs in WAL order, without writing local WAL.
+    this.assertWritable(true);
+
+    if (!records.length) return this.getCheckpointLSN();
+
+    const startLSN = this.getCheckpointLSN();
+    const opsByTx = new Map<number, TXOp[]>();
+    let lastApplied = startLSN;
+
+    await this.writer.run(async () => {
+      for (const record of records) {
+        if (record.lsn <= startLSN) continue;
+
+        if (record.type === "op") {
+          const payload = record.payload as TXOp;
+          if (!opsByTx.has(record.tx)) opsByTx.set(record.tx, []);
+          opsByTx.get(record.tx)!.push(payload);
+        } else if (record.type === "commit") {
+          const txOps = opsByTx.get(record.tx);
+          if (txOps?.length) {
+            await this._applyOps(txOps);
+          }
+          lastApplied = Math.max(lastApplied, record.lsn);
+          this.advanceCheckpoint(lastApplied);
+          opsByTx.delete(record.tx);
+        }
+      }
+    });
+
+    return lastApplied;
   }
 
   /* ------------------------- META ------------------------- */
@@ -622,7 +673,10 @@ export class LioranDB {
   }
 
   private async _scheduleMaintenance<R>(task: () => Promise<R>): Promise<R> {
-    this.assertWritable();
+    // Reads and internal maintenance must be allowed on read-replicas.
+    if (this.readonlyMode) {
+      throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
+    }
     return this.writer.run(task);
   }
 
