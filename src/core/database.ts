@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { Collection } from "./collection.js";
-import { Index, IndexOptions } from "./index.js";
+import { Index, TextIndex, IndexOptions, type TextIndexOptions } from "./index.js";
 import { MigrationEngine } from "./migration.js";
 import type { LioranManager } from "../LioranManager.js";
 import type { ZodSchema } from "zod";
@@ -26,6 +26,8 @@ type TXOp = { tx: number; col: string; op: string; args: any[] };
 type IndexMeta = {
   field: string;
   options: IndexOptions;
+  type?: "btree" | "text";
+  textOptions?: TextIndexOptions;
 };
 
 type DBMeta = {
@@ -446,6 +448,8 @@ export class LioranDB {
     switch (op) {
       case "createIndex":
         return this._createIndexInternal(args[0], args[1], args[2]);
+      case "createTextIndex":
+        return this._createTextIndexInternal(args[0], args[1], args[2]);
       case "compactCollection":
         return this._compactCollectionInternal(args[0]);
       default:
@@ -490,6 +494,7 @@ export class LioranDB {
         {
           readonly: this.readonlyMode,
           batchChunkSize: this.runtimeOptions.batch?.chunkSize,
+          resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
             ? undefined
             : {
@@ -500,14 +505,21 @@ export class LioranDB {
                 getChunkSize: () =>
                   Math.max(1, Math.trunc(this.runtimeOptions.batch?.chunkSize ?? 500)),
                 createIndex: (field: string, options: IndexOptions = {}) =>
-                  this._scheduleWrite(DB_META_COL, "createIndex", [name, field, options])
+                  this._scheduleWrite(DB_META_COL, "createIndex", [name, field, options]),
+                createTextIndex: (field: string, options: TextIndexOptions = {}) =>
+                  this._scheduleWrite(DB_META_COL, "createTextIndex", [name, field, options])
               }
         }
       );
 
       const metas = this.meta.indexes[name] ?? [];
       for (const m of metas) {
-        col.registerIndex(new Index(colPath, m.field, m.options));
+        const type = m.type ?? "btree";
+        if (type === "text") {
+          (col as any).registerTextIndex?.(new TextIndex(colPath, m.field, m.textOptions ?? {}));
+        } else {
+          col.registerIndex(new Index(colPath, m.field, m.options));
+        }
       }
 
       this._ensureIdIndex(name, col, colPath);
@@ -722,6 +734,31 @@ export class LioranDB {
     return this._runInWriter(task);
   }
 
+  async createTextIndex(
+    collection: string,
+    field: string,
+    options: TextIndexOptions = {}
+  ) {
+    try {
+      this.assertWritable();
+
+      await this._commitTransaction(++LioranDB.TX_SEQ, [
+        {
+          tx: LioranDB.TX_SEQ,
+          col: DB_META_COL,
+          op: "createTextIndex",
+          args: [collection, field, options]
+        }
+      ]);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to create text index",
+        details: { collection, field }
+      });
+    }
+  }
+
   async _commitTransaction(
     txId: number,
     ops: TXOp[],
@@ -798,7 +835,7 @@ export class LioranDB {
 
     const normalizedOptions: IndexOptions = { unique: !!options.unique };
 
-    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field);
+    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field && (i.type ?? "btree") === "btree");
     if (existingMeta) {
       const existingUnique = !!existingMeta.options?.unique;
       if (existingUnique !== !!normalizedOptions.unique) {
@@ -851,9 +888,58 @@ export class LioranDB {
     }
 
     if (!existingMeta) {
-      this.meta.indexes[collection].push({ field, options: normalizedOptions });
+      this.meta.indexes[collection].push({ field, options: normalizedOptions, type: "btree" });
       this.saveMeta();
     }
+    return true;
+  }
+
+  private async _createTextIndexInternal(
+    collection: string,
+    field: string,
+    options: TextIndexOptions = {}
+  ) {
+    const col = this.collection(collection);
+
+    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field && (i.type ?? "btree") === "text");
+    if (existingMeta) return true;
+
+    const indexAlreadyRegistered = !!(col as any).getTextIndex?.(field);
+    const index = (col as any).getTextIndex?.(field) ?? new TextIndex(col.dir, field, options);
+
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await index.bulkInsert(docs);
+      docs.length = 0;
+    };
+
+    for await (const [key, enc] of col.db.iterator()) {
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+
+      try {
+        docs.push(decryptData(enc));
+      } catch {
+        continue;
+      }
+
+      if (docs.length >= 5000) {
+        await flush();
+      }
+    }
+
+    await flush();
+
+    if (!indexAlreadyRegistered) {
+      (col as any).registerTextIndex?.(index);
+    }
+
+    if (!this.meta.indexes[collection]) {
+      this.meta.indexes[collection] = [];
+    }
+
+    this.meta.indexes[collection].push({ field, options: {}, type: "text", textOptions: options });
+    this.saveMeta();
     return true;
   }
 

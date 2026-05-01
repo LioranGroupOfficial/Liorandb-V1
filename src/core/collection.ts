@@ -4,6 +4,7 @@ import {
   applyUpdate,
   runIndexedQuery,
   selectIndex,
+  planQuery,
   getByPath
 } from "./query.js";
 import { v4 as uuid } from "uuid";
@@ -15,7 +16,7 @@ import {
 } from "../utils/encryption.js";
 import type { ZodSchema } from "zod";
 import { validateSchema } from "../utils/schema.js";
-import { Index, type IndexOptions } from "./index.js";
+import { Index, TextIndex, type IndexOptions, type TextIndexOptions } from "./index.js";
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
@@ -35,6 +36,7 @@ export interface CollectionOptions {
   readonly?: boolean;
   batchChunkSize?: number;
   scheduler?: CollectionScheduler;
+  resolveCollection?: (name: string) => Collection<any>;
 }
 
 export interface FindOptions {
@@ -48,6 +50,7 @@ export type CollectionScheduler = {
   maintenance: <R>(task: () => Promise<R>) => Promise<R>;
   getChunkSize: () => number;
   createIndex?: (field: string, options?: IndexOptions) => Promise<any>;
+  createTextIndex?: (field: string, options?: TextIndexOptions) => Promise<any>;
 };
 
 type QueryExecutionResult<R> = {
@@ -76,11 +79,13 @@ export class Collection<T = any> {
   private migrations: Migration<T>[] = [];
 
   private indexes = new Map<string, Index>();
+  private textIndexes = new Map<string, TextIndex>();
   private readonlyMode: boolean;
   private docCount = 0;
   private metaLoaded = false;
   private metaLoadPromise: Promise<void> | null = null;
   private scheduler?: CollectionScheduler;
+  private resolveCollection?: (name: string) => Collection<any>;
   private batchChunkSize: number;
 
   constructor(
@@ -94,6 +99,7 @@ export class Collection<T = any> {
     this.schemaVersion = schemaVersion;
     this.readonlyMode = options?.readonly ?? false;
     this.scheduler = options?.scheduler;
+    this.resolveCollection = options?.resolveCollection;
     this.batchChunkSize = Math.max(1, Math.trunc(options?.batchChunkSize ?? 500));
 
     this.db = new ClassicLevel(dir, {
@@ -199,6 +205,9 @@ export class Collection<T = any> {
     for (const idx of this.indexes.values()) {
       try { await idx.close(); } catch {}
     }
+    for (const idx of this.textIndexes.values()) {
+      try { await idx.close(); } catch {}
+    }
     try { await this.db.close(); } catch {}
   }
 
@@ -246,17 +255,30 @@ export class Collection<T = any> {
     return this.indexes.get(field);
   }
 
+  registerTextIndex(index: TextIndex) {
+    this.textIndexes.set(index.field, index);
+  }
+
+  getTextIndex(field: string) {
+    return this.textIndexes.get(field);
+  }
+
   private async _updateIndexes(oldDoc: any, newDoc: any) {
     if (this.readonlyMode) return;
     const indexes = Array.from(this.indexes.values());
-    await Promise.all(indexes.map(index => index.update(oldDoc, newDoc)));
+    const textIndexes = Array.from(this.textIndexes.values());
+    await Promise.all([
+      ...indexes.map(index => index.update(oldDoc, newDoc)),
+      ...textIndexes.map(index => index.update(oldDoc, newDoc))
+    ]);
   }
 
   private async _rollbackIndexesForDocs(docs: any[]) {
     if (this.readonlyMode) return;
     const indexes = Array.from(this.indexes.values());
+    const textIndexes = Array.from(this.textIndexes.values());
 
-    await Promise.all(indexes.map(async (index) => {
+    await Promise.all([...indexes, ...textIndexes].map(async (index: any) => {
       for (const doc of docs) {
         try {
           await index.delete(doc);
@@ -269,10 +291,11 @@ export class Collection<T = any> {
     if (this.readonlyMode) return;
 
     const indexes = Array.from(this.indexes.values());
-    if (indexes.length === 0 || docs.length === 0) return;
+    const textIndexes = Array.from(this.textIndexes.values());
+    if (indexes.length + textIndexes.length === 0 || docs.length === 0) return;
 
     // Run per-index in parallel; each index uses its own LevelDB instance.
-    await Promise.all(indexes.map(index => {
+    await Promise.all([...indexes, ...textIndexes].map((index: any) => {
       return docs.length === 1
         ? index.insert(docs[0])
         : index.bulkInsert(docs);
@@ -489,9 +512,50 @@ export class Collection<T = any> {
       }
     }
 
+    const allDocIds = async () => {
+      const ids: string[] = [];
+      for await (const [key] of this.db.iterator()) {
+        if (key.startsWith(META_KEY_PREFIX)) continue;
+        ids.push(key);
+      }
+      return ids;
+    };
+
+    // Text search (optional) can pre-filter candidates (AND semantics).
+    let textCandidate: Set<string> | null = null;
+    if (query && typeof query === "object" && typeof query !== "function" && "$text" in query) {
+      const spec = (query as any).$text;
+      const search = typeof spec === "string" ? spec : spec?.$search ?? spec?.search;
+      const fields = Array.isArray(spec?.$fields ?? spec?.fields) ? (spec.$fields ?? spec.fields) : undefined;
+
+      if (typeof search === "string" && search.trim().length > 0) {
+        const indexes = fields
+          ? fields.map((f: any) => this.textIndexes.get(String(f))).filter(Boolean) as TextIndex[]
+          : Array.from(this.textIndexes.values());
+
+        if (indexes.length === 0) {
+          throw new LiorandbError("UNSUPPORTED_QUERY", "Text search requires a text index", {
+            details: { search, fields }
+          });
+        }
+
+        if (indexes.length > 0) {
+          const sets = await Promise.all(indexes.map(idx => idx.search(search)));
+          sets.sort((a, b) => a.size - b.size);
+          textCandidate = new Set(sets[0]);
+          for (let i = 1; i < sets.length; i++) {
+            for (const id of textCandidate) {
+              if (!sets[i].has(id)) textCandidate.delete(id);
+            }
+            if (textCandidate.size === 0) break;
+          }
+        }
+      }
+    }
+
     const indexedFields = new Set(this.indexes.keys());
 
-    return runIndexedQuery(
+    const plan = await planQuery(
       query,
       {
         indexes: indexedFields,
@@ -501,20 +565,21 @@ export class Collection<T = any> {
           return new Set(await idx.find(value));
         },
         rangeByIndex: async (field, cond) => {
-        const idx = this.indexes.get(field);
-        if (!idx) return null;
-        return new Set(await idx.findRange(cond));
+          const idx = this.indexes.get(field);
+          if (!idx) return null;
+          return new Set(await idx.findRange(cond));
         }
       },
-      async () => {
-        const ids: string[] = [];
-        for await (const [key] of this.db.iterator()) {
-          if (key.startsWith(META_KEY_PREFIX)) continue;
-          ids.push(key);
-        }
-        return ids;
-      }
+      allDocIds
     );
+
+    if (textCandidate) {
+      for (const id of plan.candidateIds) {
+        if (!textCandidate.has(id)) plan.candidateIds.delete(id);
+      }
+    }
+
+    return plan.candidateIds;
   }
 
   private async _readAndMigrate(id: string) {
@@ -714,19 +779,8 @@ export class Collection<T = any> {
     const out: R[] = [];
     const { offset, limit, projection } = this.normalizeFindOptions(options);
     const finalLimit = limitOverride === undefined ? limit : Math.min(limit, limitOverride);
-    const selection = selectIndex(query, new Set(this.indexes.keys()));
-    const indexUsable = selection
-      ? (
-          "$eq" in selection.cond ||
-          "$in" in selection.cond ||
-          "$gt" in selection.cond ||
-          "$gte" in selection.cond ||
-          "$lt" in selection.cond ||
-          "$lte" in selection.cond
-        )
-      : false;
-    const indexUsed = selection && indexUsable ? selection.field : undefined;
-    const usedFullScan = !indexUsed;
+    let indexUsed: string | undefined = undefined;
+    let usedFullScan = true;
     let skipped = 0;
 
     if (finalLimit === 0) {
@@ -803,6 +857,39 @@ export class Collection<T = any> {
           candidateDocuments: scannedDocuments
         }
       };
+    }
+
+    // Planner (best-effort) for explain output. Avoids the trivial-query fast path above.
+    const allDocIds = async () => {
+      const ids: string[] = [];
+      for await (const [key] of this.db.iterator()) {
+        if (key.startsWith(META_KEY_PREFIX)) continue;
+        ids.push(key);
+      }
+      return ids;
+    };
+
+    const plan = await planQuery(
+      query,
+      {
+        indexes: new Set(this.indexes.keys()),
+        findByIndex: async (field, value) => {
+          const idx = this.indexes.get(field);
+          if (!idx) return null;
+          return new Set(await idx.find(value));
+        },
+        rangeByIndex: async (field, cond) => {
+          const idx = this.indexes.get(field);
+          if (!idx) return null;
+          return new Set(await idx.findRange(cond));
+        }
+      },
+      allDocIds
+    );
+
+    if (plan.usedIndexes.length > 0) {
+      indexUsed = plan.usedIndexes.join("&");
+      usedFullScan = false;
     }
 
     const ids = await this._getCandidateIds(query);
@@ -894,6 +981,37 @@ export class Collection<T = any> {
 
       if (stage.$group) {
         working = this.applyGroupStage(working, stage.$group);
+        continue;
+      }
+
+      if (stage.$lookup) {
+        const spec = stage.$lookup;
+        const from = String(spec?.from ?? "");
+        const localField = String(spec?.localField ?? "");
+        const foreignField = String(spec?.foreignField ?? "");
+        const as = String(spec?.as ?? "");
+
+        if (!from || !localField || !foreignField || !as) {
+          throw new LiorandbError("VALIDATION_FAILED", "Invalid $lookup spec", {
+            details: { spec }
+          });
+        }
+
+        const foreignCol = this.resolveCollection?.(from);
+        if (!foreignCol) {
+          throw new LiorandbError("INTERNAL", "$lookup requires a DB-managed collection resolver", {
+            details: { from }
+          });
+        }
+
+        const next: any[] = [];
+        for (const doc of working) {
+          const localValue = getByPath(doc, localField);
+          const matches = await foreignCol.find({ [foreignField]: { $eq: localValue } }, { limit: Number.POSITIVE_INFINITY });
+          next.push({ ...doc, [as]: matches });
+        }
+        working = next;
+
         continue;
       }
 
@@ -1142,6 +1260,45 @@ export class Collection<T = any> {
 
     await flush();
     this.registerIndex(index);
+  }
+
+  async createTextIndex(defOrField: any, options: TextIndexOptions = {}) {
+    const field = typeof defOrField === "object" && defOrField
+      ? String(defOrField.field)
+      : String(defOrField);
+    const resolvedOptions: TextIndexOptions = typeof defOrField === "object" && defOrField
+      ? { normalize: defOrField.normalize ?? true, stopwords: defOrField.stopwords }
+      : options;
+
+    if (this.scheduler?.createTextIndex) {
+      await this.scheduler.createTextIndex(field, resolvedOptions);
+      return;
+    }
+
+    // Fallback: local-only text index creation.
+    this.assertWritable();
+    if (this.textIndexes.has(field)) return;
+
+    const index = new TextIndex(this.dir, field, resolvedOptions);
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await index.bulkInsert(docs);
+      docs.length = 0;
+    };
+
+    for await (const [key, enc] of this.db.iterator()) {
+      if (key.startsWith(META_KEY_PREFIX) || !enc) continue;
+      try {
+        docs.push(decryptData(enc));
+      } catch {
+        continue;
+      }
+      if (docs.length >= 5000) await flush();
+    }
+
+    await flush();
+    this.registerTextIndex(index);
   }
 
   async insertMany(docs: any[], options?: { chunkSize?: number }) {

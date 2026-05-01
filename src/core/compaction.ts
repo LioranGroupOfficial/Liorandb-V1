@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { ClassicLevel } from "classic-level";
 import { Collection } from "./collection.js";
-import { Index } from "./index.js";
+import { Index, TextIndex } from "./index.js";
 import { decryptData } from "../utils/encryption.js";
 import { asLiorandbError } from "../utils/errors.js";
 
@@ -35,6 +35,9 @@ export async function compactCollectionEngine(col: Collection) {
   // On Windows, open LevelDB handles prevent directory renames.
   // Always close index handles before attempting atomic swaps.
   for (const idx of new Map(col["indexes"]).values()) {
+    try { await idx.close(); } catch {}
+  }
+  for (const idx of new Map(col["textIndexes"] ?? []).values()) {
     try { await idx.close(); } catch {}
   }
 
@@ -159,6 +162,7 @@ export async function rebuildIndexes(col: Collection) {
   const indexRoot = path.join(col.dir, INDEX_DIR);
 
   const oldIndexes = new Map(col["indexes"]);
+  const oldTextIndexes = new Map(col["textIndexes"] ?? []);
 
   // Close old index handles
   for (const idx of oldIndexes.values()) {
@@ -166,11 +170,15 @@ export async function rebuildIndexes(col: Collection) {
       await idx.close();
     } catch {}
   }
+  for (const idx of oldTextIndexes.values()) {
+    try { await idx.close(); } catch {}
+  }
 
   safeRemove(indexRoot);
   fs.mkdirSync(indexRoot, { recursive: true });
 
   const rebuiltIndexes = new Map<string, Index>();
+  const rebuiltTextIndexes = new Map<string, TextIndex>();
 
   for (const idx of oldIndexes.values()) {
     const rebuilt = new Index(col.dir, idx.field, {
@@ -203,6 +211,29 @@ export async function rebuildIndexes(col: Collection) {
   }
 
   col["indexes"] = rebuiltIndexes;
+
+  for (const idx of oldTextIndexes.values()) {
+    const rebuilt = new TextIndex(col.dir, idx.field);
+    const docs: any[] = [];
+    const flush = async () => {
+      if (docs.length === 0) return;
+      await rebuilt.bulkInsert(docs);
+      docs.length = 0;
+    };
+
+    for await (const [key, enc] of col.db.iterator()) {
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+      try {
+        docs.push(decryptData(enc));
+        if (docs.length >= 5000) await flush();
+      } catch {}
+    }
+
+    await flush();
+    rebuiltTextIndexes.set(idx.field, rebuilt);
+  }
+
+  col["textIndexes"] = rebuiltTextIndexes;
 }
 
 /* ---------------------------------------------------------

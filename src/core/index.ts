@@ -9,6 +9,18 @@ export interface IndexOptions {
   unique?: boolean;
 }
 
+export interface TextIndexOptions {
+  /**
+   * If true, splits on non-alphanumeric and lowercases (recommended).
+   * If false, uses whitespace split only.
+   */
+  normalize?: boolean;
+  /**
+   * Optional stopwords to ignore.
+   */
+  stopwords?: string[];
+}
+
 type IndexValue = string;
 
 const UNIQUE_PREFIX = "u:";
@@ -358,6 +370,148 @@ export class Index {
         details: { field: this.field, unique: this.unique }
       });
     }
+  }
+
+  async close() {
+    try { await this.db.close(); } catch {}
+  }
+}
+
+/* ----------------------------- TEXT INDEX ----------------------------- */
+
+const TEXT_TOKEN_PREFIX = "t:";
+const TEXT_DOC_PREFIX = "d:";
+
+function defaultTokenize(input: string, normalize: boolean): string[] {
+  const s = normalize ? input.toLowerCase() : input;
+  const parts = normalize
+    ? s.split(/[^a-z0-9_]+/i)
+    : s.split(/\s+/);
+  return parts.map(p => p.trim()).filter(Boolean);
+}
+
+export class TextIndex {
+  readonly field: string;
+  readonly dir: string;
+  readonly db: ClassicLevel<string, string>;
+  private normalize: boolean;
+  private stopwords: Set<string>;
+
+  constructor(baseDir: string, field: string, options: TextIndexOptions = {}) {
+    this.field = field;
+    this.dir = path.join(baseDir, "__indexes", field + ".textidx");
+    fs.mkdirSync(this.dir, { recursive: true });
+    this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
+    this.normalize = options.normalize ?? true;
+    this.stopwords = new Set((options.stopwords ?? []).map(s => s.toLowerCase()));
+  }
+
+  private tokenizeDoc(doc: any): string[] {
+    const raw = doc?.[this.field];
+    const text = raw === null || raw === undefined ? "" : String(raw);
+    const tokens = defaultTokenize(text, this.normalize)
+      .map(t => (this.normalize ? t.toLowerCase() : t))
+      .filter(t => (this.stopwords.size ? !this.stopwords.has(t) : true));
+    return Array.from(new Set(tokens));
+  }
+
+  private makeTokenKey(token: string, id: string) {
+    return TEXT_TOKEN_PREFIX + token + VALUE_SEPARATOR + id;
+  }
+
+  private makeDocKey(id: string) {
+    return TEXT_DOC_PREFIX + id;
+  }
+
+  async insert(doc: any) {
+    try {
+      const id = String(doc?._id);
+      if (!id) return;
+      const tokens = this.tokenizeDoc(doc);
+      const ops: Array<{ type: "put"; key: string; value: string }> = [];
+      for (const t of tokens) {
+        ops.push({ type: "put", key: this.makeTokenKey(t, id), value: "1" });
+      }
+      ops.push({ type: "put", key: this.makeDocKey(id), value: JSON.stringify(tokens) });
+      await this.db.batch(ops);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to insert text index entry",
+        details: { field: this.field }
+      });
+    }
+  }
+
+  async delete(doc: any) {
+    try {
+      const id = String(doc?._id);
+      if (!id) return;
+      const raw = await this.db.get(this.makeDocKey(id)).catch(() => null);
+      const tokens: string[] = raw ? JSON.parse(raw) : [];
+      const ops: Array<{ type: "del"; key: string }> = [];
+      for (const t of tokens) {
+        ops.push({ type: "del", key: this.makeTokenKey(t, id) });
+      }
+      ops.push({ type: "del", key: this.makeDocKey(id) });
+      if (ops.length) await this.db.batch(ops as any);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to delete text index entry",
+        details: { field: this.field }
+      });
+    }
+  }
+
+  async update(oldDoc: any, newDoc: any) {
+    try {
+      const oldTokens = oldDoc ? this.tokenizeDoc(oldDoc) : [];
+      const newTokens = newDoc ? this.tokenizeDoc(newDoc) : [];
+      if (JSON.stringify(oldTokens) === JSON.stringify(newTokens)) return;
+      if (oldDoc) await this.delete(oldDoc);
+      if (newDoc) await this.insert(newDoc);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to update text index entry",
+        details: { field: this.field }
+      });
+    }
+  }
+
+  async bulkInsert(docs: any[]) {
+    for (const d of docs) {
+      await this.insert(d);
+    }
+  }
+
+  async search(search: string): Promise<Set<string>> {
+    const tokens = defaultTokenize(search, this.normalize)
+      .map(t => (this.normalize ? t.toLowerCase() : t))
+      .filter(t => (this.stopwords.size ? !this.stopwords.has(t) : true));
+
+    if (tokens.length === 0) return new Set();
+
+    const sets: Set<string>[] = [];
+    for (const token of tokens) {
+      const prefix = TEXT_TOKEN_PREFIX + token + VALUE_SEPARATOR;
+      const ids: string[] = [];
+      for await (const [key] of this.db.iterator({ gte: prefix, lte: prefix + RANGE_END })) {
+        ids.push(key.slice(prefix.length));
+      }
+      sets.push(new Set(ids));
+    }
+
+    sets.sort((a, b) => a.size - b.size);
+    const out = new Set(sets[0]);
+    for (let i = 1; i < sets.length; i++) {
+      for (const id of out) {
+        if (!sets[i].has(id)) out.delete(id);
+      }
+      if (out.size === 0) break;
+    }
+    return out;
   }
 
   async close() {
