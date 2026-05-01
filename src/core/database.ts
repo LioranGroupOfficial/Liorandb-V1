@@ -12,7 +12,7 @@ import {
   setEncryptionKey
 } from "../utils/encryption.js";
 
-import { WALManager } from "./wal.js";
+import { WALManager, type WALDurabilityOptions } from "./wal.js";
 import { CheckpointManager } from "./checkpoint.js";
 import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
 import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
@@ -41,6 +41,10 @@ const DB_META_COL = "\u0000__db__";
 export type LioranDBRuntimeOptions = {
   writeQueue?: Omit<WriterQueueOptions, "memoryPressure"> & {
     memoryPressure?: WriterQueueOptions["memoryPressure"];
+  };
+  durability?: {
+    level?: "journaled" | "wal" | "async" | "none";
+    wal?: WALDurabilityOptions;
   };
   batch?: {
     chunkSize?: number;
@@ -131,7 +135,7 @@ export class LioranDB {
       this.loadMeta();
 
       if (!this.readonlyMode) {
-        this.wal = new WALManager(basePath);
+        this.wal = new WALManager(basePath, { durability: options.durability?.wal });
         this.checkpoint = new CheckpointManager(basePath);
         const userPressure = options.writeQueue?.memoryPressure;
         this.writer = new DedicatedWriter({
@@ -642,28 +646,38 @@ export class LioranDB {
     useWAL: boolean
   ): Promise<any[]> {
     try {
-      if (useWAL) {
+      const durabilityLevel = this.runtimeOptions.durability?.level ?? "journaled";
+      const effectiveUseWAL = useWAL && durabilityLevel !== "none";
+
+      const flushModeForCommit =
+        durabilityLevel === "journaled"
+          ? ("await" as const)
+          : durabilityLevel === "async"
+            ? ("request" as const)
+            : ("none" as const);
+
+      if (effectiveUseWAL) {
         for (const op of ops) {
           await this.wal.append({
             tx: txId,
             type: "op",
             payload: op
-          } as any);
+          } as any, { flush: "none" });
         }
 
         await this.wal.append({
           tx: txId,
           type: "commit"
-        } as any);
+        } as any, { flush: flushModeForCommit });
       }
 
       const results = await this._applyOps(ops);
 
-      if (useWAL) {
+      if (effectiveUseWAL) {
         const appliedLSN = await this.wal.append({
           tx: txId,
           type: "applied"
-        } as any);
+        } as any, { flush: flushModeForCommit });
 
         this.advanceCheckpoint(appliedLSN);
       }

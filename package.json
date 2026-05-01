@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs",
+    "test": "node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/wal-partial-write.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs",
     "test:compact": "node __tests__/compaction.test.mjs",
     "prepublishOnly": "npm run build"
   },
@@ -44,7 +44,6 @@
   },
   "homepage": "https://db.lioransolutions.com/",
   "dependencies": {
-    "@types/tar-stream": "^3.1.4",
     "classic-level": "^3.0.0",
     "tar": "^7.5.9",
     "tar-stream": "^3.1.7",
@@ -52,7 +51,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.2.0",
+    "@types/estree": "^1.0.8",
+    "@types/node": "^25.6.0",
+    "@types/tar-stream": "^3.1.4",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }

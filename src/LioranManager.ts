@@ -2,6 +2,7 @@ import path from "path";
 import fs from "fs";
 import process from "process";
 import { LioranDB } from "./core/database.js";
+import type { LioranDBRuntimeOptions } from "./core/database.js";
 import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
 import { LifecycleManager } from "./utils/lifecycle.js";
@@ -38,6 +39,7 @@ export interface LioranManagerOptions {
   batch?: {
     chunkSize?: number;
   };
+  durability?: LioranDBRuntimeOptions["durability"];
 }
 
 /* ---------------- MANAGER ---------------- */
@@ -183,7 +185,8 @@ export class LioranManager {
 
       const db = new LioranDB(dbPath, name, this, {
         writeQueue: this.options.writeQueue,
-        batch: this.options.batch
+        batch: this.options.batch,
+        durability: this.options.durability
       });
       await db.ready;
       this.openDBs.set(name, db);
