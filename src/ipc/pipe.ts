@@ -118,7 +118,8 @@ export class IPCServer {
   }
 
   private async exec(action: IPCAction, args: any) {
-    switch (action) {
+    return (this.manager as any)._withOpsLock?.(async () => {
+      switch (action) {
     case "db":
       await this.manager.db(args.db);
       return true;
@@ -178,7 +179,70 @@ export class IPCServer {
       throw new LiorandbError("UNKNOWN_ACTION", `Unknown action: ${action}`, {
         details: { action }
       });
-    }
+      }
+    }) ?? (async () => {
+      // Fallback if manager doesn't expose op lock (older builds).
+      switch (action) {
+      case "db":
+        await this.manager.db(args.db);
+        return true;
+      case "db:meta": {
+        const { db, method, params } = args;
+        const database = await this.manager.db(db);
+        return await (database as any)[method](...params);
+      }
+      case "op": {
+        const { db, col, method, params } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        return await (collection as any)[method](...params);
+      }
+      case "index": {
+        const { db, col, method, params } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        return await (collection as any)[method](...params);
+      }
+      case "wal:fetch": {
+        const { db, fromLSN, limit } = args;
+        const database = await this.manager.db(db);
+        return await (database as any).exportWAL(fromLSN ?? 0, limit ?? 10_000);
+      }
+      case "compact:collection": {
+        const { db, col } = args;
+        const collection = (await this.manager.db(db)).collection(col);
+        await collection.compact();
+        return true;
+      }
+      case "compact:db": {
+        const { db } = args;
+        const database = await this.manager.db(db);
+        await database.compactAll();
+        return true;
+      }
+      case "compact:all": {
+        for (const db of this.manager.openDBs.values()) {
+          await db.compactAll();
+        }
+        return true;
+      }
+      case "snapshot":
+        await this.manager.snapshot(args.path);
+        return true;
+      case "restore":
+        await this.manager.restore(args.path);
+        return true;
+      case "backup:incremental":
+        return await (this.manager as any).incrementalBackup(args.path, args.options);
+      case "backup:apply":
+        return await (this.manager as any).applyIncrementalBackup(args.path, args.options);
+      case "shutdown":
+        setTimeout(() => void this.manager.closeAll(), 0);
+        return true;
+      default:
+        throw new LiorandbError("UNKNOWN_ACTION", `Unknown action: ${action}`, {
+          details: { action }
+        });
+      }
+    })();
   }
 
   async close(): Promise<void> {
@@ -196,6 +260,7 @@ export class IPCClient {
   private socket: net.Socket | null = null;
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
   private buf = "";
+  private defaultTimeoutMs = 30_000;
 
   constructor(private rootPath: string) {}
 
@@ -231,6 +296,17 @@ export class IPCClient {
       this.pending.clear();
     });
 
+    socket.on("error", () => {
+      for (const { reject } of this.pending.values()) {
+        reject(new LiorandbError("IO_ERROR", "IPC connection error"));
+      }
+      this.pending.clear();
+      try { socket.destroy(); } catch {}
+      if (this.socket === socket) {
+        this.socket = null;
+      }
+    });
+
     await new Promise<void>((resolve, reject) => {
       socket.once("error", reject);
       const [host, portStr] = endpoint.address.split(":");
@@ -257,15 +333,48 @@ export class IPCClient {
 
   async exec(action: IPCAction, args: any): Promise<any> {
     await this.connect();
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const req: IPCRequest = { id, action, args };
 
-    const p = new Promise<any>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-    });
+    const attempt = async (): Promise<any> => {
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const req: IPCRequest = { id, action, args };
 
-    this.socket!.write(JSON.stringify(req) + "\n");
-    return p;
+      const p = new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new LiorandbError("IO_ERROR", "IPC request timed out", { details: { action } }));
+        }, this.defaultTimeoutMs);
+        timer.unref?.();
+
+        this.pending.set(id, {
+          resolve: v => {
+            clearTimeout(timer);
+            resolve(v);
+          },
+          reject: e => {
+            clearTimeout(timer);
+            reject(e);
+          }
+        });
+      });
+
+      try {
+        this.socket!.write(JSON.stringify(req) + "\n");
+      } catch (err) {
+        this.pending.delete(id);
+        throw err;
+      }
+
+      return p;
+    };
+
+    try {
+      return await attempt();
+    } catch {
+      // Retry once on transient socket failure.
+      try { await this.close(); } catch {}
+      await this.connect();
+      return attempt();
+    }
   }
 
   async close(): Promise<void> {

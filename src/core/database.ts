@@ -236,6 +236,7 @@ export class LioranDB {
     try {
       if (!this.readonlyMode) {
         await this.recoverFromWAL({ untilTimeMs: this.runtimeOptions.recovery?.untilTimeMs });
+        await this.ensureIdIndexesAtStartup();
       }
     } catch (err) {
       throw asLiorandbError(err, {
@@ -244,6 +245,30 @@ export class LioranDB {
         details: { dbName: this.dbName, basePath: this.basePath }
       });
     }
+  }
+
+  private async ensureIdIndexesAtStartup(): Promise<void> {
+    if (this.readonlyMode) return;
+
+    // Ensure `_id` index is fully materialized even if no future writes occur.
+    // This avoids silent uniqueness holes after a crash/restart.
+    const collectionNames = this.getAllCollectionNames();
+
+    await this._runInWriter(async () => {
+      for (const name of collectionNames) {
+        const colPath = path.join(this.basePath, name);
+        const indexDir = path.join(colPath, "__indexes", "_id.idx");
+
+        const hasMeta = !!this.meta.indexes[name]?.some(i => i.field === "_id" && (i.type ?? "btree") === "btree");
+        const hasFiles = fs.existsSync(indexDir) && fs.readdirSync(indexDir, { withFileTypes: true }).some(d => d.isFile());
+
+        if (!hasMeta || !hasFiles) {
+          try {
+            await this._createIndexInternal(name, "_id", { unique: true });
+          } catch {}
+        }
+      }
+    });
   }
 
   private async recoverFromWAL(options: { untilTimeMs?: number } = {}) {

@@ -7,6 +7,7 @@ import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
 import { LifecycleManager } from "./utils/lifecycle.js";
 import { LiorandbError, asLiorandbError } from "./utils/errors.js";
+import { Mutex } from "./utils/mutex.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -66,6 +67,7 @@ export class LioranManager {
   private lockFd?: number;
   private lifecycle = new LifecycleManager();
   private options: LioranManagerOptions;
+  private opsMutex = new Mutex();
   private shutdownHookCleanup?: () => void;
   private ipcServer?: import("./ipc/pipe.js").IPCServer;
   private ipcClient?: import("./ipc/pipe.js").IPCClient;
@@ -276,27 +278,33 @@ export class LioranManager {
       throw new LiorandbError("READONLY_MODE", "Snapshot not allowed in readonly mode");
     }
 
-    for (const db of this.openDBs.values()) {
-      try {
-        await db.close();
-      } catch {}
-    }
+    return await this.opsMutex.runExclusive(async () => {
+      for (const db of this.openDBs.values()) {
+        try {
+          await db.wal?.flush?.();
+        } catch {}
+        try {
+          await db.close();
+        } catch {}
+      }
+      this.openDBs.clear();
 
-    fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+      fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
 
-    const tar = await import("tar");
+      const tar = await import("tar");
 
-    await tar.c(
-      {
-        gzip: true,
-        file: snapshotPath,
-        cwd: this.rootPath,
-        portable: true
-      },
-      ["./"]
-    );
+      await tar.c(
+        {
+          gzip: true,
+          file: snapshotPath,
+          cwd: this.rootPath,
+          portable: true
+        },
+        ["./"]
+      );
 
-    return true;
+      return true;
+    });
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -319,20 +327,22 @@ export class LioranManager {
       throw new LiorandbError("READONLY_MODE", "Restore not allowed in readonly mode");
     }
 
-    await this.closeAll();
+    await this.opsMutex.runExclusive(async () => {
+      await this.closeAll();
 
-    fs.rmSync(this.rootPath, { recursive: true, force: true });
-    fs.mkdirSync(this.rootPath, { recursive: true });
+      fs.rmSync(this.rootPath, { recursive: true, force: true });
+      fs.mkdirSync(this.rootPath, { recursive: true });
 
-    const tar = await import("tar");
+      const tar = await import("tar");
 
-    await tar.x({
-      file: snapshotPath,
-      cwd: this.rootPath
+      await tar.x({
+        file: snapshotPath,
+        cwd: this.rootPath
+      });
+
+      console.log("Restore completed. Restart required.");
+      process.exit(0);
     });
-
-    console.log("Restore completed. Restart required.");
-    process.exit(0);
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -358,17 +368,19 @@ export class LioranManager {
         throw new LiorandbError("READONLY_MODE", "Incremental backup not allowed in readonly mode");
       }
 
-      for (const db of this.openDBs.values()) {
-        try {
-          await db.wal?.flush?.();
-        } catch {}
-        try {
-          await db.close();
-        } catch {}
-      }
-      this.openDBs.clear();
+      return await this.opsMutex.runExclusive(async () => {
+        for (const db of this.openDBs.values()) {
+          try {
+            await db.wal?.flush?.();
+          } catch {}
+          try {
+            await db.close();
+          } catch {}
+        }
+        this.openDBs.clear();
 
-      return await createIncrementalBackupArchive(this.rootPath, backupPath, options);
+        return await createIncrementalBackupArchive(this.rootPath, backupPath, options);
+      });
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -392,17 +404,19 @@ export class LioranManager {
         throw new LiorandbError("READONLY_MODE", "Applying backups not allowed in readonly mode");
       }
 
-      const { recordsByDb } = await readIncrementalBackupArchive(backupPath);
-      const appliedCheckpointByDb: Record<string, number> = {};
+      return await this.opsMutex.runExclusive(async () => {
+        const { recordsByDb } = await readIncrementalBackupArchive(backupPath);
+        const appliedCheckpointByDb: Record<string, number> = {};
 
-      for (const [dbName, records] of Object.entries(recordsByDb)) {
-        const db = await this.openDatabase(dbName);
-        const filtered = filterWALForPITR(records, options.untilTimeMs);
-        await db.applyReplicatedWAL(filtered);
-        appliedCheckpointByDb[dbName] = db.getCheckpointLSN();
-      }
+        for (const [dbName, records] of Object.entries(recordsByDb)) {
+          const db = await this.openDatabase(dbName);
+          const filtered = filterWALForPITR(records, options.untilTimeMs);
+          await db.applyReplicatedWAL(filtered);
+          appliedCheckpointByDb[dbName] = db.getCheckpointLSN();
+        }
 
-      return appliedCheckpointByDb;
+        return appliedCheckpointByDb;
+      });
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -410,6 +424,10 @@ export class LioranManager {
         details: { backupPath }
       });
     }
+  }
+
+  async _withOpsLock<R>(task: () => Promise<R>): Promise<R> {
+    return this.opsMutex.runExclusive(task);
   }
 
   /* ---------------- SHUTDOWN ---------------- */
