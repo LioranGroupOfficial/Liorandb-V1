@@ -17,6 +17,7 @@ import { CheckpointManager } from "./checkpoint.js";
 import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
 import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
 import type { WALRecord } from "./wal.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -56,6 +57,7 @@ export type LioranDBRuntimeOptions = {
 
 class DBTransactionContext {
   private ops: TXOp[] = [];
+  private aborted = false;
 
   constructor(
     private db: LioranDB,
@@ -63,21 +65,27 @@ class DBTransactionContext {
   ) {}
 
   collection(name: string) {
-    return new Proxy(
-      {},
-      {
-        get: (_, prop: string) => {
-          return (...args: any[]) => {
-            this.ops.push({
-              tx: this.txId,
-              col: name,
-              op: prop,
-              args
-            });
-          };
+    const col = this.db.collection(name);
+    const readMethods = new Set(["find", "findOne", "aggregate", "explain", "countDocuments", "count"]);
+
+    return new Proxy(col as any, {
+      get: (target, prop: string) => {
+        if (typeof target[prop] !== "function") return target[prop];
+
+        if (readMethods.has(prop)) {
+          return (...args: any[]) => (target as any)[prop](...args);
         }
+
+        return (...args: any[]) => {
+          this.ops.push({
+            tx: this.txId,
+            col: name,
+            op: prop,
+            args
+          });
+        };
       }
-    );
+    });
   }
 
   async commit() {
@@ -85,7 +93,17 @@ class DBTransactionContext {
       throw new LiorandbError("READONLY_MODE", "Cannot commit transaction in readonly mode");
     }
 
+    if (this.aborted) {
+      throw new LiorandbError("TRANSACTION_ABORTED", "Transaction aborted");
+    }
+
     await this.db._commitTransaction(this.txId, this.ops);
+  }
+
+  abort() {
+    this.aborted = true;
+    this.ops.length = 0;
+    throw new LiorandbError("TRANSACTION_ABORTED", "Transaction aborted");
   }
 }
 
@@ -106,6 +124,7 @@ export class LioranDB {
   public wal!: WALManager;
   private checkpoint!: CheckpointManager;
   private writer!: DedicatedWriter;
+  private writerContext = new AsyncLocalStorage<boolean>();
   private runtimeOptions: LioranDBRuntimeOptions;
   private lastBackpressureLogAt = 0;
   private idIndexEnsureScheduled = new Set<string>();
@@ -114,6 +133,14 @@ export class LioranDB {
   private readonly readonlyMode: boolean;
   private readonly replicaMode: boolean;
   public readonly ready: Promise<void>;
+
+  private async _runInWriter<R>(task: () => Promise<R>): Promise<R> {
+    if (this.writerContext.getStore()) {
+      return task();
+    }
+
+    return this.writer.run(() => this.writerContext.run(true, task));
+  }
 
   constructor(
     basePath: string,
@@ -298,7 +325,7 @@ export class LioranDB {
     const opsByTx = new Map<number, TXOp[]>();
     let lastApplied = startLSN;
 
-    await this.writer.run(async () => {
+    await this._runInWriter(async () => {
       for (const record of records) {
         if (record.lsn <= startLSN) continue;
 
@@ -610,10 +637,25 @@ export class LioranDB {
 
   /* ------------------------- TX API ------------------------- */
 
-  async transaction<T>(fn: (tx: DBTransactionContext) => Promise<T>): Promise<T> {
+  async transaction<T>(
+    fn: (tx: DBTransactionContext) => Promise<T>,
+    options: { isolation?: "read_committed" | "snapshot" } = {}
+  ): Promise<T> {
     try {
       this.assertWritable();
+
+      const isolation = options.isolation ?? "read_committed";
       const txId = ++LioranDB.TX_SEQ;
+
+      if (isolation === "snapshot") {
+        return await this._runInWriter(async () => {
+          const tx = new DBTransactionContext(this, txId);
+          const result = await fn(tx);
+          await tx.commit();
+          return result;
+        });
+      }
+
       const tx = new DBTransactionContext(this, txId);
       const result = await fn(tx);
       await tx.commit();
@@ -677,7 +719,7 @@ export class LioranDB {
     if (this.readonlyMode) {
       throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
     }
-    return this.writer.run(task);
+    return this._runInWriter(task);
   }
 
   async _commitTransaction(
@@ -689,7 +731,7 @@ export class LioranDB {
 
     const useWAL = options.wal ?? true;
 
-    return this.writer.run(async () => {
+    return this._runInWriter(async () => {
       return this._commitTransactionInternal(txId, ops, useWAL);
     });
   }

@@ -13,6 +13,8 @@ export type LiorandbErrorCode =
   | "BACKPRESSURE"
   | "IO_ERROR"
   | "CORRUPTION"
+  | "TRANSACTION_ABORTED"
+  | "TRANSACTION_CONFLICT"
   | "INTERNAL";
 
 export type LiorandbErrorDetails = Record<string, unknown>;

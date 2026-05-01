@@ -111,6 +111,7 @@ export class WALManager {
   private currentGen = 1;
   private lsn = 0;
   private fd: fs.promises.FileHandle | null = null;
+  private openPromise: Promise<void> | null = null;
   private readonlyMode: boolean;
   private durability: {
     flushStrategy: WALFlushStrategy;
@@ -217,8 +218,17 @@ export class WALManager {
       throw new LiorandbError("READONLY_MODE", "WAL is in readonly replica mode");
     }
 
-    if (!this.fd) {
+    if (this.fd) return;
+    if (this.openPromise) return this.openPromise;
+
+    this.openPromise = (async () => {
       this.fd = await fs.promises.open(this.walPath(), "a");
+    })();
+
+    try {
+      await this.openPromise;
+    } finally {
+      this.openPromise = null;
     }
   }
 
@@ -279,6 +289,10 @@ export class WALManager {
   }
 
   async close(): Promise<void> {
+    if (this.openPromise) {
+      try { await this.openPromise; } catch {}
+      this.openPromise = null;
+    }
     if (this.fd) {
       try {
         await this.flush();

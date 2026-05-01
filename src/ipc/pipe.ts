@@ -1,5 +1,7 @@
 import net from "net";
 import os from "os";
+import fs from "fs";
+import path from "path";
 import type { IPCAction } from "./queue.js";
 import type { LioranManager } from "../LioranManager.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
@@ -25,8 +27,25 @@ function crc32(input: string): number {
 }
 
 export function getIpcEndpoint(rootPath: string): { kind: "pipe" | "tcp"; address: string } {
-  // Prefer TCP loopback for portability (named pipes can be blocked by OS policy/sandboxing).
-  return { kind: "tcp", address: `127.0.0.1:${(crc32(os.hostname() + rootPath) % 10000) + 42000}` };
+  // Endpoint is discovered via a file under rootPath (allows ephemeral ports + avoids collisions).
+  const endpointFile = getIpcEndpointFile(rootPath);
+  if (!fs.existsSync(endpointFile)) {
+    return { kind: "tcp", address: "127.0.0.1:0" };
+  }
+
+  try {
+    const raw = fs.readFileSync(endpointFile, "utf8");
+    const parsed = JSON.parse(raw) as { host: string; port: number };
+    if (parsed?.host && typeof parsed.port === "number") {
+      return { kind: "tcp", address: `${parsed.host}:${parsed.port}` };
+    }
+  } catch {}
+
+  return { kind: "tcp", address: "127.0.0.1:0" };
+}
+
+export function getIpcEndpointFile(rootPath: string) {
+  return path.join(rootPath, ".lioran.ipc.json");
 }
 
 export class IPCServer {
@@ -36,7 +55,7 @@ export class IPCServer {
 
   async start(): Promise<void> {
     if (this.server) return;
-    const endpoint = getIpcEndpoint(this.rootPath);
+    const endpointFile = getIpcEndpointFile(this.rootPath);
 
     this.server = net.createServer(socket => {
       socket.setNoDelay(true);
@@ -59,13 +78,16 @@ export class IPCServer {
 
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
-      if (endpoint.kind === "pipe") {
-        this.server!.listen(endpoint.address, () => resolve());
-      } else {
-        const [host, portStr] = endpoint.address.split(":");
-        this.server!.listen(Number(portStr), host, () => resolve());
-      }
+      // Always use ephemeral port; publish it for clients.
+      this.server!.listen(0, "127.0.0.1", () => resolve());
     });
+
+    const addr = this.server.address();
+    if (!addr || typeof addr === "string") {
+      throw new LiorandbError("IO_ERROR", "IPC server failed to bind");
+    }
+
+    fs.writeFileSync(endpointFile, JSON.stringify({ host: "127.0.0.1", port: addr.port, pid: process.pid, time: Date.now() }));
   }
 
   private async handleLine(line: string, socket: net.Socket) {
@@ -159,6 +181,9 @@ export class IPCServer {
     if (!this.server) return;
     const srv = this.server;
     this.server = null;
+    try {
+      fs.unlinkSync(getIpcEndpointFile(this.rootPath));
+    } catch {}
     await new Promise<void>(resolve => srv.close(() => resolve()));
   }
 }
@@ -173,6 +198,11 @@ export class IPCClient {
   private async connect(): Promise<void> {
     if (this.socket && !this.socket.destroyed) return;
     const endpoint = getIpcEndpoint(this.rootPath);
+    if (endpoint.address.endsWith(":0")) {
+      throw new LiorandbError("IO_ERROR", "IPC primary endpoint not found", {
+        details: { rootPath: this.rootPath }
+      });
+    }
 
     const socket = new net.Socket();
     socket.setNoDelay(true);
@@ -199,12 +229,8 @@ export class IPCClient {
 
     await new Promise<void>((resolve, reject) => {
       socket.once("error", reject);
-      if (endpoint.kind === "pipe") {
-        socket.connect(endpoint.address, () => resolve());
-      } else {
-        const [host, portStr] = endpoint.address.split(":");
-        socket.connect(Number(portStr), host, () => resolve());
-      }
+      const [host, portStr] = endpoint.address.split(":");
+      socket.connect(Number(portStr), host, () => resolve());
     }).catch(err => {
       throw asLiorandbError(err, { code: "IO_ERROR", message: "Failed to connect to IPC primary", details: { endpoint } });
     });
