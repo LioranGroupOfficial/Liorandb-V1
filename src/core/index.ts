@@ -394,11 +394,13 @@ export class TextIndex {
   readonly field: string;
   readonly dir: string;
   readonly db: ClassicLevel<string, string>;
+  readonly options: TextIndexOptions;
   private normalize: boolean;
   private stopwords: Set<string>;
 
   constructor(baseDir: string, field: string, options: TextIndexOptions = {}) {
     this.field = field;
+    this.options = { ...options };
     this.dir = path.join(baseDir, "__indexes", field + ".textidx");
     fs.mkdirSync(this.dir, { recursive: true });
     this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });

@@ -19,6 +19,7 @@ import { validateSchema } from "../utils/schema.js";
 import { Index, TextIndex, type IndexOptions, type TextIndexOptions } from "./index.js";
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
+import { BlobStore, type TieredStorageOptions } from "./blobstore.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -37,6 +38,7 @@ export interface CollectionOptions {
   batchChunkSize?: number;
   scheduler?: CollectionScheduler;
   resolveCollection?: (name: string) => Collection<any>;
+  tieredStorage?: TieredStorageOptions;
 }
 
 export interface FindOptions {
@@ -87,6 +89,7 @@ export class Collection<T = any> {
   private scheduler?: CollectionScheduler;
   private resolveCollection?: (name: string) => Collection<any>;
   private batchChunkSize: number;
+  private blobStore?: BlobStore;
 
   constructor(
     dir: string,
@@ -100,6 +103,10 @@ export class Collection<T = any> {
     this.readonlyMode = options?.readonly ?? false;
     this.scheduler = options?.scheduler;
     this.resolveCollection = options?.resolveCollection;
+    if (options?.tieredStorage) {
+      this.blobStore = new BlobStore(this.dir, options.tieredStorage);
+      this.blobStore.validateConfig();
+    }
     this.batchChunkSize = Math.max(1, Math.trunc(options?.batchChunkSize ?? 500));
 
     this.db = new ClassicLevel(dir, {
@@ -380,9 +387,11 @@ export class Collection<T = any> {
       });
     }
 
+    const externalized = this.blobStore ? this.blobStore.externalizeDoc(doc).doc : doc;
+
     const final = this.validate({
       _id,
-      ...doc,
+      ...externalized,
       __v: this.schemaVersion
     });
 
@@ -391,6 +400,9 @@ export class Collection<T = any> {
     try {
       await this._insertIndexesForDocs([final]);
     } catch (err) {
+      if (this.blobStore) {
+        this.blobStore.deleteBlobs(this.blobStore.collectBlobIds(final));
+      }
       await this._rollbackIndexesForDocs([final]);
       throw err;
     }
@@ -413,6 +425,9 @@ export class Collection<T = any> {
 
       this.docCount = nextCount;
     } catch (err) {
+      if (this.blobStore) {
+        this.blobStore.deleteBlobs(this.blobStore.collectBlobIds(final));
+      }
       await this._rollbackIndexesForDocs([final]);
       throw err;
     }
@@ -453,9 +468,10 @@ export class Collection<T = any> {
       }
 
       seenIds.add(id);
+      const externalized = this.blobStore ? this.blobStore.externalizeDoc(d).doc : d;
       const final = this.validate({
         _id,
-        ...d,
+        ...externalized,
         __v: this.schemaVersion
       });
 
@@ -472,6 +488,11 @@ export class Collection<T = any> {
     try {
       await this._insertIndexesForDocs(out);
     } catch (err) {
+      if (this.blobStore) {
+        for (const doc of out) {
+          this.blobStore.deleteBlobs(this.blobStore.collectBlobIds(doc));
+        }
+      }
       await this._rollbackIndexesForDocs(out);
       throw err;
     }
@@ -487,6 +508,11 @@ export class Collection<T = any> {
       await this.db.batch(batch);
       this.docCount = nextCount;
     } catch (err) {
+      if (this.blobStore) {
+        for (const doc of out) {
+          this.blobStore.deleteBlobs(this.blobStore.collectBlobIds(doc));
+        }
+      }
       await this._rollbackIndexesForDocs(out);
       throw err;
     }
@@ -602,7 +628,7 @@ export class Collection<T = any> {
       }
     }
 
-    return migrated;
+    return this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated;
   }
 
   private normalizeFindOptions(options?: FindOptions) {
@@ -1069,8 +1095,12 @@ export class Collection<T = any> {
       if (!existing) continue;
 
       if (matchDocument(existing, filter)) {
+        const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
+        const applied = applyUpdate(existing, update);
+        const externalized = this.blobStore ? this.blobStore.externalizeDoc(applied).doc : applied;
+
         const updated = this.validate({
-          ...applyUpdate(existing, update),
+          ...externalized,
           _id: (existing as any)._id,
           __v: this.schemaVersion
         });
@@ -1082,7 +1112,19 @@ export class Collection<T = any> {
           // Best-effort rollback: keep indexes + primary storage consistent.
           try { await this.db.put(id, encryptData(existing)); } catch {}
           try { await this._updateIndexes(updated, existing); } catch {}
+          if (this.blobStore) {
+            const updatedIds = this.blobStore.collectBlobIds(updated);
+            for (const bid of updatedIds) {
+              if (!oldBlobIds.includes(bid)) this.blobStore.deleteBlobs([bid]);
+            }
+          }
           throw err;
+        }
+
+        if (this.blobStore) {
+          const updatedIds = this.blobStore.collectBlobIds(updated);
+          const toDelete = oldBlobIds.filter(bid => !updatedIds.includes(bid));
+          this.blobStore.deleteBlobs(toDelete);
         }
 
         return updated;
@@ -1107,8 +1149,12 @@ export class Collection<T = any> {
       if (!existing) continue;
 
       if (matchDocument(existing, filter)) {
+        const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
+        const applied = applyUpdate(existing, update);
+        const externalized = this.blobStore ? this.blobStore.externalizeDoc(applied).doc : applied;
+
         const updated = this.validate({
-          ...applyUpdate(existing, update),
+          ...externalized,
           _id: (existing as any)._id,
           __v: this.schemaVersion
         });
@@ -1119,7 +1165,19 @@ export class Collection<T = any> {
         } catch (err) {
           try { await this.db.put(id, encryptData(existing)); } catch {}
           try { await this._updateIndexes(updated, existing); } catch {}
+          if (this.blobStore) {
+            const updatedIds = this.blobStore.collectBlobIds(updated);
+            for (const bid of updatedIds) {
+              if (!oldBlobIds.includes(bid)) this.blobStore.deleteBlobs([bid]);
+            }
+          }
           throw err;
+        }
+
+        if (this.blobStore) {
+          const updatedIds = this.blobStore.collectBlobIds(updated);
+          const toDelete = oldBlobIds.filter(bid => !updatedIds.includes(bid));
+          this.blobStore.deleteBlobs(toDelete);
         }
 
         out.push(updated);
@@ -1142,6 +1200,7 @@ export class Collection<T = any> {
       if (!existing) continue;
 
       if (matchDocument(existing, filter)) {
+        const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
         this.docCount--;
         await this.db.batch([
           {
@@ -1155,6 +1214,7 @@ export class Collection<T = any> {
           }
         ]);
         await this._updateIndexes(existing, null);
+        if (this.blobStore) this.blobStore.deleteBlobs(oldBlobIds);
         return true;
       }
     }
@@ -1199,6 +1259,12 @@ export class Collection<T = any> {
 
       for (const doc of matchedDocs) {
         await this._updateIndexes(doc, null);
+      }
+
+      if (this.blobStore) {
+        for (const doc of matchedDocs) {
+          this.blobStore.deleteBlobs(this.blobStore.collectBlobIds(doc));
+        }
       }
     }
 

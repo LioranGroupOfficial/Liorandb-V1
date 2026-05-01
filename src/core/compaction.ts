@@ -213,7 +213,7 @@ export async function rebuildIndexes(col: Collection) {
   col["indexes"] = rebuiltIndexes;
 
   for (const idx of oldTextIndexes.values()) {
-    const rebuilt = new TextIndex(col.dir, idx.field);
+    const rebuilt = new TextIndex(col.dir, idx.field, (idx as any).options ?? {});
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;

@@ -18,6 +18,7 @@ import { DedicatedWriter, type WriterQueueOptions } from "./writer.js";
 import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/errors.js";
 import type { WALRecord } from "./wal.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { TieredStorageOptions } from "./blobstore.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -464,7 +465,8 @@ export class LioranDB {
   collection<T = any>(
     name: string,
     schema?: ZodSchema<T>,
-    schemaVersion?: number
+    schemaVersion?: number,
+    options?: { tieredStorage?: TieredStorageOptions }
   ): Collection<T> {
     if (this.collections.has(name)) {
       const col = this.collections.get(name)!;
@@ -494,6 +496,7 @@ export class LioranDB {
         {
           readonly: this.readonlyMode,
           batchChunkSize: this.runtimeOptions.batch?.chunkSize,
+          tieredStorage: options?.tieredStorage,
           resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
             ? undefined
