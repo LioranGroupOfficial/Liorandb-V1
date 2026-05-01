@@ -54,6 +54,9 @@ export type LioranDBRuntimeOptions = {
   batch?: {
     chunkSize?: number;
   };
+  recovery?: {
+    untilTimeMs?: number;
+  };
 };
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
@@ -232,7 +235,7 @@ export class LioranDB {
   private async initialize() {
     try {
       if (!this.readonlyMode) {
-        await this.recoverFromWAL();
+        await this.recoverFromWAL({ untilTimeMs: this.runtimeOptions.recovery?.untilTimeMs });
       }
     } catch (err) {
       throw asLiorandbError(err, {
@@ -243,15 +246,17 @@ export class LioranDB {
     }
   }
 
-  private async recoverFromWAL() {
+  private async recoverFromWAL(options: { untilTimeMs?: number } = {}) {
     try {
       const checkpointData = this.checkpoint.get();
       const fromLSN = checkpointData.lsn;
+      const untilTimeMs = options.untilTimeMs;
 
     const committed = new Set<number>();
     const applied = new Set<number>();
     const ops = new Map<number, TXOp[]>();
     const commitLSNByTx = new Map<number, number>();
+    const commitTimeByTx = new Map<number, number>();
     let maxSeenLSN = fromLSN;
 
       await this.wal.replay(fromLSN, async (record) => {
@@ -259,6 +264,9 @@ export class LioranDB {
       if (record.type === "commit") {
         committed.add(record.tx);
         commitLSNByTx.set(record.tx, record.lsn);
+        if (typeof (record as any).time === "number") {
+          commitTimeByTx.set(record.tx, (record as any).time);
+        }
       } else if (record.type === "applied") {
         applied.add(record.tx);
       } else if (record.type === "op") {
@@ -271,6 +279,13 @@ export class LioranDB {
 
     const txsToApply = Array.from(committed)
       .filter(tx => !applied.has(tx))
+      .filter(tx => {
+        if (untilTimeMs == null) return true;
+        const t = commitTimeByTx.get(tx);
+        // For legacy WAL (no timestamps), treat as always-applicable.
+        if (t == null) return true;
+        return t <= untilTimeMs;
+      })
       .sort((a, b) => (commitLSNByTx.get(a) ?? 0) - (commitLSNByTx.get(b) ?? 0));
 
     for (const tx of txsToApply) {
@@ -291,6 +306,17 @@ export class LioranDB {
         details: { dbName: this.dbName, basePath: this.basePath }
       });
     }
+  }
+
+  public async replayToTimestamp(untilTimeMs: number): Promise<number> {
+    if (this.readonlyMode) return this.getCheckpointLSN();
+
+    return this._runInWriter(async () => {
+      // Re-run recovery logic from current checkpoint, but stop applying commits beyond `untilTimeMs`.
+      // This is intended for restored snapshots before normal startup traffic resumes.
+      await this.recoverFromWAL({ untilTimeMs });
+      return this.getCheckpointLSN();
+    });
   }
 
   /* ------------------------- CHECKPOINT ADVANCE ------------------------- */
@@ -784,6 +810,7 @@ export class LioranDB {
     try {
       const durabilityLevel = this.runtimeOptions.durability?.level ?? "journaled";
       const effectiveUseWAL = useWAL && durabilityLevel !== "none";
+      const txTime = Date.now();
 
       const flushModeForCommit =
         durabilityLevel === "journaled"
@@ -796,6 +823,7 @@ export class LioranDB {
         for (const op of ops) {
           await this.wal.append({
             tx: txId,
+            time: txTime,
             type: "op",
             payload: op
           } as any, { flush: "none" });
@@ -803,6 +831,7 @@ export class LioranDB {
 
         await this.wal.append({
           tx: txId,
+          time: txTime,
           type: "commit"
         } as any, { flush: flushModeForCommit });
       }
@@ -812,6 +841,7 @@ export class LioranDB {
       if (effectiveUseWAL) {
         const appliedLSN = await this.wal.append({
           tx: txId,
+          time: txTime,
           type: "applied"
         } as any, { flush: flushModeForCommit });
 

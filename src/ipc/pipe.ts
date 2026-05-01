@@ -166,6 +166,10 @@ export class IPCServer {
     case "restore":
       await this.manager.restore(args.path);
       return true;
+    case "backup:incremental":
+      return await (this.manager as any).incrementalBackup(args.path, args.options);
+    case "backup:apply":
+      return await (this.manager as any).applyIncrementalBackup(args.path, args.options);
     case "shutdown":
       // Respond first, then shutdown in next tick to avoid cutting off the response socket.
       setTimeout(() => void this.manager.closeAll(), 0);

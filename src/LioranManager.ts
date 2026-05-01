@@ -7,6 +7,14 @@ import { setEncryptionKey } from "./utils/encryption.js";
 import { getDefaultRootPath } from "./utils/rootpath.js";
 import { LifecycleManager } from "./utils/lifecycle.js";
 import { LiorandbError, asLiorandbError } from "./utils/errors.js";
+import {
+  createIncrementalBackupArchive,
+  filterWALForPITR,
+  readIncrementalBackupArchive,
+  type CreateIncrementalBackupOptions,
+  type IncrementalBackupManifest,
+  type ApplyIncrementalBackupOptions
+} from "./backup/incremental.js";
 
 /* ---------------- PROCESS MODE ---------------- */
 
@@ -330,6 +338,76 @@ export class LioranManager {
         code: "IO_ERROR",
         message: "Restore failed",
         details: { snapshotPath }
+      });
+    }
+  }
+
+  /* ---------------- INCREMENTAL BACKUP ---------------- */
+
+  async incrementalBackup(
+    backupPath: string,
+    options: CreateIncrementalBackupOptions = {}
+  ): Promise<IncrementalBackupManifest> {
+    try {
+      if (this.mode === ProcessMode.CLIENT) {
+        const queue = await this.getQueue();
+        return queue.exec("backup:incremental", { path: backupPath, options });
+      }
+
+      if (this.mode === ProcessMode.READONLY) {
+        throw new LiorandbError("READONLY_MODE", "Incremental backup not allowed in readonly mode");
+      }
+
+      for (const db of this.openDBs.values()) {
+        try {
+          await db.wal?.flush?.();
+        } catch {}
+        try {
+          await db.close();
+        } catch {}
+      }
+      this.openDBs.clear();
+
+      return await createIncrementalBackupArchive(this.rootPath, backupPath, options);
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Incremental backup failed",
+        details: { backupPath }
+      });
+    }
+  }
+
+  async applyIncrementalBackup(
+    backupPath: string,
+    options: ApplyIncrementalBackupOptions = {}
+  ): Promise<Record<string, number>> {
+    try {
+      if (this.mode === ProcessMode.CLIENT) {
+        const queue = await this.getQueue();
+        return queue.exec("backup:apply", { path: backupPath, options });
+      }
+
+      if (this.mode === ProcessMode.READONLY) {
+        throw new LiorandbError("READONLY_MODE", "Applying backups not allowed in readonly mode");
+      }
+
+      const { recordsByDb } = await readIncrementalBackupArchive(backupPath);
+      const appliedCheckpointByDb: Record<string, number> = {};
+
+      for (const [dbName, records] of Object.entries(recordsByDb)) {
+        const db = await this.openDatabase(dbName);
+        const filtered = filterWALForPITR(records, options.untilTimeMs);
+        await db.applyReplicatedWAL(filtered);
+        appliedCheckpointByDb[dbName] = db.getCheckpointLSN();
+      }
+
+      return appliedCheckpointByDb;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Apply incremental backup failed",
+        details: { backupPath }
       });
     }
   }

@@ -22,9 +22,9 @@ export type WALDurabilityOptions = {
 ========================= */
 
 export type WALRecord =
-  | { lsn: number; tx: number; type: "op"; payload: any }
-  | { lsn: number; tx: number; type: "commit" }
-  | { lsn: number; tx: number; type: "applied" };
+  | { lsn: number; tx: number; time?: number; type: "op"; payload: any }
+  | { lsn: number; tx: number; time?: number; type: "commit" }
+  | { lsn: number; tx: number; time?: number; type: "applied" };
 
 type StoredRecord = WALRecord & { crc: number };
 type EncryptedStoredRecord = { v: 2; enc: string };

@@ -16,7 +16,9 @@ export type IPCAction =
   | "compact:all"
   | "shutdown"
   | "restore"
-  | "snapshot";
+  | "snapshot"
+  | "backup:incremental"
+  | "backup:apply";
 
 /* -------------------------------- DB QUEUE -------------------------------- */
 
@@ -111,6 +113,14 @@ export class DBQueue {
       case "restore":
         await this.manager.restore(args.path);
         return true;
+
+      /* ---------------- BACKUP ---------------- */
+
+      case "backup:incremental":
+        return await (this.manager as any).incrementalBackup(args.path, args.options);
+
+      case "backup:apply":
+        return await (this.manager as any).applyIncrementalBackup(args.path, args.options);
 
       /* ---------------- CONTROL ---------------- */
 

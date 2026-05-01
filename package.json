@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/wal-partial-write.test.mjs && node __tests__/ipc-multiprocess.test.mjs && node __tests__/replication-follower.test.mjs && node __tests__/transactions.test.mjs && node __tests__/query-optimization.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs",
+    "test": "npm run build && node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/wal-partial-write.test.mjs && node __tests__/ipc-multiprocess.test.mjs && node __tests__/replication-follower.test.mjs && node __tests__/transactions.test.mjs && node __tests__/query-optimization.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs && node __tests__/backup-pitr.test.mjs",
     "bench:storage": "npm run build && node bench/storage-bench.mjs",
     "test:compact": "node __tests__/compaction.test.mjs",
     "prepublishOnly": "npm run build"
