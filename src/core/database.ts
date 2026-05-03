@@ -139,7 +139,6 @@ export class LioranDB {
   private maintenanceInterval?: NodeJS.Timeout;
   private maintenanceRunning = false;
   private lastFullCompactionAt = 0;
-  private lastLightCompactionAt = 0;
   private maintenanceStats = {
     lightCompactions: 0,
     fullCompactions: 0,
@@ -183,7 +182,12 @@ export class LioranDB {
       this.loadMeta();
 
       if (!this.readonlyMode) {
-        this.wal = new WALManager(basePath, { durability: options.durability?.wal });
+        this.wal = new WALManager(basePath, {
+          durability: {
+            ...(options.durability?.wal ?? {}),
+            flushStrategy: options.durability?.wal?.flushStrategy ?? "batch"
+          }
+        });
         this.checkpoint = new CheckpointManager(basePath);
         const userPressure = options.writeQueue?.memoryPressure;
         this.writer = new DedicatedWriter({
@@ -271,50 +275,40 @@ export class LioranDB {
   }
 
   private async runMaintenance() {
-    if (this.closed) return;
+    if (this.closed || this.maintenanceRunning) return;
     if (this.readonlyMode || this.replicaMode) return;
-    if (this.maintenanceRunning) return;
 
     await this.ready;
 
-    const now = Date.now();
-    const fullDue = now - this.lastFullCompactionAt >= 8 * 60 * 1000;
-    const lightDue = now - this.lastLightCompactionAt >= 60_000;
-    if (!fullDue && !lightDue) return;
-
     this.maintenanceRunning = true;
     const started = Date.now();
+    const isFullDue = (Date.now() - this.lastFullCompactionAt) >= 10 * 60 * 1000;
 
     try {
       await this._runInWriter(async () => {
         if (this.closed) return;
 
         const collectionNames = this.getAllCollectionNames();
+
         for (const name of collectionNames) {
-          const col = this.collection(name);
           try {
-            if (fullDue) {
-              await col.compact({ aggressive: true } as any);
-            } else if (lightDue) {
-              await col.compact({ aggressive: false } as any);
-            }
-          } catch {
-            // best-effort background maintenance
+            const col = this.collection(name);
+            await col.compact({ aggressive: isFullDue } as any);
+          } catch (e) {
+            console.warn(`[Maintenance] Failed for collection ${name}`, e);
           }
         }
+
+        if (isFullDue) this.lastFullCompactionAt = Date.now();
       });
 
       const duration = Date.now() - started;
       this.maintenanceStats.lastDurationMs = duration;
 
-      if (fullDue) {
-        this.lastFullCompactionAt = now;
-        this.maintenanceStats.fullCompactions++;
-      } else if (lightDue) {
-        this.lastLightCompactionAt = now;
-        this.maintenanceStats.lightCompactions++;
-      }
-    } catch {
+      if (isFullDue) this.maintenanceStats.fullCompactions++;
+      else this.maintenanceStats.lightCompactions++;
+    } catch (err) {
+      console.error("[Maintenance] Error:", err);
       this.maintenanceStats.lastErrorAt = Date.now();
     } finally {
       this.maintenanceRunning = false;
@@ -726,9 +720,13 @@ export class LioranDB {
   async compactAll() {
     try {
       this.assertWritable();
-      for (const name of this.collections.keys()) {
-        await this.compactCollection(name);
-      }
+      await this._runInWriter(async () => {
+        const collectionNames = this.getAllCollectionNames();
+        for (const name of collectionNames) {
+          const col = this.collection(name);
+          await col.compact({ aggressive: true } as any);
+        }
+      });
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
