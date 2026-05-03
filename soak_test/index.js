@@ -171,6 +171,11 @@ async function init() {
   await db.createIndex("items", "worker");
 
   console.log("Indexes ready");
+
+  // Background maintenance (light compaction) to keep SST/WAL growth in check during long runs.
+  setInterval(() => {
+    db.maintenance({ aggressive: false }).catch(() => {});
+  }, 10 * 60 * 1000); // every 10 minutes
 }
 
 /* ================= WRITER ================= */

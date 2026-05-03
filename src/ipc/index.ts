@@ -102,6 +102,14 @@ class DBProxy {
     return dbQueue.exec("compact:db", { db: this.dbName });
   }
 
+  maintenance(options?: { aggressive?: boolean }) {
+    return dbQueue.exec("db:meta", {
+      db: this.dbName,
+      method: "maintenance",
+      params: [options ?? {}]
+    });
+  }
+
   explain(collection: string, query?: any, options?: any) {
     return dbQueue.exec("db:meta", {
       db: this.dbName,

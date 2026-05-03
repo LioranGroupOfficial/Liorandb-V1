@@ -136,6 +136,18 @@ export class LioranDB {
   private idIndexEnsureScheduled = new Set<string>();
   private pendingIdIndexEnsure = new Set<string>();
 
+  private maintenanceInterval?: NodeJS.Timeout;
+  private maintenanceRunning = false;
+  private lastFullCompactionAt = 0;
+  private lastLightCompactionAt = 0;
+  private maintenanceStats = {
+    lightCompactions: 0,
+    fullCompactions: 0,
+    lastDurationMs: 0,
+    lastErrorAt: 0
+  };
+  private closed = false;
+
   private readonly readonlyMode: boolean;
   private readonly replicaMode: boolean;
   public readonly ready: Promise<void>;
@@ -213,6 +225,7 @@ export class LioranDB {
     this.migrator = new MigrationEngine(this);
 
     this.ready = this.initialize();
+    this.startMaintenanceScheduler();
   }
 
   /* ------------------------- MODE ------------------------- */
@@ -244,6 +257,67 @@ export class LioranDB {
         message: "Database initialization failed",
         details: { dbName: this.dbName, basePath: this.basePath }
       });
+    }
+  }
+
+  private startMaintenanceScheduler() {
+    if (this.readonlyMode || this.replicaMode) return;
+
+    const timer = setInterval(() => {
+      void this.runMaintenance().catch(() => {});
+    }, 60_000);
+    timer.unref?.();
+    this.maintenanceInterval = timer;
+  }
+
+  private async runMaintenance() {
+    if (this.closed) return;
+    if (this.readonlyMode || this.replicaMode) return;
+    if (this.maintenanceRunning) return;
+
+    await this.ready;
+
+    const now = Date.now();
+    const fullDue = now - this.lastFullCompactionAt >= 8 * 60 * 1000;
+    const lightDue = now - this.lastLightCompactionAt >= 60_000;
+    if (!fullDue && !lightDue) return;
+
+    this.maintenanceRunning = true;
+    const started = Date.now();
+
+    try {
+      await this._runInWriter(async () => {
+        if (this.closed) return;
+
+        const collectionNames = this.getAllCollectionNames();
+        for (const name of collectionNames) {
+          const col = this.collection(name);
+          try {
+            if (fullDue) {
+              await col.compact({ aggressive: true } as any);
+            } else if (lightDue) {
+              await col.compact({ aggressive: false } as any);
+            }
+          } catch {
+            // best-effort background maintenance
+          }
+        }
+      });
+
+      const duration = Date.now() - started;
+      this.maintenanceStats.lastDurationMs = duration;
+
+      if (fullDue) {
+        this.lastFullCompactionAt = now;
+        this.maintenanceStats.fullCompactions++;
+      } else if (lightDue) {
+        this.lastLightCompactionAt = now;
+        this.maintenanceStats.lightCompactions++;
+      }
+    } catch {
+      this.maintenanceStats.lastErrorAt = Date.now();
+    } finally {
+      this.maintenanceRunning = false;
     }
   }
 
@@ -753,6 +827,11 @@ export class LioranDB {
   /* ------------------------- SHUTDOWN ------------------------- */
 
   async close(): Promise<void> {
+    this.closed = true;
+    if (this.maintenanceInterval) {
+      try { clearInterval(this.maintenanceInterval); } catch {}
+      this.maintenanceInterval = undefined;
+    }
     if (!this.readonlyMode) {
       try {
         await this.writer.close();
@@ -766,6 +845,19 @@ export class LioranDB {
       try { await col.close(); } catch {}
     }
     this.collections.clear();
+  }
+
+  async maintenance(options: { aggressive?: boolean } = {}) {
+    this.assertWritable();
+    const aggressive = options.aggressive ?? true;
+
+    await this._runInWriter(async () => {
+      const collectionNames = this.getAllCollectionNames();
+      for (const name of collectionNames) {
+        const col = this.collection(name);
+        await col.compact({ aggressive } as any);
+      }
+    });
   }
 
   /* ------------------------- WRITER + WAL ------------------------- */

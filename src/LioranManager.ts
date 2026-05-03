@@ -515,6 +515,8 @@ class IPCDatabase {
 
   explain = (collection: string, query?: any, options?: any) =>
     this.call("explain", [collection, query, options]);
+  maintenance = (options?: { aggressive?: boolean }) =>
+    this.call("maintenance", [options ?? {}]);
   rotateEncryptionKey = (newKey: string | Buffer) =>
     this.call("rotateEncryptionKey", [newKey]);
 }

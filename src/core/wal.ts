@@ -128,7 +128,7 @@ export class WALManager {
     this.walDir = path.join(baseDir, WAL_DIR);
     this.readonlyMode = options?.readonly ?? false;
     this.durability = {
-      flushStrategy: options?.durability?.flushStrategy ?? "immediate",
+      flushStrategy: options?.durability?.flushStrategy ?? "batch",
       batch: {
         maxRecords: Math.max(1, Math.trunc(options?.durability?.batch?.maxRecords ?? 128)),
         maxDelayMs: Math.max(0, Math.trunc(options?.durability?.batch?.maxDelayMs ?? 10))

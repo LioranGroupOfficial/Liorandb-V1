@@ -111,7 +111,12 @@ export class Collection<T = any> {
 
     this.db = new ClassicLevel(dir, {
       valueEncoding: "utf8",
-      readOnly: this.readonlyMode
+      readOnly: this.readonlyMode,
+      writeBufferSize: 64 * 1024 * 1024,
+      cacheSize: 256 * 1024 * 1024,
+      blockSize: 16 * 1024,
+      maxOpenFiles: 500,
+      compression: true
     } as any);
   }
 
@@ -320,18 +325,19 @@ export class Collection<T = any> {
 
   /* ===================== COMPACTION ===================== */
 
-  async compact(): Promise<void> {
+  async compact(options: { aggressive?: boolean } = {}): Promise<void> {
     this.assertWritable();
+    const aggressive = options.aggressive ?? true;
 
     if (this.scheduler) {
-      return this.scheduler.maintenance(() => this._compactInternal());
+      return this.scheduler.maintenance(() => this._compactInternal(aggressive));
     }
 
-    return this._enqueueWrite(() => this._compactInternal());
+    return this._enqueueWrite(() => this._compactInternal(aggressive));
   }
 
-  async _compactInternal(): Promise<void> {
-    await compactCollectionEngine(this);
+  async _compactInternal(aggressive = true): Promise<void> {
+    await compactCollectionEngine(this, aggressive);
   }
 
   /* ===================== INTERNAL EXEC ===================== */

@@ -27,7 +27,17 @@ const COLLECTION_META_KEY_PREFIX = "\u0000__meta__:";
  * 4. Reopen DB
  * 5. Rebuild indexes
  */
-export async function compactCollectionEngine(col: Collection) {
+export async function compactCollectionEngine(col: Collection, aggressive = true) {
+  // Lightweight in-place compaction: lets LevelDB compact SSTs without rebuilding/swap.
+  if (!aggressive) {
+    try {
+      await col.db.open();
+    } catch {}
+    // Full keyspace compaction.
+    await col.db.compactRange("\x00", "\uffff");
+    return;
+  }
+
   const baseDir = col.dir;
   const tmpDir = baseDir + TMP_SUFFIX;
   const oldDir = baseDir + OLD_SUFFIX;
