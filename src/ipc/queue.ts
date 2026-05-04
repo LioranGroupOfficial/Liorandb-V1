@@ -27,12 +27,12 @@ export class DBQueue {
   private pool: IPCWorkerPool;
   private destroyed = false;
 
-  constructor(private rootPath = getDefaultRootPath()) {
+  constructor(private rootPath = getDefaultRootPath(), options: { cores?: number } = {}) {
     // Single shared DB instance
-    this.manager = new LioranManager({ rootPath });
+    this.manager = new LioranManager({ rootPath, cores: options.cores });
 
     // Worker threads (for future compute-heavy tasks)
-    this.pool = new IPCWorkerPool();
+    this.pool = new IPCWorkerPool(options.cores);
     this.pool.start();
   }
 
@@ -158,4 +158,6 @@ export class DBQueue {
 
 /* -------------------------------- SINGLETON -------------------------------- */
 
-export const dbQueue = new DBQueue();
+export const dbQueue = new DBQueue(getDefaultRootPath(), {
+  cores: process.env.LIORAN_CORES ? Number(process.env.LIORAN_CORES) : undefined
+});

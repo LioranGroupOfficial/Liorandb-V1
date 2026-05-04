@@ -19,9 +19,10 @@ export class IPCWorkerPool {
   private shuttingDown = false;
   private rrIndex = 0;
 
-  constructor() {
+  constructor(workerCount?: number) {
     // Minimum 2 workers, scale with CPU cores
-    this.workerCount = Math.max(2, os.cpus().length);
+    const requested = workerCount === undefined ? undefined : Math.max(0, Math.trunc(workerCount));
+    this.workerCount = Math.max(2, requested ?? os.cpus().length);
   }
 
   /* -------------------------------------------------- */

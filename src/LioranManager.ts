@@ -34,6 +34,11 @@ export interface LioranManagerOptions {
   encryptionKey?: string | Buffer;
   ipc?: "primary" | "client" | "readonly" | "replica";
   cache?: Partial<GlobalCacheConfig> & { maxRAMMB?: number };
+  /**
+   * Optional override for how many CPU cores to use for worker-thread pools.
+   * Defaults to `os.cpus().length` (minimum 2).
+   */
+  cores?: number;
   writeQueue?: {
     maxSize?: number;
     mode?: "wait" | "reject";

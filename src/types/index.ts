@@ -4,6 +4,10 @@ export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
   ipc?: boolean;
+  /**
+   * Optional override for how many CPU cores to use for worker-thread pools.
+   */
+  cores?: number;
 
   /**
    * Global cache configuration (defaults to enabled, 512MB max RAM).
