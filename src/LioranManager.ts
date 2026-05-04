@@ -11,6 +11,7 @@ import { Mutex } from "./utils/mutex.js";
 import { GlobalCacheEngine, type GlobalCacheConfig } from "./core/cacheEngine.js";
 import { ClusterController, type ClusterNodeConfig } from "./cluster/controller.js";
 import type { ReplicationCoordinator } from "./replication/coordinator.js";
+import { MetricsCollector } from "./metrics/collector.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -77,6 +78,7 @@ export class LioranManager {
   rootPath: string;
   openDBs: Map<string, LioranDB>;
   public readonly cache: GlobalCacheEngine;
+  public readonly metrics: MetricsCollector;
   private closed = false;
   private mode: ProcessMode;
   private lockFd?: number;
@@ -95,6 +97,7 @@ export class LioranManager {
     const { rootPath, encryptionKey, ipc } = options;
     this.options = options;
     this.cache = new GlobalCacheEngine(options.cache);
+    this.metrics = new MetricsCollector();
 
     this.rootPath = rootPath || getDefaultRootPath();
 

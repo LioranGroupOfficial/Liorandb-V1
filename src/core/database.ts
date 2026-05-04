@@ -267,6 +267,9 @@ export class LioranDB {
     this.collections = new Map();
     this.runtimeOptions = options;
 
+    // Ensure metrics bucket exists (no-op if metrics not present).
+    try { (this.manager as any)?.metrics?.snapshot?.(this.dbName); } catch {}
+
     this.readonlyMode = (manager as any)?.isReadonly?.() ?? false;
     this.replicaMode = (manager as any)?.isReplica?.() ?? false;
 
@@ -326,6 +329,10 @@ export class LioranDB {
 
     this.ready = this.initialize();
     this.startMaintenanceScheduler();
+  }
+
+  stats() {
+    return (this.manager as any)?.metrics?.snapshot?.(this.dbName) ?? {};
   }
 
   /* ------------------------- MODE ------------------------- */
@@ -767,6 +774,8 @@ export class LioranDB {
           tieredStorage: options?.tieredStorage,
           cacheEngine: (this.manager as any)?.cache,
           leveldb: this.runtimeOptions.storage?.leveldb,
+          metrics: (this.manager as any)?.metrics,
+          dbName: this.dbName,
           onExplain: (explain) => {
             // Adaptive compaction: track read amplification (scanned/returned).
             try {
@@ -1110,12 +1119,14 @@ export class LioranDB {
         writeBudgetMs,
         onViolation,
         async () => {
+          const writeStartedAt = Date.now();
           if (effectiveUseWAL) {
             await withLatencyBudget(
               `wal:${this.dbName}:tx:${txId}`,
               walBudgetMs,
               onViolation,
               async () => {
+                const walStartedAt = Date.now();
                 for (const op of ops) {
                   await this.wal.append({
                     tx: txId,
@@ -1130,6 +1141,7 @@ export class LioranDB {
                   time: txTime,
                   type: "commit"
                 } as any, { flush: flushModeForCommit });
+                try { (this.manager as any)?.metrics?.observeLatency?.(this.dbName, "wal", Date.now() - walStartedAt); } catch {}
               }
             );
           }
@@ -1147,12 +1159,17 @@ export class LioranDB {
             } as any, { flush: flushModeForCommit });
 
             this.advanceCheckpoint(appliedLSN);
+            try {
+              (this.manager as any)?.metrics?.observeLeaderLSN?.(this.dbName, appliedLSN);
+              (this.manager as any)?.metrics?.observeCommitTime?.(this.dbName, appliedLSN, txTime);
+            } catch {}
 
             // Cluster strong-consistency option: wait for majority replication acks.
             await (this.manager as any)._awaitReplicationMajority?.(this.dbName, appliedLSN);
           }
 
           await this.postCommitMaintenance();
+          try { (this.manager as any)?.metrics?.observeLatency?.(this.dbName, "write", Date.now() - writeStartedAt); } catch {}
           return results;
         }
       );

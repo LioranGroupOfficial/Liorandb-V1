@@ -60,6 +60,8 @@ export interface CollectionOptions {
     readBudgetMs?: number;
     onViolation?: LatencyViolationMode;
   };
+  metrics?: any;
+  dbName?: string;
 }
 
 export interface FindOptions {
@@ -126,6 +128,8 @@ export class Collection<T = any> {
   private onExplain?: CollectionOptions["onExplain"];
   private leveldbOptions?: CollectionOptions["leveldb"];
   private latency?: CollectionOptions["latency"];
+  private metrics?: any;
+  private dbName?: string;
 
   constructor(
     dir: string,
@@ -143,6 +147,8 @@ export class Collection<T = any> {
     this.leveldbOptions = options?.leveldb;
     this.latency = options?.latency;
     (this as any)._leveldbOptions = this.leveldbOptions;
+    this.metrics = options?.metrics;
+    this.dbName = options?.dbName;
     if (options?.tieredStorage) {
       this.blobStore = new BlobStore(this.dir, options.tieredStorage);
       this.blobStore.validateConfig();
@@ -368,13 +374,22 @@ export class Collection<T = any> {
     const enabled = this.latency?.enabled ?? true;
     const budget = enabled ? this.latency?.readBudgetMs ?? 100 : undefined;
     const mode = this.latency?.onViolation;
+    const startedAt = Date.now();
 
     if (this.scheduler) {
-      return withLatencyBudget(`read:${this.dir}`, budget, mode, () => this.scheduler!.maintenance(task));
+      return withLatencyBudget(`read:${this.dir}`, budget, mode, async () => {
+        const result = await this.scheduler!.maintenance(task);
+        try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
+        return result;
+      });
     }
 
     // Best-effort read-after-write consistency for local (non-scheduler) mode.
-    return withLatencyBudget(`read:${this.dir}`, budget, mode, () => this.writeQueue.then(task));
+    return withLatencyBudget(`read:${this.dir}`, budget, mode, async () => {
+      const result = await this.writeQueue.then(task);
+      try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
+      return result;
+    });
   }
 
   /* ===================== COMPACTION ===================== */
@@ -726,7 +741,10 @@ export class Collection<T = any> {
     const docCache = this.globalDocCache;
     if (docCache) {
       const cached = docCache.get(docCache.makeKey({ c: this.dir, id }));
+      try { this.metrics?.observeCache?.(this.dbName, "doc", cached !== null); } catch {}
       if (cached !== null) return cached;
+    } else {
+      try { this.metrics?.observeCache?.(this.dbName, "doc", false); } catch {}
     }
 
     const enc = await this.db.get(id).catch(() => null);
@@ -1304,6 +1322,7 @@ export class Collection<T = any> {
     });
 
     const cached = cache.get(key);
+    try { this.metrics?.observeCache?.(this.dbName, "query", cached !== null); } catch {}
     if (cached !== null) return cached as T[];
 
     const execution = await this.executeQuery<T>(query, options);
@@ -1335,6 +1354,7 @@ export class Collection<T = any> {
     });
 
     const cached = cache.get(key);
+    try { this.metrics?.observeCache?.(this.dbName, "query", cached !== null); } catch {}
     if (cached !== null) return (cached[0] as T) ?? null;
 
     const execution = await this.executeQuery<T>(query, options, 1);

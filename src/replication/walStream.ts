@@ -139,15 +139,18 @@ export class WALStreamServer {
       return;
     }
 
-    if (msg.type === "ack") {
-      const { db, lsn } = msg;
-      for (const sub of this.subsByDb.get(db) ?? []) {
-        if (sub.socket !== socket) continue;
-        sub.lastAckLSN = Math.max(sub.lastAckLSN, lsn);
-        this.events.emit("ack", { db, socket, lsn: sub.lastAckLSN });
+      if (msg.type === "ack") {
+        const { db, lsn } = msg;
+        for (const sub of this.subsByDb.get(db) ?? []) {
+          if (sub.socket !== socket) continue;
+          sub.lastAckLSN = Math.max(sub.lastAckLSN, lsn);
+          this.events.emit("ack", { db, socket, lsn: sub.lastAckLSN });
+          try {
+            (this.manager as any)?.metrics?.observeReplicaAck?.(db, socket as any, sub.lastAckLSN);
+          } catch {}
+        }
+        return;
       }
-      return;
-    }
 
     if (msg.type === "subscribe") {
       const dbName = msg.db;
@@ -176,6 +179,12 @@ export class WALStreamServer {
       sub.unsub = wal?.onAppend?.((r: WALRecord) => {
         // Buffer and flush in small batches (target < 10ms).
         sub.pending.push(r);
+        try {
+          (this.manager as any)?.metrics?.observeLeaderLSN?.(dbName, r.lsn);
+          if (typeof (r as any).time === "number") {
+            (this.manager as any)?.metrics?.observeCommitTime?.(dbName, r.lsn, (r as any).time);
+          }
+        } catch {}
         this.scheduleFlush(sub);
       });
 

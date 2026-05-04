@@ -147,6 +147,15 @@ const manager = new LioranManager({
 });
 ```
 
+### Metrics & Observability
+
+Get production-ready stats (latency p50/p95/p99, cache hit rate, WAL lag, replication delay):
+
+```ts
+const stats = (await manager.db("app")).stats();
+console.log(stats.latencyMs.read, stats.cache.query, stats.replication);
+```
+
 ### Database
 
 ```ts
