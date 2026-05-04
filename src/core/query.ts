@@ -116,6 +116,23 @@ export interface IndexProvider {
     field: string,
     cond: any
   ): Promise<Set<string> | null>;
+
+  /**
+   * Optional cost hint: estimated candidate count for a predicate.
+   * Lower is better (more selective).
+   */
+  estimateByIndex?(
+    field: string,
+    cond: any
+  ): Promise<number | null>;
+
+  /**
+   * Optional feedback hook: actual candidate set size observed for a predicate.
+   */
+  observeIndexSelectivity?(
+    field: string,
+    actualCandidates: number
+  ): void;
 }
 
 export type QueryPlan = {
@@ -214,21 +231,37 @@ export async function planQuery(
     return { candidateIds: ids, usedIndexes: [], usedFullScan: true };
   }
 
-  const evaluated: Array<{ field: string; ids: Set<string> }> = [];
+  const scored: Array<{ field: string; cond: any; est: number }> = [];
 
   for (const p of predicates) {
-    const ids = await evalPredicate(p.field, p.cond, indexProvider, allDocIds);
-    evaluated.push({ field: p.field, ids });
+    let est = Number.POSITIVE_INFINITY;
+    if (indexProvider.estimateByIndex) {
+      try {
+        const v = await indexProvider.estimateByIndex(p.field, p.cond);
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+          est = v;
+        }
+      } catch {}
+    }
+    scored.push({ field: p.field, cond: p.cond, est });
   }
 
-  evaluated.sort((a, b) => a.ids.size - b.ids.size);
+  // Cost-based order: evaluate most selective predicates first.
+  scored.sort((a, b) => a.est - b.est);
 
-  const candidateIds = new Set(evaluated[0].ids);
-  const usedIndexes = [evaluated[0].field];
+  const first = scored[0];
+  const firstIds = await evalPredicate(first.field, first.cond, indexProvider, allDocIds);
+  indexProvider.observeIndexSelectivity?.(first.field, firstIds.size);
 
-  for (let i = 1; i < evaluated.length; i++) {
-    intersectInto(candidateIds, evaluated[i].ids);
-    usedIndexes.push(evaluated[i].field);
+  const candidateIds = new Set(firstIds);
+  const usedIndexes = [first.field];
+
+  for (let i = 1; i < scored.length; i++) {
+    const s = scored[i];
+    const ids = await evalPredicate(s.field, s.cond, indexProvider, allDocIds);
+    indexProvider.observeIndexSelectivity?.(s.field, ids.size);
+    intersectInto(candidateIds, ids);
+    usedIndexes.push(s.field);
     if (candidateIds.size === 0) break;
   }
 

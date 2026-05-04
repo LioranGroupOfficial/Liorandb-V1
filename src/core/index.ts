@@ -44,6 +44,7 @@ export class Index {
   readonly dir: string;
   readonly db: ClassicLevel<string, string>;
   private cache: LCRCache<any> | null = null;
+  private selectivityEwma: number | null = null;
 
   constructor(
     baseDir: string,
@@ -71,6 +72,50 @@ export class Index {
 
   setCache(cache: LCRCache<any> | null) {
     this.cache = cache;
+  }
+
+  observeSelectivity(actualCandidates: number) {
+    const n = Math.max(0, Math.trunc(actualCandidates));
+    if (this.selectivityEwma === null) {
+      this.selectivityEwma = n;
+      return;
+    }
+    // EWMA: favor recent observations.
+    this.selectivityEwma = this.selectivityEwma * 0.85 + n * 0.15;
+  }
+
+  getSelectivityHint(): number | null {
+    return this.selectivityEwma;
+  }
+
+  async estimateCandidates(cond: any): Promise<number | null> {
+    try {
+      if (!cond || typeof cond !== "object" || Array.isArray(cond)) {
+        return await this.estimateEq(cond);
+      }
+
+      if ("$eq" in cond) {
+        return await this.estimateEq(cond.$eq);
+      }
+
+      if ("$in" in cond && Array.isArray(cond.$in)) {
+        let total = 0;
+        for (const v of cond.$in) {
+          const c = await this.estimateEq(v);
+          total += c ?? 0;
+          if (total > 100_000) return total; // cap
+        }
+        return total;
+      }
+
+      if ("$gt" in cond || "$gte" in cond || "$lt" in cond || "$lte" in cond) {
+        return await this.estimateRange(cond);
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /* ------------------------- INTERNAL ------------------------- */
@@ -337,6 +382,56 @@ export class Index {
         details: { field: this.field, unique: this.unique }
       });
     }
+  }
+
+  private async estimateEq(value: any): Promise<number> {
+    if (value === undefined) return 0;
+
+    if (this.unique) {
+      const key = this.makeUniqueKey(value);
+      const existing = await this.getRaw(key);
+      return existing ? 1 : 0;
+    }
+
+    const prefix = this.makeEntryPrefix(value);
+    // Count entries with this prefix (bounded for safety).
+    let count = 0;
+    const max = 50_000;
+    for await (const [k] of this.db.iterator({ gte: prefix, lt: prefix + RANGE_END } as any)) {
+      if (!k.startsWith(prefix)) break;
+      count++;
+      if (count >= max) break;
+    }
+    return count;
+  }
+
+  private async estimateRange(cond: any): Promise<number> {
+    // Very rough: scan index keyspace for the range prefixes.
+    // If cond isn't representable, return a conservative value.
+    let gte = ENTRY_PREFIX;
+    let lt = ENTRY_PREFIX + RANGE_END;
+
+    const hasLower = cond.$gt !== undefined || cond.$gte !== undefined;
+    const hasUpper = cond.$lt !== undefined || cond.$lte !== undefined;
+
+    if (hasLower) {
+      const v = cond.$gt !== undefined ? cond.$gt : cond.$gte;
+      gte = this.makeEntryPrefix(v);
+    }
+
+    if (hasUpper) {
+      const v = cond.$lt !== undefined ? cond.$lt : cond.$lte;
+      lt = this.makeEntryPrefix(v) + RANGE_END;
+    }
+
+    let count = 0;
+    const max = 50_000;
+    for await (const [k] of this.db.iterator({ gte, lt } as any)) {
+      if (!k.startsWith(ENTRY_PREFIX)) continue;
+      count++;
+      if (count >= max) break;
+    }
+    return count;
   }
 
   private async findUncached(value: any): Promise<string[]> {

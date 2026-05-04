@@ -1250,6 +1250,18 @@ export class Collection<T = any> {
           const idx = this.indexes.get(field);
           if (!idx) return null;
           return new Set(await idx.findRange(cond));
+        },
+        estimateByIndex: async (field, cond) => {
+          const idx: any = this.indexes.get(field);
+          if (!idx?.estimateCandidates) {
+            const hint = idx?.getSelectivityHint?.();
+            return typeof hint === "number" && Number.isFinite(hint) ? hint : null;
+          }
+          return await idx.estimateCandidates(cond);
+        },
+        observeIndexSelectivity: (field, actualCandidates) => {
+          const idx: any = this.indexes.get(field);
+          idx?.observeSelectivity?.(actualCandidates);
         }
       },
       allDocIds
