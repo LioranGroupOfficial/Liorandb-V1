@@ -6,6 +6,23 @@ export interface LioranManagerOptions {
   ipc?: boolean;
 
   /**
+   * Global cache configuration (defaults to enabled, 512MB max RAM).
+   */
+  cache?: {
+    enabled?: boolean;
+    maxRAMMB?: number;
+    decay?: {
+      intervalMs?: number;
+      multiplier?: number;
+    };
+    partitions?: {
+      query?: number;  // default 0.7
+      docs?: number;   // default 0.2
+      index?: number;  // default 0.1
+    };
+  };
+
+  /**
    * If true, database auto-applies pending migrations on startup.
    */
   autoMigrate?: boolean;

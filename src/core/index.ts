@@ -2,6 +2,7 @@ import path from "path";
 import fs from "fs";
 import { ClassicLevel } from "classic-level";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
+import type { LCRCache } from "./lcrCache.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -42,6 +43,7 @@ export class Index {
   readonly include?: string[];
   readonly dir: string;
   readonly db: ClassicLevel<string, string>;
+  private cache: LCRCache<any> | null = null;
 
   constructor(baseDir: string, field: string, options: IndexOptions = {}) {
     this.field = field;
@@ -54,6 +56,10 @@ export class Index {
     fs.mkdirSync(this.dir, { recursive: true });
 
     this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
+  }
+
+  setCache(cache: LCRCache<any> | null) {
+    this.cache = cache;
   }
 
   /* ------------------------- INTERNAL ------------------------- */
@@ -303,23 +309,16 @@ export class Index {
 
   async find(value: any): Promise<string[]> {
     try {
-      if (this.unique) {
-        const raw = await this.getRaw(this.makeUniqueKey(value));
-        const id = raw ? this.decodeUniqueValueToId(raw) : "";
-        return id ? [id] : [];
+      if (this.cache) {
+        const key = this.cache.makeKey({ t: "idx", d: this.dir, op: "find", v: value });
+        const cached = this.cache.get(key);
+        if (cached !== null) return cached as string[];
+        const res = await this.findUncached(value);
+        this.cache.set(key, res);
+        return res;
       }
 
-      const prefix = this.makeEntryPrefix(value);
-      const ids: string[] = [];
-
-      for await (const [key] of this.db.iterator({
-        gte: prefix,
-        lte: prefix + RANGE_END
-      })) {
-        ids.push(key.slice(prefix.length));
-      }
-
-      return ids;
+      return await this.findUncached(value);
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -329,37 +328,38 @@ export class Index {
     }
   }
 
+  private async findUncached(value: any): Promise<string[]> {
+    if (this.unique) {
+      const raw = await this.getRaw(this.makeUniqueKey(value));
+      const id = raw ? this.decodeUniqueValueToId(raw) : "";
+      return id ? [id] : [];
+    }
+
+    const prefix = this.makeEntryPrefix(value);
+    const ids: string[] = [];
+
+    for await (const [key] of this.db.iterator({
+      gte: prefix,
+      lte: prefix + RANGE_END
+    })) {
+      ids.push(key.slice(prefix.length));
+    }
+
+    return ids;
+  }
+
   async findRange(cond: any): Promise<string[]> {
     try {
-      const normalizedGte = cond.$gt !== undefined
-        ? this.normalizeKey(cond.$gt) + RANGE_END
-        : cond.$gte !== undefined
-          ? this.normalizeKey(cond.$gte)
-          : "";
-      const normalizedLte = cond.$lt !== undefined
-        ? this.normalizeKey(cond.$lt)
-        : cond.$lte !== undefined
-          ? this.normalizeKey(cond.$lte) + RANGE_END
-          : RANGE_END;
-
-      const prefix = this.unique ? UNIQUE_PREFIX : ENTRY_PREFIX;
-      const ids: string[] = [];
-
-      for await (const [key, value] of this.db.iterator({
-        gte: prefix + normalizedGte,
-        lte: prefix + normalizedLte
-      })) {
-        if (this.unique) {
-          const id = this.decodeUniqueValueToId(value);
-          if (id) ids.push(id);
-          continue;
-        }
-
-        const separatorAt = key.lastIndexOf(VALUE_SEPARATOR);
-        ids.push(key.slice(separatorAt + VALUE_SEPARATOR.length));
+      if (this.cache) {
+        const key = this.cache.makeKey({ t: "idx", d: this.dir, op: "range", c: cond });
+        const cached = this.cache.get(key);
+        if (cached !== null) return cached as string[];
+        const res = await this.findRangeUncached(cond);
+        this.cache.set(key, res);
+        return res;
       }
 
-      return ids;
+      return await this.findRangeUncached(cond);
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -367,6 +367,38 @@ export class Index {
         details: { field: this.field, unique: this.unique }
       });
     }
+  }
+
+  private async findRangeUncached(cond: any): Promise<string[]> {
+    const normalizedGte = cond.$gt !== undefined
+      ? this.normalizeKey(cond.$gt) + RANGE_END
+      : cond.$gte !== undefined
+        ? this.normalizeKey(cond.$gte)
+        : "";
+    const normalizedLte = cond.$lt !== undefined
+      ? this.normalizeKey(cond.$lt)
+      : cond.$lte !== undefined
+        ? this.normalizeKey(cond.$lte) + RANGE_END
+        : RANGE_END;
+
+    const prefix = this.unique ? UNIQUE_PREFIX : ENTRY_PREFIX;
+    const ids: string[] = [];
+
+    for await (const [key, value] of this.db.iterator({
+      gte: prefix + normalizedGte,
+      lte: prefix + normalizedLte
+    })) {
+      if (this.unique) {
+        const id = this.decodeUniqueValueToId(value);
+        if (id) ids.push(id);
+        continue;
+      }
+
+      const separatorAt = key.lastIndexOf(VALUE_SEPARATOR);
+      ids.push(key.slice(separatorAt + VALUE_SEPARATOR.length));
+    }
+
+    return ids;
   }
 
   async findCover(value: any): Promise<any[] | null> {

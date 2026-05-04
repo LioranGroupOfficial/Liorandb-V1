@@ -8,6 +8,7 @@ import { getDefaultRootPath } from "./utils/rootpath.js";
 import { LifecycleManager } from "./utils/lifecycle.js";
 import { LiorandbError, asLiorandbError } from "./utils/errors.js";
 import { Mutex } from "./utils/mutex.js";
+import { GlobalCacheEngine, type GlobalCacheConfig } from "./core/cacheEngine.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -32,6 +33,7 @@ export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
   ipc?: "primary" | "client" | "readonly" | "replica";
+  cache?: Partial<GlobalCacheConfig> & { maxRAMMB?: number };
   writeQueue?: {
     maxSize?: number;
     mode?: "wait" | "reject";
@@ -62,6 +64,7 @@ export interface LioranManagerOptions {
 export class LioranManager {
   rootPath: string;
   openDBs: Map<string, LioranDB>;
+  public readonly cache: GlobalCacheEngine;
   private closed = false;
   private mode: ProcessMode;
   private lockFd?: number;
@@ -76,6 +79,7 @@ export class LioranManager {
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
     this.options = options;
+    this.cache = new GlobalCacheEngine(options.cache);
 
     this.rootPath = rootPath || getDefaultRootPath();
 
@@ -453,6 +457,10 @@ export class LioranManager {
 
     try {
       await this.lifecycle.close();
+    } catch {}
+
+    try {
+      this.cache.close();
     } catch {}
   }
 

@@ -20,7 +20,7 @@ import { Index, TextIndex, type IndexOptions, type TextIndexOptions } from "./in
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 import { BlobStore, type TieredStorageOptions } from "./blobstore.js";
-import { QueryResultCache } from "./queryCache.js";
+import type { LCRCache } from "./lcrCache.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -40,6 +40,7 @@ export interface CollectionOptions {
   scheduler?: CollectionScheduler;
   resolveCollection?: (name: string) => Collection<any>;
   tieredStorage?: TieredStorageOptions;
+  cacheEngine?: any;
 }
 
 export interface FindOptions {
@@ -85,7 +86,17 @@ export class Collection<T = any> {
   private indexes = new Map<string, Index>();
   private textIndexes = new Map<string, TextIndex>();
   private readonlyMode: boolean;
-  private readonly queryCache = new QueryResultCache<any[]>();
+  private get globalQueryCache(): LCRCache<any[]> | null {
+    const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+    if (!engine || !engine.isEnabled()) return null;
+    return engine.query;
+  }
+
+  private get globalDocCache(): LCRCache<any> | null {
+    const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+    if (!engine || !engine.isEnabled()) return null;
+    return engine.docs;
+  }
   private docCount = 0;
   private metaLoaded = false;
   private metaLoadPromise: Promise<void> | null = null;
@@ -121,6 +132,9 @@ export class Collection<T = any> {
       maxOpenFiles: 500,
       compression: true
     } as any);
+
+    // injected by LioranDB when created via DB-managed collections
+    (this as any)._cacheEngine = options?.cacheEngine;
   }
 
   /* ===================== INTERNAL ===================== */
@@ -264,6 +278,12 @@ export class Collection<T = any> {
 
   registerIndex(index: Index) {
     this.indexes.set(index.field, index);
+    try {
+      const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+      if (engine?.isEnabled()) {
+        (index as any).setCache?.(engine.index);
+      }
+    } catch {}
   }
 
   getIndex(field: string) {
@@ -350,12 +370,22 @@ export class Collection<T = any> {
       switch (op) {
         case "insertOne": {
           const r = await this._insertOne(args[0]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "insertMany": {
           const r = await this._insertMany(args[0]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "find": return this._find(args[0], args[1]);
@@ -364,22 +394,42 @@ export class Collection<T = any> {
         case "explain": return this._explain(args[0], args[1]);
         case "updateOne": {
           const r = await this._updateOne(args[0], args[1], args[2]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "updateMany": {
           const r = await this._updateMany(args[0], args[1]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "deleteOne": {
           const r = await this._deleteOne(args[0]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "deleteMany": {
           const r = await this._deleteMany(args[0]);
-          this.queryCache.clear();
+          this.globalQueryCache?.clear();
+          this.globalDocCache?.clear();
+          try {
+            const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
+            engine?.index?.clear();
+          } catch {}
           return r;
         }
         case "countDocuments": return this._countDocuments(args[0]);
@@ -642,6 +692,12 @@ export class Collection<T = any> {
   }
 
   private async _readAndMigrate(id: string) {
+    const docCache = this.globalDocCache;
+    if (docCache) {
+      const cached = docCache.get(docCache.makeKey({ c: this.dir, id }));
+      if (cached !== null) return cached;
+    }
+
     const enc = await this.db.get(id).catch(() => null);
     if (!enc) return null;
 
@@ -661,7 +717,11 @@ export class Collection<T = any> {
       }
     }
 
-    return this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated;
+    const hydrated = this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated;
+    if (docCache) {
+      docCache.set(docCache.makeKey({ c: this.dir, id }), hydrated);
+    }
+    return hydrated;
   }
 
   private normalizeFindOptions(options?: FindOptions) {
@@ -1181,7 +1241,14 @@ export class Collection<T = any> {
       return execution.results;
     }
 
-    const key = this.queryCache.makeKey({
+    const cache = this.globalQueryCache;
+    if (!cache) {
+      const execution = await this.executeQuery<T>(query, options);
+      return execution.results;
+    }
+
+    const key = cache.makeKey({
+      c: this.dir,
       q: query ?? {},
       o: {
         limit: options?.limit,
@@ -1191,11 +1258,11 @@ export class Collection<T = any> {
       }
     });
 
-    const cached = this.queryCache.get(key);
+    const cached = cache.get(key);
     if (cached !== null) return cached as T[];
 
     const execution = await this.executeQuery<T>(query, options);
-    this.queryCache.set(key, execution.results);
+    cache.set(key, execution.results);
     return execution.results;
   }
 
@@ -1205,7 +1272,14 @@ export class Collection<T = any> {
       return execution.results[0] ?? null;
     }
 
-    const key = this.queryCache.makeKey({
+    const cache = this.globalQueryCache;
+    if (!cache) {
+      const execution = await this.executeQuery<T>(query, options, 1);
+      return execution.results[0] ?? null;
+    }
+
+    const key = cache.makeKey({
+      c: this.dir,
       q: query ?? {},
       o: {
         limit: 1,
@@ -1215,11 +1289,11 @@ export class Collection<T = any> {
       }
     });
 
-    const cached = this.queryCache.get(key);
+    const cached = cache.get(key);
     if (cached !== null) return (cached[0] as T) ?? null;
 
     const execution = await this.executeQuery<T>(query, options, 1);
-    this.queryCache.set(key, execution.results);
+    cache.set(key, execution.results);
     return execution.results[0] ?? null;
   }
 

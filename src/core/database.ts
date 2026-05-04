@@ -616,6 +616,7 @@ export class LioranDB {
           readonly: this.readonlyMode,
           batchChunkSize: this.runtimeOptions.batch?.chunkSize,
           tieredStorage: options?.tieredStorage,
+          cacheEngine: (this.manager as any)?.cache,
           resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
             ? undefined
