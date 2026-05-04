@@ -12,6 +12,7 @@ import { GlobalCacheEngine, type GlobalCacheConfig } from "./core/cacheEngine.js
 import { ClusterController, type ClusterNodeConfig } from "./cluster/controller.js";
 import type { ReplicationCoordinator } from "./replication/coordinator.js";
 import { MetricsCollector } from "./metrics/collector.js";
+import { BackgroundScheduler, type BackgroundSchedulerOptions } from "./background/scheduler.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -63,6 +64,7 @@ export interface LioranManagerOptions {
   durability?: LioranDBRuntimeOptions["durability"];
   storage?: LioranDBRuntimeOptions["storage"];
   latency?: LioranDBRuntimeOptions["latency"];
+  background?: BackgroundSchedulerOptions;
   sharding?: LioranDBRuntimeOptions["sharding"];
   replication?: {
     leaderRootPath?: string;
@@ -79,6 +81,7 @@ export class LioranManager {
   openDBs: Map<string, LioranDB>;
   public readonly cache: GlobalCacheEngine;
   public readonly metrics: MetricsCollector;
+  private backgroundScheduler?: BackgroundScheduler;
   private closed = false;
   private mode: ProcessMode;
   private lockFd?: number;
@@ -143,11 +146,19 @@ export class LioranManager {
     if (this.mode === ProcessMode.PRIMARY) {
       this._registerShutdownHooks();
       void this._ensureIpcServer();
+      this._ensureBackgroundScheduler();
     }
 
     if (this.mode === ProcessMode.REPLICA) {
       void this._ensureReplicaReplicator();
     }
+  }
+
+  private _ensureBackgroundScheduler() {
+    if (this.backgroundScheduler) return;
+    this.backgroundScheduler = new BackgroundScheduler(this, this.options.background ?? {});
+    this.backgroundScheduler.start();
+    this.lifecycle.register(() => this.backgroundScheduler?.close());
   }
 
   /* ---------------- MODE HELPERS ---------------- */

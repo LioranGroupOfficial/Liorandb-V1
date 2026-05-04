@@ -100,6 +100,9 @@ export type LioranDBRuntimeOptions = {
     walAppendBudgetMs?: number;
     onViolation?: import("../utils/latency.js").LatencyViolationMode;
   };
+  background?: {
+    enabled?: boolean;
+  };
   sharding?: {
     enabled?: boolean;
     shards: number;
@@ -369,12 +372,64 @@ export class LioranDB {
 
   private startMaintenanceScheduler() {
     if (this.readonlyMode || this.replicaMode) return;
+    // If manager runs a central background scheduler, disable per-DB timer to avoid duplicate work.
+    if ((this.manager as any)?.options?.background?.enabled !== false) {
+      // background scheduler is manager-scoped and starts in primary mode; treat as enabled by default.
+      return;
+    }
 
     const timer = setInterval(() => {
       void this.runMaintenance().catch(() => {});
     }, 60_000);
     timer.unref?.();
     this.maintenanceInterval = timer;
+  }
+
+  /**
+   * Background tick for auto index build + auto compaction.
+   * Called by manager background scheduler (primary nodes only).
+   */
+  async backgroundTick() {
+    if (this.readonlyMode || this.replicaMode) return;
+    await this.ready;
+    await this.ensureIndexesInBackground();
+    await this.runMaintenance();
+    try { (this.manager as any)?.cache?.query?.decay?.(0.95); } catch {}
+    try { (this.manager as any)?.cache?.docs?.decay?.(0.95); } catch {}
+    try { (this.manager as any)?.cache?.index?.decay?.(0.95); } catch {}
+  }
+
+  private async ensureIndexesInBackground() {
+    if (this.readonlyMode || this.replicaMode) return;
+
+    // Build missing index files based on metadata (best-effort).
+    const collectionNames = this.getAllCollectionNames();
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+
+    for (const colName of collectionNames) {
+      const logical = shardRe.test(colName) ? colName.replace(shardRe, "") : colName;
+      const metas = this.meta.indexes[logical] ?? [];
+      for (const meta of metas) {
+        const type = meta.type ?? "btree";
+        try {
+          if (type === "text") {
+            const idxDir = path.join(this.basePath, colName, "__indexes", meta.field + ".textidx");
+            const hasFiles = fs.existsSync(idxDir) && fs.readdirSync(idxDir, { withFileTypes: true }).some(d => d.isFile());
+            if (!hasFiles) {
+              await this._createTextIndexInternal(colName, meta.field, meta.textOptions ?? {}, false);
+            }
+          } else {
+            const idxDir = path.join(this.basePath, colName, "__indexes", meta.field + ".idx");
+            const hasFiles = fs.existsSync(idxDir) && fs.readdirSync(idxDir, { withFileTypes: true }).some(d => d.isFile());
+            if (!hasFiles) {
+              await this._createIndexInternal(colName, meta.field, meta.options ?? {}, false);
+            }
+          }
+        } catch {}
+      }
+    }
   }
 
   private async runMaintenance() {

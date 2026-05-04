@@ -156,6 +156,22 @@ const stats = (await manager.db("app")).stats();
 console.log(stats.latencyMs.read, stats.cache.query, stats.replication);
 ```
 
+### Background Tasks
+
+Enable a central scheduler (primary nodes) for:
+
+- Auto index rebuild (if index files are missing)
+- Auto compaction (reuses the existing maintenance logic)
+- Cache cleanup (light decay)
+
+```ts
+const manager = new LioranManager({
+  rootPath: "./data",
+  ipc: "primary",
+  background: { intervalMs: 10_000 }
+});
+```
+
 ### Database
 
 ```ts
