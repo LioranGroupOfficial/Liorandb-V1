@@ -99,6 +99,35 @@ const manager = new LioranManager({
 });
 ```
 
+### Storage Tuning (Bloom / Compaction / LevelDB options)
+
+```ts
+const manager = new LioranManager({
+  rootPath: "./data",
+  ipc: "primary",
+  storage: {
+    // classic-level uses a Bloom filter internally (10 bits/key by default).
+    bloomFilterBits: 10,
+
+    // Adaptive compaction (uses write load + read amplification heuristics).
+    adaptiveCompaction: {
+      enabled: true,
+      writeOpsPerMin: 50_000,
+      readAmplificationThreshold: 25
+    },
+
+    // Pass-through LevelDB tuning knobs (classic-level).
+    leveldb: {
+      cacheSize: 256 * 1024 * 1024,
+      writeBufferSize: 64 * 1024 * 1024,
+      blockSize: 16 * 1024,
+      maxOpenFiles: 500,
+      compression: true
+    }
+  }
+});
+```
+
 ### Database
 
 ```ts

@@ -60,6 +60,7 @@ export interface LioranManagerOptions {
     chunkSize?: number;
   };
   durability?: LioranDBRuntimeOptions["durability"];
+  storage?: LioranDBRuntimeOptions["storage"];
   sharding?: LioranDBRuntimeOptions["sharding"];
   replication?: {
     leaderRootPath?: string;
@@ -341,6 +342,7 @@ export class LioranManager {
         writeQueue: this.options.writeQueue,
         batch: this.options.batch,
         durability: this.options.durability,
+        storage: this.options.storage,
         sharding: this.options.sharding
       });
       await db.ready;

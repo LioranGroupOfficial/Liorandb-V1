@@ -156,9 +156,11 @@ export async function crashRecovery(baseDir: string) {
 --------------------------------------------------------- */
 
 async function reopenCollectionDB(col: Collection) {
+  const leveldb = (col as any)._leveldbOptions as any;
   col.db = new ClassicLevel(col.dir, {
-    valueEncoding: "utf8"
-  });
+    valueEncoding: "utf8",
+    ...(leveldb ?? {})
+  } as any);
   await col.db.open();
 }
 
@@ -193,7 +195,7 @@ export async function rebuildIndexes(col: Collection) {
   for (const idx of oldIndexes.values()) {
     const rebuilt = new Index(col.dir, idx.field, {
       unique: idx.unique
-    });
+    }, (col as any)._leveldbOptions);
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;
@@ -223,7 +225,7 @@ export async function rebuildIndexes(col: Collection) {
   col["indexes"] = rebuiltIndexes;
 
   for (const idx of oldTextIndexes.values()) {
-    const rebuilt = new TextIndex(col.dir, idx.field, (idx as any).options ?? {});
+    const rebuilt = new TextIndex(col.dir, idx.field, (idx as any).options ?? {}, (col as any)._leveldbOptions);
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;

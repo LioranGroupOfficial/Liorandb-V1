@@ -45,7 +45,18 @@ export class Index {
   readonly db: ClassicLevel<string, string>;
   private cache: LCRCache<any> | null = null;
 
-  constructor(baseDir: string, field: string, options: IndexOptions = {}) {
+  constructor(
+    baseDir: string,
+    field: string,
+    options: IndexOptions = {},
+    dbOptions?: {
+      writeBufferSize?: number;
+      cacheSize?: number;
+      blockSize?: number;
+      maxOpenFiles?: number;
+      compression?: boolean;
+    }
+  ) {
     this.field = field;
     this.unique = !!options.unique;
     this.include = Array.isArray(options.include)
@@ -55,7 +66,7 @@ export class Index {
     this.dir = path.join(baseDir, "__indexes", field + ".idx");
     fs.mkdirSync(this.dir, { recursive: true });
 
-    this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
+    this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8", ...(dbOptions ?? {}) } as any);
   }
 
   setCache(cache: LCRCache<any> | null) {
@@ -575,12 +586,23 @@ export class TextIndex {
   private normalize: boolean;
   private stopwords: Set<string>;
 
-  constructor(baseDir: string, field: string, options: TextIndexOptions = {}) {
+  constructor(
+    baseDir: string,
+    field: string,
+    options: TextIndexOptions = {},
+    dbOptions?: {
+      writeBufferSize?: number;
+      cacheSize?: number;
+      blockSize?: number;
+      maxOpenFiles?: number;
+      compression?: boolean;
+    }
+  ) {
     this.field = field;
     this.options = { ...options };
     this.dir = path.join(baseDir, "__indexes", field + ".textidx");
     fs.mkdirSync(this.dir, { recursive: true });
-    this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8" });
+    this.db = new ClassicLevel(this.dir, { valueEncoding: "utf8", ...(dbOptions ?? {}) } as any);
     this.normalize = options.normalize ?? true;
     this.stopwords = new Set((options.stopwords ?? []).map(s => s.toLowerCase()));
   }

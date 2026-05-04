@@ -41,6 +41,19 @@ export interface CollectionOptions {
   resolveCollection?: (name: string) => Collection<any>;
   tieredStorage?: TieredStorageOptions;
   cacheEngine?: any;
+  leveldb?: {
+    writeBufferSize?: number;
+    cacheSize?: number;
+    blockSize?: number;
+    maxOpenFiles?: number;
+    compression?: boolean;
+  };
+  onExplain?: (explain: {
+    scannedDocuments: number;
+    returnedDocuments: number;
+    usedFullScan: boolean;
+    candidateDocuments: number;
+  }) => void;
 }
 
 export interface FindOptions {
@@ -104,6 +117,8 @@ export class Collection<T = any> {
   private resolveCollection?: (name: string) => Collection<any>;
   private batchChunkSize: number;
   private blobStore?: BlobStore;
+  private onExplain?: CollectionOptions["onExplain"];
+  private leveldbOptions?: CollectionOptions["leveldb"];
 
   constructor(
     dir: string,
@@ -117,20 +132,24 @@ export class Collection<T = any> {
     this.readonlyMode = options?.readonly ?? false;
     this.scheduler = options?.scheduler;
     this.resolveCollection = options?.resolveCollection;
+    this.onExplain = options?.onExplain;
+    this.leveldbOptions = options?.leveldb;
+    (this as any)._leveldbOptions = this.leveldbOptions;
     if (options?.tieredStorage) {
       this.blobStore = new BlobStore(this.dir, options.tieredStorage);
       this.blobStore.validateConfig();
     }
     this.batchChunkSize = Math.max(1, Math.trunc(options?.batchChunkSize ?? 500));
 
+    const leveldb = options?.leveldb;
     this.db = new ClassicLevel(dir, {
       valueEncoding: "utf8",
       readOnly: this.readonlyMode,
-      writeBufferSize: 64 * 1024 * 1024,
-      cacheSize: 256 * 1024 * 1024,
-      blockSize: 16 * 1024,
-      maxOpenFiles: 500,
-      compression: true
+      writeBufferSize: Math.max(1, Math.trunc(leveldb?.writeBufferSize ?? 64 * 1024 * 1024)),
+      cacheSize: Math.max(1, Math.trunc(leveldb?.cacheSize ?? 256 * 1024 * 1024)),
+      blockSize: Math.max(1024, Math.trunc(leveldb?.blockSize ?? 16 * 1024)),
+      maxOpenFiles: Math.max(50, Math.trunc(leveldb?.maxOpenFiles ?? 500)),
+      compression: leveldb?.compression ?? true
     } as any);
 
     // injected by LioranDB when created via DB-managed collections
@@ -905,8 +924,20 @@ export class Collection<T = any> {
     let usedFullScan = true;
     let skipped = 0;
 
+    const finalize = (execution: QueryExecutionResult<R>) => {
+      try {
+        this.onExplain?.({
+          scannedDocuments: execution.explain.scannedDocuments,
+          returnedDocuments: execution.explain.returnedDocuments,
+          usedFullScan: execution.explain.usedFullScan,
+          candidateDocuments: execution.explain.candidateDocuments
+        });
+      } catch {}
+      return execution;
+    };
+
     if (finalLimit === 0) {
-      return {
+      return finalize({
         results: out,
         explain: {
           indexUsed,
@@ -917,7 +948,7 @@ export class Collection<T = any> {
           usedFullScan,
           candidateDocuments: 0
         }
-      };
+      });
     }
 
     let scannedDocuments = 0;
@@ -940,7 +971,7 @@ export class Collection<T = any> {
         scannedDocuments = 1;
 
         if (!enc) {
-          return {
+          return finalize({
             results: out,
             explain: {
               indexUsed: "_id",
@@ -951,14 +982,14 @@ export class Collection<T = any> {
               usedFullScan: false,
               candidateDocuments: 1
             }
-          };
+          });
         }
 
         let raw: any;
         try {
           raw = decryptData(enc);
         } catch {
-          return {
+          return finalize({
             results: out,
             explain: {
               indexUsed: "_id",
@@ -969,7 +1000,7 @@ export class Collection<T = any> {
               usedFullScan: false,
               candidateDocuments: 1
             }
-          };
+          });
         }
 
         const migrated = this.migrateIfNeeded(raw);
@@ -989,7 +1020,7 @@ export class Collection<T = any> {
 
         out.push(this.projectDocument(this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated, projection) as unknown as R);
 
-        return {
+        return finalize({
           results: out,
           explain: {
             indexUsed: "_id",
@@ -1000,7 +1031,7 @@ export class Collection<T = any> {
             usedFullScan: false,
             candidateDocuments: 1
           }
-        };
+        });
       }
     }
 
@@ -1047,7 +1078,7 @@ export class Collection<T = any> {
         if (out.length >= finalLimit) break;
       }
 
-      return {
+      return finalize({
         results: out,
         explain: {
           indexUsed: undefined,
@@ -1058,7 +1089,7 @@ export class Collection<T = any> {
           usedFullScan: true,
           candidateDocuments: scannedDocuments
         }
-      };
+      });
     }
 
     // Cursor-friendly `_id` range scan: avoids building an id list + per-doc `db.get()`.
@@ -1107,7 +1138,7 @@ export class Collection<T = any> {
           if (out.length >= finalLimit) break;
         }
 
-        return {
+        return finalize({
           results: out,
           explain: {
             indexUsed: "_id",
@@ -1118,7 +1149,7 @@ export class Collection<T = any> {
             usedFullScan: false,
             candidateDocuments: scannedDocuments
           }
-        };
+        });
       }
     }
 
@@ -1149,7 +1180,7 @@ export class Collection<T = any> {
           if (Array.isArray(covered)) {
             scannedDocuments = covered.length;
             const sliced = covered.slice(offset, Number.isFinite(finalLimit) ? offset + finalLimit : undefined);
-            return {
+            return finalize({
               results: sliced as unknown as R[],
               explain: {
                 indexUsed: field,
@@ -1160,7 +1191,7 @@ export class Collection<T = any> {
                 usedFullScan: false,
                 candidateDocuments: covered.length
               }
-            };
+            });
           }
         }
       }
@@ -1221,11 +1252,11 @@ export class Collection<T = any> {
       } catch {}
     }
 
-    return {
+    const result = {
       results: out,
       explain: {
         indexUsed,
-        indexType: indexUsed ? "btree" : undefined,
+        indexType: indexUsed ? ("btree" as const) : undefined,
         scannedDocuments,
         returnedDocuments: out.length,
         executionTimeMs: Date.now() - startedAt,
@@ -1233,6 +1264,8 @@ export class Collection<T = any> {
         candidateDocuments: ids.size
       }
     };
+
+    return finalize(result);
   }
 
   private async _find(query: any, options?: FindOptions) {
@@ -1632,7 +1665,7 @@ export class Collection<T = any> {
 
     if (this.indexes.has(field)) return;
 
-    const index = new Index(this.dir, field, resolvedOptions);
+    const index = new Index(this.dir, field, resolvedOptions, this.leveldbOptions);
     const docs: any[] = [];
 
     const flush = async () => {
@@ -1678,7 +1711,7 @@ export class Collection<T = any> {
     this.assertWritable();
     if (this.textIndexes.has(field)) return;
 
-    const index = new TextIndex(this.dir, field, resolvedOptions);
+    const index = new TextIndex(this.dir, field, resolvedOptions, this.leveldbOptions);
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;

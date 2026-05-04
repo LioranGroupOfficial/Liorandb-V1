@@ -59,6 +59,39 @@ export type LioranDBRuntimeOptions = {
   recovery?: {
     untilTimeMs?: number;
   };
+  storage?: {
+    /**
+     * classic-level ships with a Bloom filter enabled by default (10 bits/key).
+     * This option is reserved for future tuning without native rebuilds.
+     */
+    bloomFilterBits?: number;
+    /**
+     * Reserved for future: platform-specific mmap tuning for underlying storage.
+     */
+    mmapReads?: boolean;
+    leveldb?: {
+      writeBufferSize?: number;
+      cacheSize?: number;
+      blockSize?: number;
+      maxOpenFiles?: number;
+      compression?: boolean;
+    };
+    adaptiveCompaction?: {
+      enabled?: boolean;
+      /**
+       * If writes per minute exceeds this threshold, run aggressive compaction on next tick.
+       */
+      writeOpsPerMin?: number;
+      /**
+       * If avg scanned/returned exceeds this threshold, run aggressive compaction on next tick.
+       */
+      readAmplificationThreshold?: number;
+      /**
+       * Minimum time between adaptive aggressive runs.
+       */
+      minAggressiveIntervalMs?: number;
+    };
+  };
   sharding?: {
     enabled?: boolean;
     shards: number;
@@ -189,6 +222,11 @@ export class LioranDB {
   private maintenanceInterval?: NodeJS.Timeout;
   private maintenanceRunning = false;
   private lastFullCompactionAt = 0;
+  private lastAdaptiveAggressiveAt = 0;
+  private writesSinceMaintenance = 0;
+  private maintenanceWindowStartedAt = Date.now();
+  private readAmpSum = 0;
+  private readAmpCount = 0;
   private maintenanceStats = {
     lightCompactions: 0,
     fullCompactions: 0,
@@ -334,6 +372,27 @@ export class LioranDB {
     const started = Date.now();
     const isFullDue = (Date.now() - this.lastFullCompactionAt) >= 10 * 60 * 1000;
 
+    const adaptive = this.runtimeOptions.storage?.adaptiveCompaction;
+    const adaptiveEnabled = adaptive?.enabled ?? true;
+    const minAggressiveIntervalMs = Math.max(5_000, Math.trunc(adaptive?.minAggressiveIntervalMs ?? 60_000));
+
+    const windowMs = Math.max(1, Date.now() - this.maintenanceWindowStartedAt);
+    const writesPerMin = (this.writesSinceMaintenance / windowMs) * 60_000;
+    const writeOpsPerMin = Math.max(1, Math.trunc(adaptive?.writeOpsPerMin ?? 50_000));
+
+    const readAmpAvg = this.readAmpCount > 0 ? this.readAmpSum / this.readAmpCount : 1;
+    const readAmpThreshold = Math.max(1, Number(adaptive?.readAmplificationThreshold ?? 25));
+
+    const adaptiveAggressiveWanted =
+      adaptiveEnabled &&
+      (
+        writesPerMin >= writeOpsPerMin ||
+        readAmpAvg >= readAmpThreshold
+      ) &&
+      (Date.now() - this.lastAdaptiveAggressiveAt) >= minAggressiveIntervalMs;
+
+    const aggressive = isFullDue || adaptiveAggressiveWanted;
+
     try {
       await this._runInWriter(async () => {
         if (this.closed) return;
@@ -343,20 +402,27 @@ export class LioranDB {
         for (const name of collectionNames) {
           try {
             const col = this.collection(name);
-            await col.compact({ aggressive: isFullDue } as any);
+            await col.compact({ aggressive } as any);
           } catch (e) {
             console.warn(`[Maintenance] Failed for collection ${name}`, e);
           }
         }
 
+        if (aggressive && !isFullDue) this.lastAdaptiveAggressiveAt = Date.now();
         if (isFullDue) this.lastFullCompactionAt = Date.now();
       });
 
       const duration = Date.now() - started;
       this.maintenanceStats.lastDurationMs = duration;
 
-      if (isFullDue) this.maintenanceStats.fullCompactions++;
+      if (aggressive) this.maintenanceStats.fullCompactions++;
       else this.maintenanceStats.lightCompactions++;
+
+      // Reset rolling window after successful maintenance.
+      this.writesSinceMaintenance = 0;
+      this.readAmpSum = 0;
+      this.readAmpCount = 0;
+      this.maintenanceWindowStartedAt = Date.now();
     } catch (err) {
       console.error("[Maintenance] Error:", err);
       this.maintenanceStats.lastErrorAt = Date.now();
@@ -692,6 +758,17 @@ export class LioranDB {
           batchChunkSize: this.runtimeOptions.batch?.chunkSize,
           tieredStorage: options?.tieredStorage,
           cacheEngine: (this.manager as any)?.cache,
+          leveldb: this.runtimeOptions.storage?.leveldb,
+          onExplain: (explain) => {
+            // Adaptive compaction: track read amplification (scanned/returned).
+            try {
+              const denom = Math.max(1, Math.trunc(explain.returnedDocuments ?? 0));
+              const scanned = Math.max(0, Math.trunc(explain.scannedDocuments ?? 0));
+              const amp = scanned / denom;
+              this.readAmpSum += amp;
+              this.readAmpCount += 1;
+            } catch {}
+          },
           resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
             ? undefined
@@ -714,9 +791,9 @@ export class LioranDB {
       for (const m of metas) {
         const type = m.type ?? "btree";
         if (type === "text") {
-          (col as any).registerTextIndex?.(new TextIndex(colPath, m.field, m.textOptions ?? {}));
+          (col as any).registerTextIndex?.(new TextIndex(colPath, m.field, m.textOptions ?? {}, this.runtimeOptions.storage?.leveldb));
         } else {
-          col.registerIndex(new Index(colPath, m.field, m.options));
+          col.registerIndex(new Index(colPath, m.field, m.options, this.runtimeOptions.storage?.leveldb));
         }
       }
 
@@ -1029,6 +1106,9 @@ export class LioranDB {
 
       const results = await this._applyOps(ops);
 
+      // Track write load for adaptive compaction (primary only).
+      this.writesSinceMaintenance += ops.length;
+
       if (effectiveUseWAL) {
         const appliedLSN = await this.wal.append({
           tx: txId,
@@ -1102,7 +1182,7 @@ export class LioranDB {
     }
 
     const indexAlreadyRegistered = !!(col as any).getIndex?.(field);
-    const index = (col as any).getIndex?.(field) ?? new Index(col.dir, field, normalizedOptions);
+    const index = (col as any).getIndex?.(field) ?? new Index(col.dir, field, normalizedOptions, this.runtimeOptions.storage?.leveldb);
     const docs: any[] = [];
     const flush = async () => {
       if (docs.length === 0) return;
@@ -1184,7 +1264,7 @@ export class LioranDB {
     if (existingMeta) return true;
 
     const indexAlreadyRegistered = !!(col as any).getTextIndex?.(field);
-    const index = (col as any).getTextIndex?.(field) ?? new TextIndex(col.dir, field, options);
+    const index = (col as any).getTextIndex?.(field) ?? new TextIndex(col.dir, field, options, this.runtimeOptions.storage?.leveldb);
 
     const docs: any[] = [];
     const flush = async () => {
@@ -1250,7 +1330,7 @@ export class LioranDB {
     // Backfill + persistence is handled opportunistically in `postCommitMaintenance()` to avoid
     // stealing write-queue capacity (important in backpressure reject mode).
     if (!col.getIndex("_id")) {
-      col.registerIndex(new Index(colPath, "_id", { unique: true }));
+      col.registerIndex(new Index(colPath, "_id", { unique: true }, this.runtimeOptions.storage?.leveldb));
     }
 
     if (this.readonlyMode) return;
