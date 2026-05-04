@@ -10,9 +10,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
-    "@liorandb/core": "^1.2.1",
+    "@liorandb/core": "^1.2.4",
     "node-fs": "^0.1.7",
     "perf_hooks": "^0.0.1"
   }
