@@ -51,6 +51,7 @@ console.log(result);
 - Query explain plans through `collection.explain()` and `db.explain(...)`.
 - WAL-backed transaction recovery.
 - Encryption key rotation for stored documents and WAL files.
+- Multi-node building blocks: Raft leader election (cluster mode), push-based WAL streaming replication, read-replica nodes, and optional per-collection sharding.
 
 ## Main API
 
@@ -61,6 +62,40 @@ const manager = new LioranManager({
   rootPath: "./data",
   encryptionKey: "secret",
   ipc: "primary" // optional: "primary" | "client" | "readonly"
+});
+```
+
+### Cluster (Raft + WAL streaming)
+
+Run multiple nodes with the same `cluster.peers` list; Raft elects a leader, followers stream WAL in near real-time.
+
+```ts
+const manager = new LioranManager({
+  rootPath: "./data-node-1",
+  cluster: {
+    enabled: true,
+    nodeId: "n1",
+    host: "127.0.0.1",
+    raftPort: 7101,
+    walStreamPort: 7201,
+    peers: [
+      { id: "n2", host: "127.0.0.1", raftPort: 7102, walStreamPort: 7202 },
+      { id: "n3", host: "127.0.0.1", raftPort: 7103, walStreamPort: 7203 }
+    ],
+    // optional: waitForMajority: true
+  }
+});
+```
+
+Followers are read-replicas by default; writes are only accepted on the elected leader.
+
+### Sharding
+
+```ts
+const manager = new LioranManager({
+  rootPath: "./data",
+  ipc: "primary",
+  sharding: { shards: 8 } // routes by hash(_id) % N
 });
 ```
 

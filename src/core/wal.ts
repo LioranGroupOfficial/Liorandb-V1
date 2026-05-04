@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { EventEmitter } from "events";
 import {
   decryptStringWithKey,
   encryptStringWithKey,
@@ -113,6 +114,7 @@ export class WALManager {
   private fd: fs.promises.FileHandle | null = null;
   private openPromise: Promise<void> | null = null;
   private readonlyMode: boolean;
+  private events = new EventEmitter();
   private durability: {
     flushStrategy: WALFlushStrategy;
     batch: { maxRecords: number; maxDelayMs: number };
@@ -143,6 +145,11 @@ export class WALManager {
       this.currentGen = this.detectLastGeneration();
       this.recoverLSNFromExistingLogs();
     }
+  }
+
+  onAppend(listener: (record: WALRecord) => void): () => void {
+    this.events.on("append", listener);
+    return () => this.events.off("append", listener);
   }
 
   /* -------------------------
@@ -389,6 +396,9 @@ export class WALManager {
         await this.rotate();
       }
 
+      // Best-effort notification for streaming replication.
+      // Emit after local write (and optional flush) so followers never observe an LSN that isn't on disk.
+      this.events.emit("append", full);
       return full.lsn;
     } catch (err) {
       throw asLiorandbError(err, {

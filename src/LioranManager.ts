@@ -9,6 +9,8 @@ import { LifecycleManager } from "./utils/lifecycle.js";
 import { LiorandbError, asLiorandbError } from "./utils/errors.js";
 import { Mutex } from "./utils/mutex.js";
 import { GlobalCacheEngine, type GlobalCacheConfig } from "./core/cacheEngine.js";
+import { ClusterController, type ClusterNodeConfig } from "./cluster/controller.js";
+import type { ReplicationCoordinator } from "./replication/coordinator.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -33,6 +35,7 @@ export interface LioranManagerOptions {
   rootPath?: string;
   encryptionKey?: string | Buffer;
   ipc?: "primary" | "client" | "readonly" | "replica";
+  cluster?: Omit<ClusterNodeConfig, "enabled"> & { enabled?: boolean };
   cache?: Partial<GlobalCacheConfig> & { maxRAMMB?: number };
   /**
    * Optional override for how many CPU cores to use for worker-thread pools.
@@ -57,10 +60,12 @@ export interface LioranManagerOptions {
     chunkSize?: number;
   };
   durability?: LioranDBRuntimeOptions["durability"];
+  sharding?: LioranDBRuntimeOptions["sharding"];
   replication?: {
     leaderRootPath?: string;
     pollMs?: number;
     batchLimit?: number;
+    walStream?: { host: string; port: number };
   };
 }
 
@@ -80,6 +85,9 @@ export class LioranManager {
   private ipcServer?: import("./ipc/pipe.js").IPCServer;
   private ipcClient?: import("./ipc/pipe.js").IPCClient;
   private replicaReplicator?: import("./replication/replicator.js").ReplicaReplicator;
+  private clusterController?: ClusterController;
+  private replicationCoordinator?: ReplicationCoordinator;
+  private clusterLeader: { id: string; host: string; walStreamPort: number } | null = null;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
@@ -99,6 +107,17 @@ export class LioranManager {
     this.openDBs = new Map();
 
     /* ---------------- MODE RESOLUTION ---------------- */
+
+    if (options.cluster?.enabled) {
+      // Cluster mode: role is controlled by Raft (see ClusterController).
+      // Start as follower/replica until a leader is elected.
+      this.mode = ProcessMode.REPLICA;
+      this._registerShutdownHooks();
+      void this._ensureIpcServer();
+      void this._ensureReplicaReplicator();
+      void this._ensureClusterController();
+      return;
+    }
 
     if (ipc === "readonly") {
       this.mode = ProcessMode.READONLY;
@@ -144,6 +163,71 @@ export class LioranManager {
     return this.mode === ProcessMode.REPLICA;
   }
 
+  _setReplicationCoordinator(coord: ReplicationCoordinator) {
+    this.replicationCoordinator = coord;
+  }
+
+  async _awaitReplicationMajority(dbName: string, lsn: number): Promise<void> {
+    await this.replicationCoordinator?.awaitMajority(dbName, lsn);
+  }
+
+  _setClusterLeader(leader: { id: string; host: string; walStreamPort: number } | null) {
+    this.clusterLeader = leader;
+  }
+
+  private async _ensureClusterController() {
+    if (this.clusterController) return;
+    const c = this.options.cluster;
+    if (!c?.enabled) return;
+
+    this.clusterController = new ClusterController(this, {
+      enabled: true,
+      nodeId: c.nodeId,
+      host: c.host,
+      raftPort: c.raftPort,
+      walStreamPort: c.walStreamPort,
+      peers: c.peers ?? [],
+      heartbeatMs: c.heartbeatMs,
+      electionTimeoutMs: c.electionTimeoutMs,
+      waitForMajority: c.waitForMajority,
+      waitTimeoutMs: c.waitTimeoutMs
+    });
+
+    await this.clusterController.start();
+    this.lifecycle.register(() => this.clusterController?.close());
+  }
+
+  async _becomeClusterLeader() {
+    if (this.mode === ProcessMode.PRIMARY) return;
+    this.mode = ProcessMode.PRIMARY;
+
+    try { this.replicaReplicator?.stop(); } catch {}
+    this.replicaReplicator = undefined;
+
+    // Reopen DBs in primary mode (constructor captures role).
+    await this.closeAll();
+
+    this._registerShutdownHooks();
+    await this._ensureIpcServer();
+  }
+
+  async _becomeClusterFollower(leaderHost: string, walStreamPort: number) {
+    this.mode = ProcessMode.REPLICA;
+
+    this.options.replication = {
+      ...(this.options.replication ?? {}),
+      walStream: { host: leaderHost, port: walStreamPort }
+    };
+
+    // Reopen DBs in replica mode (constructor captures role).
+    await this.closeAll();
+
+    // Reset and restart replicator against the new leader.
+    try { this.replicaReplicator?.stop(); } catch {}
+    this.replicaReplicator = undefined;
+    await this._ensureReplicaReplicator();
+  }
+
   /* ---------------- QUEUE HELPER ---------------- */
 
   private async getQueue() {
@@ -176,7 +260,8 @@ export class LioranManager {
     this.replicaReplicator = new ReplicaReplicator(this, {
       leaderRootPath,
       pollMs: Math.max(10, Math.trunc(this.options.replication?.pollMs ?? 50)),
-      batchLimit: Math.max(1, Math.trunc(this.options.replication?.batchLimit ?? 10_000))
+      batchLimit: Math.max(1, Math.trunc(this.options.replication?.batchLimit ?? 10_000)),
+      walStream: this.options.replication?.walStream
     });
     this.lifecycle.register(() => this.replicaReplicator?.stop());
   }
@@ -255,7 +340,8 @@ export class LioranManager {
       const db = new LioranDB(dbPath, name, this, {
         writeQueue: this.options.writeQueue,
         batch: this.options.batch,
-        durability: this.options.durability
+        durability: this.options.durability,
+        sharding: this.options.sharding
       });
       await db.ready;
       this.openDBs.set(name, db);

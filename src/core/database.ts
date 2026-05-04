@@ -19,6 +19,8 @@ import { LiorandbError, asLiorandbError, withLiorandbErrorSync } from "../utils/
 import type { WALRecord } from "./wal.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { TieredStorageOptions } from "./blobstore.js";
+import { ShardedCollection } from "../sharding/shardedCollection.js";
+import { shardForId } from "../sharding/hash.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -57,6 +59,15 @@ export type LioranDBRuntimeOptions = {
   recovery?: {
     untilTimeMs?: number;
   };
+  sharding?: {
+    enabled?: boolean;
+    shards: number;
+    /**
+     * Optional physical collection name prefix/suffix marker.
+     * Defaults to `__shard__`.
+     */
+    marker?: string;
+  };
 };
 
 /* ---------------------- TRANSACTION CONTEXT ---------------------- */
@@ -74,6 +85,11 @@ class DBTransactionContext {
     const col = this.db.collection(name);
     const readMethods = new Set(["find", "findOne", "aggregate", "explain", "countDocuments", "count"]);
 
+    const marker = (this.db as any).runtimeOptions?.sharding?.marker ?? "__shard__";
+    const shardCount = (this.db as any).runtimeOptions?.sharding?.enabled === false
+      ? 1
+      : Math.max(1, Math.trunc((this.db as any).runtimeOptions?.sharding?.shards ?? 1));
+
     return new Proxy(col as any, {
       get: (target, prop: string) => {
         if (typeof target[prop] !== "function") return target[prop];
@@ -83,12 +99,46 @@ class DBTransactionContext {
         }
 
         return (...args: any[]) => {
-          this.ops.push({
-            tx: this.txId,
-            col: name,
-            op: prop,
-            args
-          });
+          const pushOp = (colName: string, opName: string, opArgs: any[]) => {
+            this.ops.push({ tx: this.txId, col: colName, op: opName, args: opArgs });
+          };
+
+          if (shardCount > 1 && !name.includes(marker)) {
+            // Best-effort shard routing for transactional writes.
+            const opName = String(prop);
+            if (opName === "insertOne") {
+              const doc = args[0];
+              const sid = shardForId(doc?._id, shardCount);
+              pushOp(`${name}${marker}${sid}`, opName, args);
+              return;
+            }
+            if (opName === "insertMany") {
+              const docs = Array.isArray(args[0]) ? args[0] : [];
+              const buckets = new Map<number, any[]>();
+              for (const d of docs) {
+                const sid = shardForId(d?._id, shardCount);
+                const arr = buckets.get(sid) ?? [];
+                arr.push(d);
+                buckets.set(sid, arr);
+              }
+              for (const [sid, chunk] of buckets.entries()) {
+                pushOp(`${name}${marker}${sid}`, opName, [chunk, ...args.slice(1)]);
+              }
+              return;
+            }
+            if (opName === "updateOne" || opName === "replaceOne" || opName === "deleteOne") {
+              const filter = args[0];
+              const sid = shardForId(filter?._id, shardCount);
+              pushOp(`${name}${marker}${sid}`, opName, args);
+              return;
+            }
+
+            // Fallback: force shard-0 for unrecognized writes so apply path always targets a physical collection.
+            pushOp(`${name}${marker}0`, opName, args);
+            return;
+          }
+
+          pushOp(name, String(prop), args);
         };
       }
     });
@@ -119,7 +169,7 @@ export class LioranDB {
   basePath: string;
   dbName: string;
   manager: LioranManager;
-  collections: Map<string, Collection>;
+  collections: Map<string, any>;
 
   private metaPath: string;
   private meta!: DBMeta;
@@ -587,13 +637,38 @@ export class LioranDB {
     schemaVersion?: number,
     options?: { tieredStorage?: TieredStorageOptions }
   ): Collection<T> {
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const shardCount = this.runtimeOptions.sharding?.enabled === false
+      ? 1
+      : Math.max(1, Math.trunc(this.runtimeOptions.sharding?.shards ?? 1));
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+    const isPhysical = shardRe.test(name);
+    const logicalNameForMeta = isPhysical ? name.replace(shardRe, "") : name;
+
     if (this.collections.has(name)) {
       const col = this.collections.get(name)!;
-      if (schema && schemaVersion !== undefined) {
+      if (schema && schemaVersion !== undefined && typeof col?.setSchema === "function") {
         col.setSchema(schema, schemaVersion);
       }
-      this._ensureIdIndex(name, col, path.join(this.basePath, name));
+      if (typeof col?.registerIndex === "function") {
+        this._ensureIdIndex(name, col, path.join(this.basePath, name));
+      }
       return col as Collection<T>;
+    }
+
+    if (!isPhysical && shardCount > 1) {
+      const logicalName = name;
+      const wrapper = new ShardedCollection<T>(
+        (sid: number) => {
+          const physicalName = `${logicalName}${marker}${sid}`;
+          return this.collection<T>(physicalName, schema, schemaVersion, options);
+        },
+        shardCount
+      ) as any;
+
+      this.collections.set(name, wrapper);
+      return wrapper as any;
     }
 
     const colPath = path.join(this.basePath, name);
@@ -635,7 +710,7 @@ export class LioranDB {
         }
       );
 
-      const metas = this.meta.indexes[name] ?? [];
+      const metas = this.meta.indexes[logicalNameForMeta] ?? [];
       for (const m of metas) {
         const type = m.type ?? "btree";
         if (type === "text") {
@@ -962,6 +1037,9 @@ export class LioranDB {
         } as any, { flush: flushModeForCommit });
 
         this.advanceCheckpoint(appliedLSN);
+
+        // Cluster strong-consistency option: wait for majority replication acks.
+        await (this.manager as any)._awaitReplicationMajority?.(this.dbName, appliedLSN);
       }
 
       await this.postCommitMaintenance();
@@ -978,13 +1056,40 @@ export class LioranDB {
   private async _createIndexInternal(
     collection: string,
     field: string,
-    options: IndexOptions = {}
+    options: IndexOptions = {},
+    persistMeta = true
   ) {
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const shardCount = this.runtimeOptions.sharding?.enabled === false
+      ? 1
+      : Math.max(1, Math.trunc(this.runtimeOptions.sharding?.shards ?? 1));
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+    const isPhysical = shardRe.test(collection);
+    const logicalNameForMeta = isPhysical ? collection.replace(shardRe, "") : collection;
+
+    if (!isPhysical && shardCount > 1) {
+      // Persist meta once (logical), then build the same index on each shard physical collection.
+      if (persistMeta) {
+        const normalizedOptions: IndexOptions = { unique: !!options.unique };
+        const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "btree");
+        if (!existingMeta) {
+          if (!this.meta.indexes[logicalNameForMeta]) this.meta.indexes[logicalNameForMeta] = [];
+          this.meta.indexes[logicalNameForMeta].push({ field, options: normalizedOptions, type: "btree" });
+          this.saveMeta();
+        }
+      }
+      for (let sid = 0; sid < shardCount; sid++) {
+        await this._createIndexInternal(`${collection}${marker}${sid}`, field, options, false);
+      }
+      return true;
+    }
+
     const col = this.collection(collection);
 
     const normalizedOptions: IndexOptions = { unique: !!options.unique };
 
-    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field && (i.type ?? "btree") === "btree");
+    const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "btree");
     if (existingMeta) {
       const existingUnique = !!existingMeta.options?.unique;
       if (existingUnique !== !!normalizedOptions.unique) {
@@ -1032,12 +1137,12 @@ export class LioranDB {
       col.registerIndex(index);
     }
 
-    if (!this.meta.indexes[collection]) {
-      this.meta.indexes[collection] = [];
+    if (!this.meta.indexes[logicalNameForMeta]) {
+      this.meta.indexes[logicalNameForMeta] = [];
     }
 
-    if (!existingMeta) {
-      this.meta.indexes[collection].push({ field, options: normalizedOptions, type: "btree" });
+    if (!existingMeta && persistMeta) {
+      this.meta.indexes[logicalNameForMeta].push({ field, options: normalizedOptions, type: "btree" });
       this.saveMeta();
     }
     return true;
@@ -1046,11 +1151,36 @@ export class LioranDB {
   private async _createTextIndexInternal(
     collection: string,
     field: string,
-    options: TextIndexOptions = {}
+    options: TextIndexOptions = {},
+    persistMeta = true
   ) {
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const shardCount = this.runtimeOptions.sharding?.enabled === false
+      ? 1
+      : Math.max(1, Math.trunc(this.runtimeOptions.sharding?.shards ?? 1));
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+    const isPhysical = shardRe.test(collection);
+    const logicalNameForMeta = isPhysical ? collection.replace(shardRe, "") : collection;
+
+    if (!isPhysical && shardCount > 1) {
+      if (persistMeta) {
+        const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "text");
+        if (!existingMeta) {
+          if (!this.meta.indexes[logicalNameForMeta]) this.meta.indexes[logicalNameForMeta] = [];
+          this.meta.indexes[logicalNameForMeta].push({ field, options: {}, type: "text", textOptions: options });
+          this.saveMeta();
+        }
+      }
+      for (let sid = 0; sid < shardCount; sid++) {
+        await this._createTextIndexInternal(`${collection}${marker}${sid}`, field, options, false);
+      }
+      return true;
+    }
+
     const col = this.collection(collection);
 
-    const existingMeta = this.meta.indexes[collection]?.find(i => i.field === field && (i.type ?? "btree") === "text");
+    const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "text");
     if (existingMeta) return true;
 
     const indexAlreadyRegistered = !!(col as any).getTextIndex?.(field);
@@ -1083,16 +1213,33 @@ export class LioranDB {
       (col as any).registerTextIndex?.(index);
     }
 
-    if (!this.meta.indexes[collection]) {
-      this.meta.indexes[collection] = [];
+    if (!this.meta.indexes[logicalNameForMeta]) {
+      this.meta.indexes[logicalNameForMeta] = [];
     }
 
-    this.meta.indexes[collection].push({ field, options: {}, type: "text", textOptions: options });
-    this.saveMeta();
+    if (persistMeta) {
+      this.meta.indexes[logicalNameForMeta].push({ field, options: {}, type: "text", textOptions: options });
+      this.saveMeta();
+    }
     return true;
   }
 
   private async _compactCollectionInternal(name: string) {
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const shardCount = this.runtimeOptions.sharding?.enabled === false
+      ? 1
+      : Math.max(1, Math.trunc(this.runtimeOptions.sharding?.shards ?? 1));
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+
+    if (!shardRe.test(name) && shardCount > 1) {
+      for (let sid = 0; sid < shardCount; sid++) {
+        const col = this.collection(`${name}${marker}${sid}`);
+        await (col as any)._compactInternal?.();
+      }
+      return true;
+    }
+
     const col = this.collection(name);
     await (col as any)._compactInternal?.();
     return true;
@@ -1109,11 +1256,16 @@ export class LioranDB {
     if (this.readonlyMode) return;
     if (this.idIndexEnsureScheduled.has(name)) return;
 
-    const alreadyInMeta = !!this.meta.indexes[name]?.some(i => i.field === "_id");
+    const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shardRe = new RegExp(`${escapeRe(marker)}(\\d+)$`);
+    const logicalNameForMeta = shardRe.test(name) ? name.replace(shardRe, "") : name;
+
+    const alreadyInMeta = !!this.meta.indexes[logicalNameForMeta]?.some(i => i.field === "_id");
     this.idIndexEnsureScheduled.add(name);
 
     if (!alreadyInMeta) {
-      this.pendingIdIndexEnsure.add(name);
+      this.pendingIdIndexEnsure.add(logicalNameForMeta);
     }
   }
 }
