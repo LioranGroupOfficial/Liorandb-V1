@@ -61,6 +61,7 @@ export interface LioranManagerOptions {
   };
   durability?: LioranDBRuntimeOptions["durability"];
   storage?: LioranDBRuntimeOptions["storage"];
+  latency?: LioranDBRuntimeOptions["latency"];
   sharding?: LioranDBRuntimeOptions["sharding"];
   replication?: {
     leaderRootPath?: string;
@@ -343,6 +344,7 @@ export class LioranManager {
         batch: this.options.batch,
         durability: this.options.durability,
         storage: this.options.storage,
+        latency: this.options.latency,
         sharding: this.options.sharding
       });
       await db.ready;

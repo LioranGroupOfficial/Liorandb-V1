@@ -128,6 +128,25 @@ const manager = new LioranManager({
 });
 ```
 
+### Latency Budgets (<100ms reads/writes)
+
+Budgets are best-effort by default (warn on violations). You can switch to hard timeouts with `onViolation: "throw"`.
+
+```ts
+const manager = new LioranManager({
+  rootPath: "./data",
+  ipc: "primary",
+  latency: {
+    readBudgetMs: 100,
+    writeBudgetMs: 100,
+    walAppendBudgetMs: 5,
+    onViolation: "warn" // "none" | "warn" | "throw"
+  },
+  // For low-latency writes, prefer async durability (avoids fsync-on-commit).
+  durability: { level: "async" }
+});
+```
+
 ### Database
 
 ```ts

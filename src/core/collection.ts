@@ -21,6 +21,7 @@ import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 import { BlobStore, type TieredStorageOptions } from "./blobstore.js";
 import type { LCRCache } from "./lcrCache.js";
+import { withLatencyBudget, type LatencyViolationMode } from "../utils/latency.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -54,6 +55,11 @@ export interface CollectionOptions {
     usedFullScan: boolean;
     candidateDocuments: number;
   }) => void;
+  latency?: {
+    enabled?: boolean;
+    readBudgetMs?: number;
+    onViolation?: LatencyViolationMode;
+  };
 }
 
 export interface FindOptions {
@@ -119,6 +125,7 @@ export class Collection<T = any> {
   private blobStore?: BlobStore;
   private onExplain?: CollectionOptions["onExplain"];
   private leveldbOptions?: CollectionOptions["leveldb"];
+  private latency?: CollectionOptions["latency"];
 
   constructor(
     dir: string,
@@ -134,6 +141,7 @@ export class Collection<T = any> {
     this.resolveCollection = options?.resolveCollection;
     this.onExplain = options?.onExplain;
     this.leveldbOptions = options?.leveldb;
+    this.latency = options?.latency;
     (this as any)._leveldbOptions = this.leveldbOptions;
     if (options?.tieredStorage) {
       this.blobStore = new BlobStore(this.dir, options.tieredStorage);
@@ -357,12 +365,16 @@ export class Collection<T = any> {
   }
 
   private _runRead<R>(task: () => Promise<R>): Promise<R> {
+    const enabled = this.latency?.enabled ?? true;
+    const budget = enabled ? this.latency?.readBudgetMs ?? 100 : undefined;
+    const mode = this.latency?.onViolation;
+
     if (this.scheduler) {
-      return this.scheduler.maintenance(task);
+      return withLatencyBudget(`read:${this.dir}`, budget, mode, () => this.scheduler!.maintenance(task));
     }
 
     // Best-effort read-after-write consistency for local (non-scheduler) mode.
-    return this.writeQueue.then(task);
+    return withLatencyBudget(`read:${this.dir}`, budget, mode, () => this.writeQueue.then(task));
   }
 
   /* ===================== COMPACTION ===================== */

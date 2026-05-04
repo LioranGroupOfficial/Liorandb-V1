@@ -21,6 +21,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { TieredStorageOptions } from "./blobstore.js";
 import { ShardedCollection } from "../sharding/shardedCollection.js";
 import { shardForId } from "../sharding/hash.js";
+import { withLatencyBudget } from "../utils/latency.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -91,6 +92,13 @@ export type LioranDBRuntimeOptions = {
        */
       minAggressiveIntervalMs?: number;
     };
+  };
+  latency?: {
+    enabled?: boolean;
+    readBudgetMs?: number;
+    writeBudgetMs?: number;
+    walAppendBudgetMs?: number;
+    onViolation?: import("../utils/latency.js").LatencyViolationMode;
   };
   sharding?: {
     enabled?: boolean;
@@ -769,6 +777,11 @@ export class LioranDB {
               this.readAmpCount += 1;
             } catch {}
           },
+          latency: {
+            enabled: this.runtimeOptions.latency?.enabled,
+            readBudgetMs: this.runtimeOptions.latency?.readBudgetMs ?? 100,
+            onViolation: this.runtimeOptions.latency?.onViolation
+          },
           resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
             ? undefined
@@ -1076,6 +1089,11 @@ export class LioranDB {
     useWAL: boolean
   ): Promise<any[]> {
     try {
+      const latencyEnabled = this.runtimeOptions.latency?.enabled ?? true;
+      const onViolation = this.runtimeOptions.latency?.onViolation;
+      const writeBudgetMs = latencyEnabled ? this.runtimeOptions.latency?.writeBudgetMs ?? 100 : undefined;
+      const walBudgetMs = latencyEnabled ? this.runtimeOptions.latency?.walAppendBudgetMs ?? 5 : undefined;
+
       const durabilityLevel = this.runtimeOptions.durability?.level ?? "journaled";
       const effectiveUseWAL = useWAL && durabilityLevel !== "none";
       const txTime = Date.now();
@@ -1087,43 +1105,57 @@ export class LioranDB {
             ? ("request" as const)
             : ("none" as const);
 
-      if (effectiveUseWAL) {
-        for (const op of ops) {
-          await this.wal.append({
-            tx: txId,
-            time: txTime,
-            type: "op",
-            payload: op
-          } as any, { flush: "none" });
+      return await withLatencyBudget(
+        `write:${this.dbName}:tx:${txId}`,
+        writeBudgetMs,
+        onViolation,
+        async () => {
+          if (effectiveUseWAL) {
+            await withLatencyBudget(
+              `wal:${this.dbName}:tx:${txId}`,
+              walBudgetMs,
+              onViolation,
+              async () => {
+                for (const op of ops) {
+                  await this.wal.append({
+                    tx: txId,
+                    time: txTime,
+                    type: "op",
+                    payload: op
+                  } as any, { flush: "none" });
+                }
+
+                await this.wal.append({
+                  tx: txId,
+                  time: txTime,
+                  type: "commit"
+                } as any, { flush: flushModeForCommit });
+              }
+            );
+          }
+
+          const results = await this._applyOps(ops);
+
+          // Track write load for adaptive compaction (primary only).
+          this.writesSinceMaintenance += ops.length;
+
+          if (effectiveUseWAL) {
+            const appliedLSN = await this.wal.append({
+              tx: txId,
+              time: txTime,
+              type: "applied"
+            } as any, { flush: flushModeForCommit });
+
+            this.advanceCheckpoint(appliedLSN);
+
+            // Cluster strong-consistency option: wait for majority replication acks.
+            await (this.manager as any)._awaitReplicationMajority?.(this.dbName, appliedLSN);
+          }
+
+          await this.postCommitMaintenance();
+          return results;
         }
-
-        await this.wal.append({
-          tx: txId,
-          time: txTime,
-          type: "commit"
-        } as any, { flush: flushModeForCommit });
-      }
-
-      const results = await this._applyOps(ops);
-
-      // Track write load for adaptive compaction (primary only).
-      this.writesSinceMaintenance += ops.length;
-
-      if (effectiveUseWAL) {
-        const appliedLSN = await this.wal.append({
-          tx: txId,
-          time: txTime,
-          type: "applied"
-        } as any, { flush: flushModeForCommit });
-
-        this.advanceCheckpoint(appliedLSN);
-
-        // Cluster strong-consistency option: wait for majority replication acks.
-        await (this.manager as any)._awaitReplicationMajority?.(this.dbName, appliedLSN);
-      }
-
-      await this.postCommitMaintenance();
-      return results;
+      );
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
