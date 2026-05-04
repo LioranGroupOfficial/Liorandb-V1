@@ -20,6 +20,7 @@ import { Index, TextIndex, type IndexOptions, type TextIndexOptions } from "./in
 import { compactCollectionEngine, rebuildIndexes } from "./compaction.js";
 import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 import { BlobStore, type TieredStorageOptions } from "./blobstore.js";
+import { QueryResultCache } from "./queryCache.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -44,6 +45,7 @@ export interface CollectionOptions {
 export interface FindOptions {
   limit?: number;
   offset?: number;
+  cursor?: string;
   projection?: string[];
 }
 
@@ -83,6 +85,7 @@ export class Collection<T = any> {
   private indexes = new Map<string, Index>();
   private textIndexes = new Map<string, TextIndex>();
   private readonlyMode: boolean;
+  private readonly queryCache = new QueryResultCache<any[]>();
   private docCount = 0;
   private metaLoaded = false;
   private metaLoadPromise: Promise<void> | null = null;
@@ -345,16 +348,40 @@ export class Collection<T = any> {
   async _exec(op: string, args: any[]): Promise<any> {
     try {
       switch (op) {
-        case "insertOne": return this._insertOne(args[0]);
-        case "insertMany": return this._insertMany(args[0]);
+        case "insertOne": {
+          const r = await this._insertOne(args[0]);
+          this.queryCache.clear();
+          return r;
+        }
+        case "insertMany": {
+          const r = await this._insertMany(args[0]);
+          this.queryCache.clear();
+          return r;
+        }
         case "find": return this._find(args[0], args[1]);
         case "findOne": return this._findOne(args[0], args[1]);
         case "aggregate": return this._aggregate(args[0]);
         case "explain": return this._explain(args[0], args[1]);
-        case "updateOne": return this._updateOne(args[0], args[1], args[2]);
-        case "updateMany": return this._updateMany(args[0], args[1]);
-        case "deleteOne": return this._deleteOne(args[0]);
-        case "deleteMany": return this._deleteMany(args[0]);
+        case "updateOne": {
+          const r = await this._updateOne(args[0], args[1], args[2]);
+          this.queryCache.clear();
+          return r;
+        }
+        case "updateMany": {
+          const r = await this._updateMany(args[0], args[1]);
+          this.queryCache.clear();
+          return r;
+        }
+        case "deleteOne": {
+          const r = await this._deleteOne(args[0]);
+          this.queryCache.clear();
+          return r;
+        }
+        case "deleteMany": {
+          const r = await this._deleteMany(args[0]);
+          this.queryCache.clear();
+          return r;
+        }
         case "countDocuments": return this._countDocuments(args[0]);
         case "count": return this._count();
         default:
@@ -638,7 +665,10 @@ export class Collection<T = any> {
   }
 
   private normalizeFindOptions(options?: FindOptions) {
-    const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+    const cursor = typeof options?.cursor === "string" && options.cursor.length > 0
+      ? options.cursor
+      : undefined;
+    const offset = cursor ? 0 : Math.max(0, Math.trunc(options?.offset ?? 0));
     const rawLimit = options?.limit;
     const limit = rawLimit === undefined
       ? Number.POSITIVE_INFINITY
@@ -649,7 +679,7 @@ export class Collection<T = any> {
         )
       : undefined;
 
-    return { offset, limit, projection };
+    return { offset, limit, projection, cursor };
   }
 
   private projectDocument(doc: T, projection?: string[]): T {
@@ -809,7 +839,7 @@ export class Collection<T = any> {
   ): Promise<QueryExecutionResult<R>> {
     const startedAt = Date.now();
     const out: R[] = [];
-    const { offset, limit, projection } = this.normalizeFindOptions(options);
+    const { offset, limit, projection, cursor } = this.normalizeFindOptions(options);
     const finalLimit = limitOverride === undefined ? limit : Math.min(limit, limitOverride);
     let indexUsed: string | undefined = undefined;
     let usedFullScan = true;
@@ -832,17 +862,97 @@ export class Collection<T = any> {
 
     let scannedDocuments = 0;
 
+    const isPlainObject =
+      query !== null &&
+      typeof query === "object" &&
+      typeof query !== "function" &&
+      !Array.isArray(query);
+
+    // O(1) `_id` fast path (exact lookup): avoid planner + candidate resolution.
+    if (isPlainObject && "_id" in query && Object.keys(query).length === 1) {
+      const cond = (query as any)._id;
+      const isScalar = !cond || typeof cond !== "object" || Array.isArray(cond);
+      const isEqObject = !!cond && typeof cond === "object" && !Array.isArray(cond) && "$eq" in cond;
+
+      if (isScalar || isEqObject) {
+        const id = String(isScalar ? cond : cond.$eq);
+        const enc = await this.db.get(id).catch(() => null);
+        scannedDocuments = 1;
+
+        if (!enc) {
+          return {
+            results: out,
+            explain: {
+              indexUsed: "_id",
+              indexType: "btree",
+              scannedDocuments,
+              returnedDocuments: 0,
+              executionTimeMs: Date.now() - startedAt,
+              usedFullScan: false,
+              candidateDocuments: 1
+            }
+          };
+        }
+
+        let raw: any;
+        try {
+          raw = decryptData(enc);
+        } catch {
+          return {
+            results: out,
+            explain: {
+              indexUsed: "_id",
+              indexType: "btree",
+              scannedDocuments,
+              returnedDocuments: 0,
+              executionTimeMs: Date.now() - startedAt,
+              usedFullScan: false,
+              candidateDocuments: 1
+            }
+          };
+        }
+
+        const migrated = this.migrateIfNeeded(raw);
+
+        if (!this.readonlyMode && raw.__v !== this.schemaVersion) {
+          const persist = async () => {
+            await this.db.put(id, encryptData(migrated));
+            await this._updateIndexes(raw, migrated);
+          };
+
+          if (this.scheduler) {
+            void this.scheduler.maintenance(persist).catch(() => {});
+          } else {
+            await persist();
+          }
+        }
+
+        out.push(this.projectDocument(this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated, projection) as unknown as R);
+
+        return {
+          results: out,
+          explain: {
+            indexUsed: "_id",
+            indexType: "btree",
+            scannedDocuments,
+            returnedDocuments: 1,
+            executionTimeMs: Date.now() - startedAt,
+            usedFullScan: false,
+            candidateDocuments: 1
+          }
+        };
+      }
+    }
+
     const isTrivialQuery =
       !query ||
-      (typeof query === "object" &&
-        typeof query !== "function" &&
-        !Array.isArray(query) &&
-        Object.keys(query).length === 0);
+      (isPlainObject && Object.keys(query).length === 0);
 
     // Fast-path for `find({})`: avoid building an id list + per-doc `db.get()`.
     // Instead, stream through LevelDB iterator (key,value) once.
     if (isTrivialQuery) {
-      for await (const [key, enc] of this.db.iterator()) {
+      const iteratorOptions = cursor ? ({ gt: cursor } as any) : undefined;
+      for await (const [key, enc] of this.db.iterator(iteratorOptions)) {
         if (key.startsWith(META_KEY_PREFIX) || !enc) continue;
         scannedDocuments++;
 
@@ -889,6 +999,111 @@ export class Collection<T = any> {
           candidateDocuments: scannedDocuments
         }
       };
+    }
+
+    // Cursor-friendly `_id` range scan: avoids building an id list + per-doc `db.get()`.
+    if (isPlainObject && "_id" in query && Object.keys(query).length === 1) {
+      const cond = (query as any)._id;
+      const isObj = !!cond && typeof cond === "object" && !Array.isArray(cond);
+      if (isObj && ("$gt" in cond || "$gte" in cond || "$lt" in cond || "$lte" in cond)) {
+        const it: any = {};
+        if (cond.$gt !== undefined) it.gt = String(cond.$gt);
+        if (cond.$gte !== undefined) it.gte = String(cond.$gte);
+        if (cond.$lt !== undefined) it.lt = String(cond.$lt);
+        if (cond.$lte !== undefined) it.lte = String(cond.$lte);
+
+        for await (const [key, enc] of this.db.iterator(it)) {
+          if (key.startsWith(META_KEY_PREFIX) || !enc) continue;
+          scannedDocuments++;
+
+          let raw: any;
+          try {
+            raw = decryptData(enc);
+          } catch {
+            continue;
+          }
+
+          const migrated = this.migrateIfNeeded(raw);
+
+          if (!this.readonlyMode && raw.__v !== this.schemaVersion) {
+            const persist = async () => {
+              await this.db.put(key, encryptData(migrated));
+              await this._updateIndexes(raw, migrated);
+            };
+
+            if (this.scheduler) {
+              void this.scheduler.maintenance(persist).catch(() => {});
+            } else {
+              await persist();
+            }
+          }
+
+          if (skipped < offset) {
+            skipped++;
+            continue;
+          }
+
+          out.push(this.projectDocument(this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated, projection) as unknown as R);
+          if (out.length >= finalLimit) break;
+        }
+
+        return {
+          results: out,
+          explain: {
+            indexUsed: "_id",
+            indexType: "btree",
+            scannedDocuments,
+            returnedDocuments: out.length,
+            executionTimeMs: Date.now() - startedAt,
+            usedFullScan: false,
+            candidateDocuments: scannedDocuments
+          }
+        };
+      }
+    }
+
+    // Covering index fast-path: if the projection is satisfied by the index itself,
+    // return directly from the index without primary document reads.
+    if (
+      isPlainObject &&
+      projection &&
+      projection.length > 0 &&
+      Object.keys(query).length === 1
+    ) {
+      const field = Object.keys(query)[0];
+      if (field !== "_id" && field !== "$text") {
+        const idx = this.indexes.get(field);
+        const cond = (query as any)[field];
+        const isScalar = !cond || typeof cond !== "object" || Array.isArray(cond);
+        const isEqObject = !!cond && typeof cond === "object" && !Array.isArray(cond) && "$eq" in cond;
+
+        const include = (idx as any)?.include as string[] | undefined;
+        const hasCover = Array.isArray(include) && include.length > 0;
+        const projectionCovered = hasCover
+          ? projection.every(p => p === "_id" || include.includes(p))
+          : false;
+
+        if (idx && projectionCovered && (isScalar || isEqObject)) {
+          const value = isScalar ? cond : cond.$eq;
+          const covered = await (idx as any).findCover?.(value);
+          if (Array.isArray(covered)) {
+            scannedDocuments = covered.length;
+            const sliced = covered.slice(offset, Number.isFinite(finalLimit) ? offset + finalLimit : undefined);
+            return {
+              results: sliced as unknown as R[],
+              explain: {
+                indexUsed: field,
+                indexType: "btree",
+                scannedDocuments,
+                returnedDocuments: sliced.length,
+                executionTimeMs: Date.now() - startedAt,
+                usedFullScan: false,
+                candidateDocuments: covered.length
+              }
+            };
+          }
+        }
+      }
     }
 
     // Planner (best-effort) for explain output. Avoids the trivial-query fast path above.
@@ -961,12 +1176,50 @@ export class Collection<T = any> {
   }
 
   private async _find(query: any, options?: FindOptions) {
+    if (typeof query === "function") {
+      const execution = await this.executeQuery<T>(query, options);
+      return execution.results;
+    }
+
+    const key = this.queryCache.makeKey({
+      q: query ?? {},
+      o: {
+        limit: options?.limit,
+        offset: options?.offset,
+        cursor: options?.cursor,
+        projection: options?.projection
+      }
+    });
+
+    const cached = this.queryCache.get(key);
+    if (cached !== null) return cached as T[];
+
     const execution = await this.executeQuery<T>(query, options);
+    this.queryCache.set(key, execution.results);
     return execution.results;
   }
 
   private async _findOne(query: any, options?: FindOptions) {
+    if (typeof query === "function") {
+      const execution = await this.executeQuery<T>(query, options, 1);
+      return execution.results[0] ?? null;
+    }
+
+    const key = this.queryCache.makeKey({
+      q: query ?? {},
+      o: {
+        limit: 1,
+        offset: options?.offset,
+        cursor: options?.cursor,
+        projection: options?.projection
+      }
+    });
+
+    const cached = this.queryCache.get(key);
+    if (cached !== null) return (cached[0] as T) ?? null;
+
     const execution = await this.executeQuery<T>(query, options, 1);
+    this.queryCache.set(key, execution.results);
     return execution.results[0] ?? null;
   }
 
@@ -1291,7 +1544,7 @@ export class Collection<T = any> {
       ? String(defOrField.field)
       : String(defOrField);
     const resolvedOptions: IndexOptions = typeof defOrField === "object" && defOrField
-      ? { unique: !!defOrField.unique }
+      ? { unique: !!defOrField.unique, include: defOrField.include }
       : options;
 
     if (this.scheduler?.createIndex) {

@@ -7,6 +7,12 @@ import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 
 export interface IndexOptions {
   unique?: boolean;
+  /**
+   * Optional "covering index" fields. When set, the index stores these fields
+   * (plus `_id`) alongside each entry so projected queries can avoid primary
+   * document reads.
+   */
+  include?: string[];
 }
 
 export interface TextIndexOptions {
@@ -33,12 +39,16 @@ const RANGE_END = "\uffff";
 export class Index {
   readonly field: string;
   readonly unique: boolean;
+  readonly include?: string[];
   readonly dir: string;
   readonly db: ClassicLevel<string, string>;
 
   constructor(baseDir: string, field: string, options: IndexOptions = {}) {
     this.field = field;
     this.unique = !!options.unique;
+    this.include = Array.isArray(options.include)
+      ? options.include.filter((f): f is string => typeof f === "string" && f.length > 0)
+      : undefined;
 
     this.dir = path.join(baseDir, "__indexes", field + ".idx");
     fs.mkdirSync(this.dir, { recursive: true });
@@ -110,6 +120,51 @@ export class Index {
     return this.makeEntryPrefix(value) + String(id);
   }
 
+  private buildCover(doc: any): any | null {
+    if (!this.include || this.include.length === 0) return null;
+    const out: Record<string, any> = { _id: doc?._id };
+
+    for (const field of this.include) {
+      if (!field || field === "_id") continue;
+      const parts = field.split(".");
+      let source: any = doc;
+      for (const part of parts) {
+        if (source == null) {
+          source = undefined;
+          break;
+        }
+        source = source[part];
+      }
+      if (source === undefined) continue;
+
+      let target: Record<string, any> = out;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        const existing = target[part];
+        if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+          target[part] = {};
+        }
+        target = target[part];
+      }
+      target[parts.at(-1)!] = source;
+    }
+
+    return out;
+  }
+
+  private decodeUniqueValueToId(raw: string): string {
+    if (!raw) return "";
+    if (raw[0] === "{") {
+      try {
+        const parsed = JSON.parse(raw);
+        return String(parsed?._id ?? parsed?.id ?? "");
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  }
+
   private async getRaw(key: string): Promise<IndexValue | null> {
     try {
       const value = await this.db.get(key);
@@ -148,12 +203,13 @@ export class Index {
       if (!existing) return false;
 
       const docId = String(doc?._id);
-      if (existing === docId) return true;
+      const existingId = this.decodeUniqueValueToId(existing);
+      if (existingId === docId) return true;
 
       throw new LiorandbError(
         "UNIQUE_INDEX_VIOLATION",
         `Unique index violation on "${this.field}"`,
-        { details: { field: this.field, value: val, existingId: existing, docId } }
+        { details: { field: this.field, value: val, existingId, docId } }
       );
     }
 
@@ -172,21 +228,24 @@ export class Index {
         const docId = String(doc._id);
 
         // Idempotent: allow re-inserting the same mapping (important for retries/repairs).
-        if (existing === docId) return;
+        const existingId = existing ? this.decodeUniqueValueToId(existing) : "";
+        if (existingId === docId) return;
 
         if (existing) {
           throw new LiorandbError(
             "UNIQUE_INDEX_VIOLATION",
             `Unique index violation on "${this.field}"`,
-            { details: { field: this.field, value: val, existingId: existing, docId } }
+            { details: { field: this.field, value: val, existingId, docId } }
           );
         }
 
-        await this.setRaw(key, docId);
+        const cover = this.buildCover(doc);
+        await this.setRaw(key, cover ? JSON.stringify(cover) : docId);
         return;
       }
 
-      await this.setRaw(this.makeEntryKey(val, doc._id), "1");
+      const cover = this.buildCover(doc);
+      await this.setRaw(this.makeEntryKey(val, doc._id), cover ? JSON.stringify(cover) : "1");
     } catch (err) {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
@@ -207,7 +266,8 @@ export class Index {
         const docId = String(doc._id);
 
         // Safety: never delete a unique mapping we don't own (corruption/partial failures).
-        if (existing !== docId) return;
+        const existingId = existing ? this.decodeUniqueValueToId(existing) : "";
+        if (existingId !== docId) return;
 
         await this.delRaw(key);
         return;
@@ -245,7 +305,8 @@ export class Index {
     try {
       if (this.unique) {
         const raw = await this.getRaw(this.makeUniqueKey(value));
-        return raw ? [raw] : [];
+        const id = raw ? this.decodeUniqueValueToId(raw) : "";
+        return id ? [id] : [];
       }
 
       const prefix = this.makeEntryPrefix(value);
@@ -289,7 +350,8 @@ export class Index {
         lte: prefix + normalizedLte
       })) {
         if (this.unique) {
-          ids.push(value);
+          const id = this.decodeUniqueValueToId(value);
+          if (id) ids.push(id);
           continue;
         }
 
@@ -302,6 +364,86 @@ export class Index {
       throw asLiorandbError(err, {
         code: "IO_ERROR",
         message: "Failed to query index range",
+        details: { field: this.field, unique: this.unique }
+      });
+    }
+  }
+
+  async findCover(value: any): Promise<any[] | null> {
+    if (!this.include || this.include.length === 0) return null;
+
+    try {
+      if (this.unique) {
+        const raw = await this.getRaw(this.makeUniqueKey(value));
+        if (!raw) return [];
+        if (raw[0] !== "{") return null;
+        try {
+          return [JSON.parse(raw)];
+        } catch {
+          return null;
+        }
+      }
+
+      const prefix = this.makeEntryPrefix(value);
+      const out: any[] = [];
+
+      for await (const [, stored] of this.db.iterator({
+        gte: prefix,
+        lte: prefix + RANGE_END
+      })) {
+        if (!stored || stored[0] !== "{") return null;
+        try {
+          out.push(JSON.parse(stored));
+        } catch {
+          return null;
+        }
+      }
+
+      return out;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to query covering index",
+        details: { field: this.field, unique: this.unique }
+      });
+    }
+  }
+
+  async findRangeCover(cond: any): Promise<any[] | null> {
+    if (!this.include || this.include.length === 0) return null;
+
+    try {
+      const normalizedGte = cond.$gt !== undefined
+        ? this.normalizeKey(cond.$gt) + RANGE_END
+        : cond.$gte !== undefined
+          ? this.normalizeKey(cond.$gte)
+          : "";
+      const normalizedLte = cond.$lt !== undefined
+        ? this.normalizeKey(cond.$lt)
+        : cond.$lte !== undefined
+          ? this.normalizeKey(cond.$lte) + RANGE_END
+          : RANGE_END;
+
+      const prefix = this.unique ? UNIQUE_PREFIX : ENTRY_PREFIX;
+      const out: any[] = [];
+
+      for await (const [, stored] of this.db.iterator({
+        gte: prefix + normalizedGte,
+        lte: prefix + normalizedLte
+      })) {
+        if (!stored || stored[0] !== "{") return null;
+        try {
+          out.push(JSON.parse(stored));
+        } catch {
+          return null;
+        }
+      }
+
+      return out;
+    } catch (err) {
+      throw asLiorandbError(err, {
+        code: "IO_ERROR",
+        message: "Failed to query covering index range",
         details: { field: this.field, unique: this.unique }
       });
     }
@@ -332,30 +474,33 @@ export class Index {
           }
 
           const existing = await this.getRaw(key);
-          if (existing && existing !== docId) {
+          const existingId = existing ? this.decodeUniqueValueToId(existing) : "";
+          if (existing && existingId !== docId) {
             throw new LiorandbError(
               "UNIQUE_INDEX_VIOLATION",
               `Unique index violation on "${this.field}"`,
-              { details: { field: this.field, value: val, existingId: existing, docId } }
+              { details: { field: this.field, value: val, existingId, docId } }
             );
           }
 
           seen.add(key);
 
           // Idempotent: if already mapped to same doc, no-op.
-          if (existing === docId) continue;
+          if (existingId === docId) continue;
 
-          ops.push({ type: "put", key, value: docId });
+          const cover = this.buildCover(doc);
+          ops.push({ type: "put", key, value: cover ? JSON.stringify(cover) : docId });
         }
       } else {
         for (const doc of docs) {
           const val = doc[this.field];
           if (val === undefined) continue;
 
+          const cover = this.buildCover(doc);
           ops.push({
             type: "put",
             key: this.makeEntryKey(val, doc._id),
-            value: "1"
+            value: cover ? JSON.stringify(cover) : "1"
           });
         }
       }

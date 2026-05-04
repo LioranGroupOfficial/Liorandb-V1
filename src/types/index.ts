@@ -35,6 +35,12 @@ export type Query<T = any> =
 export interface FindOptions {
   limit?: number;
   offset?: number;
+  /**
+   * Cursor for pagination. Semantics depend on query shape:
+   * - `find({})`: cursor is the last seen `_id` (primary key).
+   * - `find({_id: {$gt|$gte|$lt|$lte: ...}})`: cursor can also be expressed via the query itself.
+   */
+  cursor?: string;
   projection?: string[];
 }
 
