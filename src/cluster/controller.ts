@@ -10,8 +10,19 @@ export type ClusterNodeConfig = {
   host: string;
   raftPort: number;
   walStreamPort: number;
-  clientPort: number;
-  peers: Array<{ id: string; host: string; raftPort: number; walStreamPort: number }>;
+  clientPort?: number;
+  client?: {
+    port?: number;
+    maxMessageBytes?: number;
+    auth?: { token?: string; required?: boolean };
+    tls?: {
+      keyPath: string;
+      certPath: string;
+      caPath?: string;
+      requestCert?: boolean;
+    };
+  };
+  peers: Array<{ id: string; host: string; raftPort: number; walStreamPort: number; clientPort?: number }>;
   heartbeatMs?: number;
   electionTimeoutMs?: { min: number; max: number };
   waitForMajority?: boolean;
@@ -24,13 +35,17 @@ export class ClusterController {
   private clientServer: ClusterRPCServer;
   private coordinator: ReplicationCoordinator;
   private closed = false;
+  private clientPort: number;
 
-  private currentLeader: { id: string; host: string; walStreamPort: number } | null = null;
+  private currentLeader: { id: string; host: string; walStreamPort: number; clientPort: number } | null = null;
 
   constructor(
     private manager: LioranManager,
     private cfg: ClusterNodeConfig
   ) {
+    const clientPort = Math.max(1, Math.trunc(cfg.client?.port ?? cfg.clientPort ?? (cfg.walStreamPort + 1)));
+    this.clientPort = clientPort;
+
     const peers: RaftPeer[] = cfg.peers.map(p => ({ id: p.id, host: p.host, port: p.raftPort }));
     this.raft = new RaftNode({
       id: cfg.nodeId,
@@ -49,7 +64,10 @@ export class ClusterController {
 
     this.clientServer = new ClusterRPCServer(manager, {
       host: cfg.host,
-      port: cfg.clientPort
+      port: clientPort,
+      maxMessageBytes: cfg.client?.maxMessageBytes,
+      auth: cfg.client?.auth,
+      tls: cfg.client?.tls as any
     });
 
     this.coordinator = new ReplicationCoordinator({
@@ -82,14 +100,15 @@ export class ClusterController {
     await this.clientServer.close();
   }
 
-  private resolveLeader(leaderId: string | null): { id: string; host: string; walStreamPort: number } | null {
+  private resolveLeader(leaderId: string | null): { id: string; host: string; walStreamPort: number; clientPort: number } | null {
     if (!leaderId) return null;
     if (leaderId === this.cfg.nodeId) {
-      return { id: this.cfg.nodeId, host: this.cfg.host, walStreamPort: this.cfg.walStreamPort, clientPort: this.cfg.clientPort } as any;
+      return { id: this.cfg.nodeId, host: this.cfg.host, walStreamPort: this.cfg.walStreamPort, clientPort: this.clientPort };
     }
     const p = this.cfg.peers.find(x => x.id === leaderId);
     if (!p) return null;
-    return { id: p.id, host: p.host, walStreamPort: p.walStreamPort, clientPort: (p as any).clientPort } as any;
+    const port = Math.max(1, Math.trunc(p.clientPort ?? (p.walStreamPort + 1)));
+    return { id: p.id, host: p.host, walStreamPort: p.walStreamPort, clientPort: port };
   }
 
   private async onRole(role: "leader" | "follower" | "candidate", leaderId: string | null) {
@@ -101,7 +120,7 @@ export class ClusterController {
 
     if (leaderKey !== prevKey) {
       this.currentLeader = leader;
-      (this.manager as any)._setClusterLeader?.(leader ? { id: leader.id, host: leader.host, walStreamPort: leader.walStreamPort } : null);
+      (this.manager as any)._setClusterLeader?.(leader ? { id: leader.id, host: leader.host, walStreamPort: leader.walStreamPort, clientPort: leader.clientPort } : null);
     }
 
     if (role === "leader") {

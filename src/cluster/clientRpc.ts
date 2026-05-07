@@ -1,9 +1,11 @@
 import * as net from "net";
+import * as tls from "tls";
+import fs from "fs";
 import { EventEmitter } from "events";
 import { LiorandbError, asLiorandbError, isLiorandbError } from "../utils/errors.js";
 import type { LioranManager } from "../LioranManager.js";
 
-type Req = { id: string; action: string; args: any };
+type Req = { id: string; action: string; args: any; token?: string };
 type Res = { id: string; ok: boolean; result?: any; error?: any };
 
 function jsonLine(obj: any) {
@@ -13,19 +15,51 @@ function jsonLine(obj: any) {
 export type ClusterRPCServerOptions = {
   host: string;
   port: number;
+  maxMessageBytes?: number;
+  auth?: { token?: string; required?: boolean };
+  tls?: {
+    keyPath: string;
+    certPath: string;
+    caPath?: string;
+    requestCert?: boolean;
+  };
 };
 
 export class ClusterRPCServer {
   private server: net.Server | null = null;
+  private maxMessageBytes: number;
+  private authToken: string | null;
+  private authRequired: boolean;
 
   constructor(
     private manager: LioranManager,
     private opts: ClusterRPCServerOptions
-  ) {}
+  ) {
+    this.maxMessageBytes = Math.max(1024, Math.trunc(opts.maxMessageBytes ?? 1024 * 1024));
+    this.authToken = opts.auth?.token ? String(opts.auth.token) : null;
+    this.authRequired = opts.auth?.required ?? false;
+  }
 
   async start(): Promise<void> {
     if (this.server) return;
-    this.server = net.createServer(socket => this.handleSocket(socket));
+    if (this.opts.tls) {
+      const key = fs.readFileSync(this.opts.tls.keyPath);
+      const cert = fs.readFileSync(this.opts.tls.certPath);
+      const ca = this.opts.tls.caPath ? fs.readFileSync(this.opts.tls.caPath) : undefined;
+      const srv = tls.createServer(
+        {
+          key,
+          cert,
+          ca: ca ? [ca] : undefined,
+          requestCert: !!this.opts.tls.requestCert,
+          rejectUnauthorized: false
+        },
+        socket => this.handleSocket(socket)
+      );
+      this.server = srv as any;
+    } else {
+      this.server = net.createServer(socket => this.handleSocket(socket));
+    }
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(this.opts.port, this.opts.host, () => resolve());
@@ -45,12 +79,20 @@ export class ClusterRPCServer {
     let buf = "";
     socket.on("data", (chunk: string) => {
       buf += chunk;
+      if (buf.length > this.maxMessageBytes) {
+        try { socket.destroy(); } catch {}
+        return;
+      }
       while (true) {
         const idx = buf.indexOf("\n");
         if (idx < 0) break;
         const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
         if (!line.trim()) continue;
+        if (line.length > this.maxMessageBytes) {
+          try { socket.destroy(); } catch {}
+          return;
+        }
         void this.onLine(socket, line);
       }
     });
@@ -69,8 +111,19 @@ export class ClusterRPCServer {
     }
 
     try {
-      // If not leader, return redirect info.
-      if ((this.manager as any).isPrimary?.() !== true) {
+      // Token auth (optional/required).
+      if (this.authToken) {
+        const got = typeof req.token === "string" ? req.token : "";
+        if (got !== this.authToken) {
+          throw new LiorandbError("VALIDATION_FAILED", "Unauthorized RPC request");
+        }
+      } else if (this.authRequired) {
+        throw new LiorandbError("VALIDATION_FAILED", "RPC auth required");
+      }
+
+      // Writes go to leader; reads may be served by followers based on consistency policy.
+      const primary = (this.manager as any).isPrimary?.() === true;
+      if (!primary && this.requiresLeader(req.action, req.args)) {
         const leader = (this.manager as any).clusterLeader ?? null;
         throw new LiorandbError("NOT_LEADER", "Not leader", { details: { leader } });
       }
@@ -81,6 +134,29 @@ export class ClusterRPCServer {
       const e = asLiorandbError(err, { code: "INTERNAL", message: "RPC failed", details: { action: req.action } });
       socket.write(jsonLine({ id: req.id, ok: false, error: e.toJSON() } satisfies Res));
     }
+  }
+
+  private requiresLeader(action: string, args: any): boolean {
+    // Default to leader-required for safety.
+    // `db` open is safe on followers (it does not write to leader state); writes still require leader via `op`.
+    if (action === "db") return false;
+    if (action === "db:meta") return true;
+
+    if (action === "op") {
+      const method = typeof args?.method === "string" ? args.method : "";
+      // Explicit read methods we allow on followers; bounded-stale enforcement happens inside the manager.
+      const readMethods = new Set([
+        "find",
+        "findOne",
+        "aggregate",
+        "explain",
+        "count",
+        "countDocuments"
+      ]);
+      return !readMethods.has(method);
+    }
+
+    return true;
   }
 
   private async execAction(action: string, args: any) {
@@ -116,6 +192,13 @@ export type ClusterRPCClientOptions = {
   host: string;
   port: number;
   timeoutMs?: number;
+  token?: string;
+  maxMessageBytes?: number;
+  tls?: {
+    caPath?: string;
+    servername?: string;
+    rejectUnauthorized?: boolean;
+  };
 };
 
 export class ClusterRPCClient {
@@ -124,7 +207,6 @@ export class ClusterRPCClient {
   private inflight = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void; timer?: NodeJS.Timeout }>();
   private connectedHost: string | null = null;
   private connectedPort: number | null = null;
-
   constructor(private opts: ClusterRPCClientOptions) {}
 
   private async connect(host: string, port: number) {
@@ -134,21 +216,41 @@ export class ClusterRPCClient {
     this.connectedHost = host;
     this.connectedPort = port;
 
-    this.socket = net.createConnection(port, host);
-    this.socket.setNoDelay(true);
-    this.socket.setEncoding("utf8");
-    this.socket.on("data", (chunk: string) => {
+    if (this.opts.tls) {
+      const ca = this.opts.tls.caPath ? fs.readFileSync(this.opts.tls.caPath) : undefined;
+      this.socket = tls.connect({
+        host,
+        port,
+        ca: ca ? [ca] : undefined,
+        servername: this.opts.tls.servername ?? host,
+        rejectUnauthorized: this.opts.tls.rejectUnauthorized ?? false
+      }) as any;
+    } else {
+      this.socket = net.createConnection(port, host);
+    }
+    const sock = this.socket!;
+    sock.setNoDelay(true);
+    sock.setEncoding("utf8");
+    sock.on("data", (chunk: string) => {
       this.buf += chunk;
+      if (this.buf.length > (this.opts.maxMessageBytes ?? 1024 * 1024)) {
+        try { this.socket?.destroy(); } catch {}
+        return;
+      }
       while (true) {
         const idx = this.buf.indexOf("\n");
         if (idx < 0) break;
         const line = this.buf.slice(0, idx);
         this.buf = this.buf.slice(idx + 1);
         if (!line.trim()) continue;
+        if (line.length > (this.opts.maxMessageBytes ?? 1024 * 1024)) {
+          try { this.socket?.destroy(); } catch {}
+          return;
+        }
         this.onLine(line);
       }
     });
-    this.socket.on("close", () => {
+    sock.on("close", () => {
       for (const [id, p] of this.inflight) {
         try { p.reject(new LiorandbError("IO_ERROR", "RPC socket closed", { details: { id } })); } catch {}
         if (p.timer) clearTimeout(p.timer);
@@ -160,8 +262,8 @@ export class ClusterRPCClient {
     });
 
     await new Promise<void>((resolve, reject) => {
-      this.socket!.once("connect", () => resolve());
-      this.socket!.once("error", reject);
+      sock.once("connect", () => resolve());
+      sock.once("error", reject);
     });
   }
 
@@ -204,7 +306,7 @@ export class ClusterRPCClient {
       this.inflight.set(id, { resolve, reject, timer });
     });
 
-    this.socket.write(jsonLine({ id, action, args } satisfies Req));
+    this.socket.write(jsonLine({ id, action, args, token: this.opts.token } satisfies Req));
 
     try {
       return await p;
@@ -227,4 +329,3 @@ export class ClusterRPCClient {
     }
   }
 }
-

@@ -52,8 +52,12 @@ export class ReplicaReplicator {
         this.streamStarted = true;
         await this.streamClient.start();
         this.streamClient.bindReplica(async name => {
-          // Ensure DB is open and passed instance is the same if already opened.
-          return (await this.manager.db(name)) as any;
+          // Ensure we bind to the *local* DB instance (replicas must apply WAL locally).
+          // In cluster follower mode, `manager.db()` returns a routing proxy, so bypass it.
+          const local = (this.manager as any).openDatabase
+            ? await (this.manager as any).openDatabase(name)
+            : await this.manager.db(name);
+          return local as any;
         }, {
           onProgress: (info) => {
             try {

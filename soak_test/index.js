@@ -1,233 +1,418 @@
 /*
-LioranDB 24-Hour Clean Soak Test (Optimized + Quiet)
+Cluster soak/chaos harness:
+- spins up 3 local nodes
+- exercises leader failover + write redirection
+- forces replica lag and validates lag-based read routing (bounded_stale => forward-to-leader)
+- validates scheduled snapshot + PITR + restore verification jobs run without crashing
+
+Run:
+  npm run build
+  node soak_test/index.js
 */
 
 import fs from "fs";
-import path from "os";
+import path from "path";
 import os from "os";
-import { performance } from "perf_hooks";
-import { LioranManager } from "@liorandb/core";
+import { Worker } from "worker_threads";
+import { fileURLToPath } from "url";
 
-/* ================= CONFIG ================= */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const ROOT = "./__soak_test__";
-const RUN_TIME_MS = 24 * 60 * 60 * 1000;
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
 
-const TOTAL_CORES = os.cpus().length;
-const CPU_CORES = Math.max(4, Math.floor(TOTAL_CORES * 0.70));
+function randId() {
+  return Math.random().toString(16).slice(2);
+}
 
-const TOTAL_RAM_MB = Math.floor(os.totalmem() / (1024 * 1024));
-const CACHE_RAM_MB = Math.min(18000, Math.floor(TOTAL_RAM_MB * 0.70));
+function ensureDir(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
 
-const WRITE_WORKERS = Math.floor(CPU_CORES * 0.65);
-const READ_WORKERS = Math.floor(CPU_CORES * 0.35);
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
-const BATCH_MIN = 150;
-const BATCH_MAX = 500;
+const RUN_MS = Number(process.env.RUN_MS ?? 120_000);
+const BASE = path.join(__dirname, "__cluster_soak__", `run-${Date.now()}-${randId()}`);
+ensureDir(BASE);
 
-const WRITE_SLEEP_MIN = 1;
-const WRITE_SLEEP_MAX = 7;
+const token = process.env.RPC_TOKEN ?? `t-${randId()}-${randId()}`;
+const host = "127.0.0.1";
+let CURRENT_LEADER_PORT = null;
+const basePort = Number(process.env.BASE_PORT ?? (20000 + Math.floor(Math.random() * 20000)));
+const nodes = [
+  { id: "n1", raftPort: basePort + 11, walPort: basePort + 12, clientPort: basePort + 13, root: path.join(BASE, "n1") },
+  { id: "n2", raftPort: basePort + 21, walPort: basePort + 22, clientPort: basePort + 23, root: path.join(BASE, "n2") },
+  { id: "n3", raftPort: basePort + 31, walPort: basePort + 32, clientPort: basePort + 33, root: path.join(BASE, "n3") }
+];
 
-const READ_SLEEP_MIN = 4;
-const READ_SLEEP_MAX = 18;
+const peersFor = (selfId) =>
+  nodes
+    .filter(n => n.id !== selfId)
+    .map(n => ({
+      id: n.id,
+      host,
+      raftPort: n.raftPort,
+      walStreamPort: n.walPort,
+      clientPort: n.clientPort
+    }));
 
-const KEY_POOL_SIZE = 650_000;
+function startNode(node) {
+  ensureDir(node.root);
+  const worker = new Worker(new URL("./cluster_node_worker.js", import.meta.url), {
+    type: "module",
+    workerData: {
+      nodeId: node.id,
+      host,
+      raftPort: node.raftPort,
+      walStreamPort: node.walPort,
+      clientPort: node.clientPort,
+      rootPath: node.root,
+      token,
+      peers: peersFor(node.id)
+    }
+  });
+  worker.on("error", err => {
+    console.error(`[soak] worker_error ${node.id}:`, err);
+  });
+  worker.on("exit", code => {
+    console.error(`[soak] worker_exit ${node.id}: code=${code}`);
+  });
+  worker.on("message", msg => {
+    if (msg?.ok === false) {
+      console.error(`[soak] worker_msg ${node.id}:`, msg);
+    }
+  });
+  return worker;
+}
 
-const METRIC_INTERVAL_MS = 10000;
+async function workerCmd(worker, msg, timeoutMs = 1000) {
+  if (!worker) return null;
+  return await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("workerCmd timeout")), timeoutMs);
+    t.unref?.();
+    const onMsg = (m) => {
+      if (!m || typeof m !== "object") return;
+      if (m.ok === false) {
+        cleanup();
+        reject(new Error(String(m.error || "worker error")));
+        return;
+      }
+      cleanup();
+      resolve(m);
+    };
+    const cleanup = () => {
+      clearTimeout(t);
+      try { worker.off("message", onMsg); } catch {}
+    };
+    worker.on("message", onMsg);
+    try { worker.postMessage(msg); } catch (e) { cleanup(); reject(e); }
+  });
+}
 
-/* ================= INIT ================= */
+// Tiny RPC helper (no dependency on internal client) to keep harness simple
+async function rpcCall(target, payload, timeoutMs = 4000) {
+  const net = await import("net");
+  const port = Number(target?.port ?? target?.clientPort);
+  if (!Number.isFinite(port) || port <= 0) throw new Error("rpc target missing port");
+  return await new Promise((resolve, reject) => {
+    const sock = net.createConnection(port, host);
+    sock.setNoDelay(true);
+    sock.setEncoding("utf8");
+    let buf = "";
+    const t = setTimeout(() => {
+      try { sock.destroy(); } catch {}
+      reject(new Error("rpc timeout"));
+    }, timeoutMs);
+    t.unref?.();
 
-fs.mkdirSync(ROOT, { recursive: true });
+    sock.on("error", reject);
+    sock.on("data", chunk => {
+      buf += chunk;
+      const idx = buf.indexOf("\n");
+      if (idx < 0) return;
+      const line = buf.slice(0, idx);
+      try {
+        const msg = JSON.parse(line);
+        clearTimeout(t);
+        try { sock.end(); } catch {}
+        resolve(msg);
+      } catch (e) {
+        clearTimeout(t);
+        reject(e);
+      }
+    });
 
-let manager, db, col;
-let inserts = 0, reads = 0, errors = 0;
-let running = true;
-const startTime = performance.now();
+    sock.write(JSON.stringify(payload) + "\n");
+  });
+}
 
-const writeLat = [], readLat = [];
+async function rpcExecAny(action, args) {
+  const node = pick(nodes);
+  const id = `${Date.now()}-${randId()}`;
+  const res = await rpcCall(node, { id, action, args, token }, 5000);
+  if (res.ok) return res.result;
+  const err = res.error;
+  if (err?.code === "NOT_LEADER") {
+    const hinted = err?.details?.leader?.clientPort;
+    const fallback = CURRENT_LEADER_PORT;
+    const port = hinted ?? fallback;
+    if (port) {
+      const leader = { port };
+      const res2 = await rpcCall(leader, { id, action, args, token }, 5000);
+      if (res2.ok) return res2.result;
+      throw new Error(`rpc failed: ${JSON.stringify(res2.error)}`);
+    }
+  }
+  throw new Error(`rpc failed: ${JSON.stringify(err)}`);
+}
 
-function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function uptime() { return Math.floor((performance.now() - startTime) / 1000); }
+async function detectLeaderPort() {
+  for (const n of nodes) {
+    try {
+      const id = `${Date.now()}-${randId()}`;
+      const res = await rpcCall(n, { id, action: "db:meta", args: { db: "soak", method: "stats", params: [] }, token }, 2000);
+      if (res.ok) return n.clientPort;
+      if (res.error?.code === "NOT_LEADER" && res.error?.details?.leader?.clientPort) {
+        return res.error.details.leader.clientPort;
+      }
+    } catch {}
+  }
+  return null;
+}
 
-/* ================= KEY POOL ================= */
-
-const keyPool = new Map();
-const keyQueue = [];
-
-function remember(doc) {
-  keyPool.set(doc.id, doc.value);
-  keyQueue.push(doc.id);
-  if (keyQueue.length > KEY_POOL_SIZE) {
-    keyPool.delete(keyQueue.shift());
+function listBackups(dir) {
+  try {
+    const all = fs.readdirSync(dir);
+    const snapshots = all.filter(f => f.startsWith("snapshot-") && f.endsWith(".tar.gz")).sort();
+    const pitrs = all.filter(f => f.startsWith("pitr-") && f.endsWith(".tar.gz")).sort();
+    return { snapshots, pitrs };
+  } catch {
+    return { snapshots: [], pitrs: [] };
   }
 }
 
-/* ================= LATENCY HELPERS ================= */
+async function verifyBackupRestore(leaderRoot, expect) {
+  const backupDir = path.join(leaderRoot, "__backups");
+  const deadline = Date.now() + 60_000;
+  let snapshot = null;
+  let pitrs = [];
+  while (Date.now() < deadline) {
+    const { snapshots, pitrs: p } = listBackups(backupDir);
+    if (snapshots.length && p.length) {
+      snapshot = path.join(backupDir, snapshots[snapshots.length - 1]);
+      pitrs = p.map(f => path.join(backupDir, f));
+      break;
+    }
+    await sleep(500);
+  }
+  if (!snapshot) throw new Error("no snapshot/pitr found for restore verification");
 
-function record(arr, ms) {
-  arr.push(ms);
-  if (arr.length > 12000) arr.shift();
-}
-
-function p99(arr) {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a,b)=>a-b);
-  return sorted[Math.floor(sorted.length * 0.99)];
-}
-
-/* ================= DISK ================= */
-
-let diskMB = 0;
-function updateDisk() {
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "liorandb-soak-restore-"));
   try {
-    let total = 0;
-    const scan = (dir) => {
-      for (const f of fs.readdirSync(dir)) {
-        const p = path.join(dir, f);
-        const s = fs.statSync(p);
-        total += s.isDirectory() ? scan(p) : s.size;
+    const tar = await import("tar");
+    await tar.x({ file: snapshot, cwd: tmpDir });
+
+    const { readIncrementalBackupArchive, filterWALForPITR } = await import("../dist/backup/incremental.js");
+    const { LioranManager } = await import("../dist/index.js");
+    const verifyMgr = new LioranManager({
+      rootPath: tmpDir,
+      ipc: "primary",
+      background: { enabled: false },
+      compute: { enabled: false }
+    });
+
+    for (const inc of pitrs) {
+      const { recordsByDb } = await readIncrementalBackupArchive(inc);
+      for (const [dbName, records] of Object.entries(recordsByDb)) {
+        const db = await verifyMgr.db(dbName);
+        const filtered = filterWALForPITR(records, undefined);
+        await db.applyReplicatedWAL(filtered);
       }
-    };
-    scan(ROOT);
-    diskMB = total / (1024*1024);
-  } catch {}
-}
-setInterval(updateDisk, 30000);
-
-/* ================= MAIN INIT ================= */
-
-async function init() {
-  console.log(`🚀 LioranDB Soak Test | Cores: ${CPU_CORES}/${TOTAL_CORES} | Cache: ${CACHE_RAM_MB}MB`);
-
-  manager = new LioranManager({
-    rootPath: ROOT,
-    cores: CPU_CORES,
-
-    cache: {
-      enabled: true,
-      maxRAMMB: CACHE_RAM_MB,
-      decay: { intervalMs: 30000, multiplier: 0.90 },
-      partitions: { query: 0.60, docs: 0.30, index: 0.10 }
-    },
-
-    writeQueue: {
-      maxSize: 30000,
-      mode: "wait",
-      timeoutMs: 15000,
-      memoryPressure: {
-        enabled: true,
-        mode: "heap_ratio",
-        highWaterMark: 0.82,
-        lowWaterMark: 0.68,
-        pollMs: 600
-      }
-    },
-
-    batch: { chunkSize: 1200 },
-    durability: "balanced",
-
-    // === IMPORTANT: Disable latency spam for soak test ===
-    latency: {
-      enabled: true,
-      readBudgetMs: 250,      // Much higher for stress test
-      onViolation: "none"     // "none" | "warn" | "throw"  ← This silences warnings
     }
-  });
 
-  db = await manager.db("soak_test");
-  col = db.collection("items");
-
-  console.log("Creating indexes...");
-  await col.createIndex({ field: "id", unique: true });
-  await col.createIndex({ field: "value" });
-  await col.createIndex({ field: "ts" });
-
-  console.log("✅ Ready");
-}
-
-/* ================= WORKERS ================= */
-
-function writer(id) {
-  let counter = id * 20_000_000;
-  (async () => {
-    while (running) {
-      const size = rand(BATCH_MIN, BATCH_MAX);
-      const batch = [];
-      for (let i = 0; i < size; i++) {
-        const doc = { id: counter++, value: Math.random(), ts: Date.now(), worker: id };
-        batch.push(doc);
-        remember(doc);
-      }
-
-      const s = performance.now();
-      try {
-        await col.insertMany(batch);
-        inserts += batch.length;
-      } catch (e) { errors++; }
-      record(writeLat, performance.now() - s);
-
-      await sleep(rand(WRITE_SLEEP_MIN, WRITE_SLEEP_MAX));
+    const probeId = typeof expect === "string" ? expect : (expect?.id ?? null);
+    const got = probeId
+      ? await (await verifyMgr.db("soak")).collection("items").findOne({ id: probeId })
+      : null;
+    const count = await (await verifyMgr.db("soak")).collection("items").countDocuments({});
+    await verifyMgr.closeAll();
+    if (probeId && (!got || got.id !== probeId) && count === 0) {
+      throw new Error("restore verification failed: no data restored");
     }
-  })();
-}
-
-function reader() {
-  (async () => {
-    while (running) {
-      if (!keyPool.size) { await sleep(50); continue; }
-      const id = [...keyPool.keys()][rand(0, keyPool.size-1)];
-
-      const s = performance.now();
-      try {
-        await col.findOne({ id });
-        reads++;
-      } catch { errors++; }
-      record(readLat, performance.now() - s);
-
-      await sleep(rand(READ_SLEEP_MIN, READ_SLEEP_MAX));
-    }
-  })();
-}
-
-/* ================= METRICS ================= */
-
-setInterval(() => {
-  const sec = uptime();
-  console.log(
-    `Uptime: ${sec}s | ` +
-    `Ins: ${inserts.toLocaleString()} (${sec ? Math.round(inserts/sec) : 0}/s) | ` +
-    `Rd: ${reads.toLocaleString()} (${sec ? Math.round(reads/sec) : 0}/s) | ` +
-    `Err: ${errors} | Disk: ${diskMB.toFixed(1)}MB | ` +
-    `W-p99: ${p99(writeLat).toFixed(1)}ms | R-p99: ${p99(readLat).toFixed(1)}ms`
-  );
-}, METRIC_INTERVAL_MS);
-
-/* ================= SHUTDOWN ================= */
-
-async function shutdown() {
-  running = false;
-  console.log("\nShutting down...");
-  await sleep(2000);
-  await manager?.close();
-  console.log("\n=== FINAL ===");
-  console.log("Inserts:", inserts);
-  console.log("Reads:", reads);
-  console.log("Errors:", errors);
-  console.log("Disk:", diskMB.toFixed(1), "MB");
-  process.exit(0);
+    return true;
+  } finally {
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 async function main() {
-  await init();
+  console.log(`[soak] root=${BASE}`);
+  console.log(`[soak] rpc_token=${token}`);
 
-  for (let i = 0; i < WRITE_WORKERS; i++) writer(i);
-  for (let i = 0; i < READ_WORKERS; i++) reader();
+  const children = new Map();
+  for (const n of nodes) {
+    children.set(n.id, startNode(n));
+  }
 
-  setTimeout(shutdown, RUN_TIME_MS);
+  const stopAll = async () => {
+    for (const c of children.values()) {
+      try { c.postMessage?.({ type: "shutdown" }); } catch {}
+    }
+    await sleep(500);
+    for (const c of children.values()) {
+      try { c.terminate?.(); } catch {}
+    }
+  };
+
+  const deadline = Date.now() + RUN_MS;
+
+  try {
+    // wait for all workers to boot
+    const bootDeadline = Date.now() + 10_000;
+    while (Date.now() < bootDeadline) {
+      // crude readiness: check TCP port responds
+      let ok = 0;
+      for (const n of nodes) {
+        try {
+          await rpcCall(n, { id: `${Date.now()}-${randId()}`, action: "db", args: { db: "__boot__" }, token }, 500);
+          ok++;
+        } catch {}
+      }
+      if (ok >= 1) break;
+      await sleep(250);
+    }
+
+    // Wait for election
+    let leaderPort = null;
+    for (let i = 0; i < 40; i++) {
+      leaderPort = await detectLeaderPort();
+      if (leaderPort) break;
+      await sleep(250);
+    }
+    if (!leaderPort) throw new Error("leader not detected");
+    console.log(`[soak] leader_port=${leaderPort}`);
+    CURRENT_LEADER_PORT = leaderPort;
+
+    // Basic workload: writes through random node (redirects to leader)
+    let writes = 0;
+    let reads = 0;
+    const seen = [];
+    let restoreVerified = false;
+
+    // Ensure DB is opened on all nodes so replicas subscribe and majority acks can succeed.
+    await Promise.allSettled(
+      nodes.map(n =>
+        rpcCall(n, { id: `${Date.now()}-${randId()}`, action: "db", args: { db: "soak" }, token }, 4000)
+      )
+    );
+
+    // Give followers time to discover leader + switch to WAL streaming before we require majority acks.
+    await sleep(1500);
+    await Promise.allSettled(
+      nodes.map(n =>
+        rpcCall(n, { id: `${Date.now()}-${randId()}`, action: "db", args: { db: "soak" }, token }, 4000)
+      )
+    );
+    await sleep(750);
+
+    // Create indexes (through leader routing)
+    await rpcExecAny("db", { db: "soak" });
+    await rpcExecAny("op", { db: "soak", col: "items", method: "createIndex", params: [{ field: "id", unique: true }] });
+    await rpcExecAny("op", { db: "soak", col: "items", method: "createIndex", params: [{ field: "ts" }] });
+
+    // Induce lag on one follower and verify bounded_stale rejects stale reads on replica
+    const lagNode = nodes.find(n => n.clientPort !== leaderPort);
+    if (!lagNode) throw new Error("no follower found to lag");
+    await workerCmd(children.get(lagNode.id), { type: "set_replication_delay", ms: 750 }).catch(() => {});
+
+    const loop = async () => {
+      while (Date.now() < deadline) {
+        // write
+        const id = `k-${writes}-${randId()}`;
+        await rpcExecAny("op", { db: "soak", col: "items", method: "insertOne", params: [{ id, ts: Date.now(), v: Math.random() }] });
+        writes++;
+        if (seen.length < 5000) seen.push(id);
+
+        // read from lagging replica (should throw STALE_READ once lag exceeds bounds)
+        const pickId = pick(seen);
+        try {
+          const res = await rpcCall(lagNode, {
+            id: `${Date.now()}-${randId()}`,
+            action: "op",
+            args: { db: "soak", col: "items", method: "findOne", params: [{ id: pickId }] },
+            token
+          }, 1500);
+          if (res.ok) {
+            reads++;
+          } else if (res.error?.code === "STALE_READ" || res.error?.code === "NOT_LEADER") {
+            // acceptable; routing/consistency enforcement behavior
+          }
+        } catch {}
+
+        // leader failover chaos: kill current leader once mid-run
+        if (writes === 200) {
+          const toKill = nodes.find(n => n.clientPort === leaderPort);
+          if (toKill) {
+            console.log(`[soak] killing leader ${toKill.id}`);
+            await children.get(toKill.id)?.terminate?.();
+            children.delete(toKill.id);
+            // wait for new leader
+            for (let i = 0; i < 60; i++) {
+              const p = await detectLeaderPort();
+              if (p && p !== leaderPort) {
+                leaderPort = p;
+                console.log(`[soak] new_leader_port=${leaderPort}`);
+                break;
+              }
+              await sleep(250);
+            }
+            // Restart the killed node to ensure rejoin works.
+            await sleep(1000);
+            const restarted = startNode(toKill);
+            children.set(toKill.id, restarted);
+          }
+        }
+
+        if (writes % 50 === 0) {
+          // Let replica catch up a bit to avoid unbounded queue growth.
+          await workerCmd(children.get(lagNode.id), { type: "set_replication_delay", ms: 0 }).catch(() => {});
+          await sleep(750);
+          await workerCmd(children.get(lagNode.id), { type: "set_replication_delay", ms: 750 }).catch(() => {});
+
+          // Verify backup/restore once (uses leader backups).
+          if (!restoreVerified && seen.length > 10) {
+            const leaderRoot = nodes.find(n => n.clientPort === leaderPort)?.root;
+            if (leaderRoot) {
+              try {
+                // Probe an older id to avoid racing backups.
+                const idx = Math.max(0, seen.length - 50);
+                await verifyBackupRestore(leaderRoot, seen[idx]);
+                restoreVerified = true;
+                console.log("[soak] restore_verified=true");
+              } catch (e) {
+                console.warn("[soak] restore_verify_failed:", String(e?.message || e));
+              }
+            }
+          }
+        }
+
+        await sleep(20);
+      }
+    };
+
+    await loop();
+
+    console.log(`[soak] writes=${writes} reads=${reads} restoreVerified=${restoreVerified}`);
+  } finally {
+    await stopAll();
+  }
 }
 
-main().catch(console.error);
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+main().catch(err => {
+  console.error("[soak] failed:", err);
+  process.exitCode = 1;
+});

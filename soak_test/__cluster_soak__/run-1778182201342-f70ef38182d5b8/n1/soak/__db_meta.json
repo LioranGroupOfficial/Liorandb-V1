@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "indexes": {
+    "items": [
+      {
+        "field": "id",
+        "options": {
+          "unique": true
+        },
+        "type": "btree"
+      },
+      {
+        "field": "_id",
+        "options": {
+          "unique": true
+        },
+        "type": "btree"
+      },
+      {
+        "field": "ts",
+        "options": {
+          "unique": false
+        },
+        "type": "btree"
+      }
+    ]
+  },
+  "schemaVersion": "v1"
+}

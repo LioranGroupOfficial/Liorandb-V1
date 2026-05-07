@@ -19,6 +19,8 @@ import { resolveTenantLimits, type TenantLimits, type TenancyConfig } from "./ut
 import { SecurityContextManager, type Principal } from "./security/context.js";
 import { defaultAuthorize, type AuthorizeHook, type SecurityAction } from "./security/authorize.js";
 import { AuditSink } from "./audit/sink.js";
+import { ClusterRPCClient } from "./cluster/clientRpc.js";
+import { isMainThread } from "worker_threads";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -149,7 +151,8 @@ export class LioranManager {
   private replicaReplicator?: import("./replication/replicator.js").ReplicaReplicator;
   private clusterController?: ClusterController;
   private replicationCoordinator?: ReplicationCoordinator;
-  private clusterLeader: { id: string; host: string; walStreamPort: number } | null = null;
+  private clusterLeader: { id: string; host: string; walStreamPort: number; clientPort: number } | null = null;
+  private clusterRpcClient?: ClusterRPCClient;
 
   constructor(options: LioranManagerOptions = {}) {
     const { rootPath, encryptionKey, ipc } = options;
@@ -193,7 +196,6 @@ export class LioranManager {
       // Start as follower/replica until a leader is elected.
       this.mode = ProcessMode.REPLICA;
       this._registerShutdownHooks();
-      void this._ensureIpcServer();
       void this._ensureReplicaReplicator();
       void this._ensureClusterController();
       return;
@@ -381,7 +383,7 @@ export class LioranManager {
     await this.replicationCoordinator?.awaitMajority(dbName, lsn);
   }
 
-  _setClusterLeader(leader: { id: string; host: string; walStreamPort: number } | null) {
+  _setClusterLeader(leader: { id: string; host: string; walStreamPort: number; clientPort: number } | null) {
     this.clusterLeader = leader;
   }
 
@@ -396,6 +398,7 @@ export class LioranManager {
       host: c.host,
       raftPort: c.raftPort,
       walStreamPort: c.walStreamPort,
+      clientPort: (c as any).clientPort,
       peers: c.peers ?? [],
       heartbeatMs: c.heartbeatMs,
       electionTimeoutMs: c.electionTimeoutMs,
@@ -415,10 +418,11 @@ export class LioranManager {
     this.replicaReplicator = undefined;
 
     // Reopen DBs in primary mode (constructor captures role).
-    await this.closeAll();
+    await this._closeDatabasesOnly();
 
     this._registerShutdownHooks();
     await this._ensureIpcServer();
+    this._ensureBackgroundScheduler();
     this._ensureComputePool();
   }
 
@@ -430,13 +434,28 @@ export class LioranManager {
       walStream: { host: leaderHost, port: walStreamPort }
     };
 
-    // Reopen DBs in replica mode (constructor captures role).
-    await this.closeAll();
-
     // Reset and restart replicator against the new leader.
     try { this.replicaReplicator?.stop(); } catch {}
     this.replicaReplicator = undefined;
     await this._ensureReplicaReplicator();
+
+    // Ensure already-open DBs subscribe to the new leader stream.
+    const r: any = this.replicaReplicator as any;
+    for (const [name, db] of this.openDBs.entries()) {
+      try { r?.ensure?.(name, db as any); } catch {}
+    }
+  }
+
+  private async _closeDatabasesOnly(): Promise<void> {
+    // Used for cluster role changes; must NOT close lifecycle/cache or mark manager closed.
+    for (const db of this.openDBs.values()) {
+      try { await db.close(); } catch {}
+    }
+    this.openDBs.clear();
+    for (const unsub of this.auditUnsubByDb.values()) {
+      try { unsub(); } catch {}
+    }
+    this.auditUnsubByDb.clear();
   }
 
   async _compute<T>(task: any): Promise<T> {
@@ -544,7 +563,60 @@ export class LioranManager {
       return new IPCDatabase(name, (action, args) => queue.exec(action, args)) as any;
     }
 
+    // Cluster follower: serve reads locally but auto-route writes/meta to leader.
+    if (this.mode === ProcessMode.REPLICA && this.options.cluster?.enabled) {
+      const local = await this.openDatabase(name);
+      return new ClusterDatabase(
+        name,
+        local as any,
+        (action, args) => this._clusterExec(action, args),
+        () => this._shouldReadFromLeader(name)
+      ) as any;
+    }
+
     return this.openDatabase(name);
+  }
+
+  private _shouldReadFromLeader(dbName: string): boolean {
+    const mode = this.options.consistency?.reads?.mode ?? "stale_ok";
+    if (mode === "leader_only") return true;
+    if (mode !== "bounded_stale") return false;
+
+    const maxLagLSN = Math.max(0, Math.trunc(this.options.consistency?.reads?.maxLagLSN ?? 0));
+    const maxLagMs = Math.max(0, Math.trunc(this.options.consistency?.reads?.maxLagMs ?? 0));
+    const autoDegrade = !!this.options.consistency?.reads?.autoDegradeToStaleOk;
+    if (autoDegrade) return false;
+
+    const snap = this.metrics.snapshot(dbName)?.replication ?? {};
+    const lagLSN = Math.max(0, Math.trunc((snap as any).replicaWalLag ?? 0));
+    const lagMs = Math.max(0, Math.trunc((snap as any).replicaDelayMs ?? 0));
+    const tooFarLSN = maxLagLSN > 0 && lagLSN > maxLagLSN;
+    const tooFarMs = maxLagMs > 0 && lagMs > maxLagMs;
+    return tooFarLSN || tooFarMs;
+  }
+
+  private async _clusterExec(action: string, args: any) {
+    const leader = this.clusterLeader;
+    if (!leader) {
+      throw new LiorandbError("NOT_LEADER", "Cluster leader is unknown", { details: { leader: null } });
+    }
+    if (!this.clusterRpcClient) {
+      const clientCfg: any = (this.options.cluster as any)?.client ?? {};
+      this.clusterRpcClient = new ClusterRPCClient({
+        host: leader.host,
+        port: leader.clientPort,
+        timeoutMs: 2000,
+        token: clientCfg?.auth?.token ? String(clientCfg.auth.token) : undefined,
+        maxMessageBytes: clientCfg?.maxMessageBytes,
+        tls: clientCfg?.tls ? {
+          caPath: clientCfg.tls.caPath,
+          servername: clientCfg.tls.servername,
+          rejectUnauthorized: clientCfg.tls.rejectUnauthorized
+        } : undefined
+      });
+      this.lifecycle.register(() => this.clusterRpcClient?.close());
+    }
+    return this.clusterRpcClient.exec(action, args, { host: leader.host, port: leader.clientPort });
   }
 
   async openDatabase(name: string): Promise<LioranDB> {
@@ -818,19 +890,24 @@ export class LioranManager {
       await this.closeAll();
     };
 
-    const onSigint = () => void shutdown();
-    const onSigterm = () => void shutdown();
-    const onBeforeExit = () => void shutdown();
+    // In worker threads, `beforeExit` can fire while async cluster startup is still in-flight,
+    // which can race-close the manager and crash role transitions. Only bind process hooks
+    // on the main thread.
+    if (isMainThread) {
+      const onSigint = () => void shutdown();
+      const onSigterm = () => void shutdown();
+      const onBeforeExit = () => void shutdown();
 
-    process.once("SIGINT", onSigint);
-    process.once("SIGTERM", onSigterm);
-    process.once("beforeExit", onBeforeExit);
+      process.once("SIGINT", onSigint);
+      process.once("SIGTERM", onSigterm);
+      process.once("beforeExit", onBeforeExit);
 
-    this.shutdownHookCleanup = () => {
-      process.off("SIGINT", onSigint);
-      process.off("SIGTERM", onSigterm);
-      process.off("beforeExit", onBeforeExit);
-    };
+      this.shutdownHookCleanup = () => {
+        process.off("SIGINT", onSigint);
+        process.off("SIGTERM", onSigterm);
+        process.off("beforeExit", onBeforeExit);
+      };
+    }
 
     this.lifecycle.register(() => {
       try {
@@ -905,4 +982,78 @@ class IPCCollection {
   countDocuments = (filter?: any) =>
     this.call("countDocuments", [filter]);
   count = () => this.call("count", []);
+}
+
+/* ---------------- CLUSTER PROXY DB (Follower auto-routing) ---------------- */
+
+class ClusterDatabase {
+  constructor(
+    private name: string,
+    private local: any,
+    private exec: (action: string, args: any) => Promise<any>,
+    private readFromLeader: () => boolean
+  ) {}
+
+  collection(name: string) {
+    return new ClusterCollection(this.name, name, this.local.collection(name), this.exec, this.readFromLeader);
+  }
+
+  private async callLocalOrRemote(method: string, params: any[]) {
+    if (this.readFromLeader()) {
+      return this.exec("db:meta", { db: this.name, method, params });
+    }
+    return (this.local as any)[method](...(params ?? []));
+  }
+
+  explain = (collection: string, query?: any, options?: any) =>
+    this.callLocalOrRemote("explain", [collection, query, options]);
+
+  maintenance = (options?: { aggressive?: boolean }) =>
+    this.exec("db:meta", { db: this.name, method: "maintenance", params: [options ?? {}] });
+
+  rotateEncryptionKey = (newKey: string | Buffer) =>
+    this.exec("db:meta", { db: this.name, method: "rotateEncryptionKey", params: [newKey] });
+}
+
+class ClusterCollection {
+  constructor(
+    private db: string,
+    private col: string,
+    private local: any,
+    private exec: (action: string, args: any) => Promise<any>,
+    private readFromLeader: () => boolean
+  ) {}
+
+  private callRemote(method: string, params: any[]) {
+    return this.exec("op", { db: this.db, col: this.col, method, params });
+  }
+
+  private callLocal(method: string, params: any[]) {
+    return (this.local as any)[method](...(params ?? []));
+  }
+
+  insertOne = (doc: any) => this.callRemote("insertOne", [doc]);
+  insertMany = (docs: any[], options?: any) => this.callRemote("insertMany", [docs, options]);
+  updateOne = (filter: any, update: any, options?: any) => this.callRemote("updateOne", [filter, update, options]);
+  updateMany = (filter: any, update: any) => this.callRemote("updateMany", [filter, update]);
+  deleteOne = (filter: any) => this.callRemote("deleteOne", [filter]);
+  deleteMany = (filter: any) => this.callRemote("deleteMany", [filter]);
+
+  find = (query?: any, options?: any) =>
+    this.readFromLeader() ? this.callRemote("find", [query, options]) : this.callLocal("find", [query, options]);
+
+  findOne = (query?: any, options?: any) =>
+    this.readFromLeader() ? this.callRemote("findOne", [query, options]) : this.callLocal("findOne", [query, options]);
+
+  aggregate = (pipeline: any[]) =>
+    this.readFromLeader() ? this.callRemote("aggregate", [pipeline]) : this.callLocal("aggregate", [pipeline]);
+
+  explain = (query?: any, options?: any) =>
+    this.readFromLeader() ? this.callRemote("explain", [query, options]) : this.callLocal("explain", [query, options]);
+
+  countDocuments = (filter?: any) =>
+    this.readFromLeader() ? this.callRemote("countDocuments", [filter]) : this.callLocal("countDocuments", [filter]);
+
+  count = () =>
+    this.readFromLeader() ? this.callRemote("count", []) : this.callLocal("count", []);
 }
