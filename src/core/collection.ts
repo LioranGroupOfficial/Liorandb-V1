@@ -22,6 +22,7 @@ import { LiorandbError, asLiorandbError } from "../utils/errors.js";
 import { BlobStore, type TieredStorageOptions } from "./blobstore.js";
 import type { LCRCache } from "./lcrCache.js";
 import { withLatencyBudget, type LatencyViolationMode } from "../utils/latency.js";
+import { assertDocSizeWithinLimits } from "../utils/tenancy.js";
 
 /* ===================== SCHEMA VERSIONING ===================== */
 
@@ -59,6 +60,23 @@ export interface CollectionOptions {
     enabled?: boolean;
     readBudgetMs?: number;
     onViolation?: LatencyViolationMode;
+  };
+  admission?: {
+    read?: <R>(task: () => Promise<R>) => Promise<R>;
+    write?: <R>(task: () => Promise<R>) => Promise<R>;
+    maintenance?: <R>(task: () => Promise<R>) => Promise<R>;
+  };
+  compute?: {
+    exec?: <R>(task: any) => Promise<R>;
+  };
+  tenancy?: {
+    getLimits?: () => { maxDocBytes: number; maxBlobBytes: number };
+  };
+  security?: {
+    read?: () => void;
+    write?: (op?: string) => void;
+    index?: (op: "create" | "drop" | "rebuild", field?: string) => void;
+    maintenance?: (op: string) => void;
   };
   metrics?: any;
   dbName?: string;
@@ -107,6 +125,10 @@ export class Collection<T = any> {
   private indexes = new Map<string, Index>();
   private textIndexes = new Map<string, TextIndex>();
   private readonlyMode: boolean;
+  private admission?: CollectionOptions["admission"];
+  private compute?: CollectionOptions["compute"];
+  private tenancy?: CollectionOptions["tenancy"];
+  private security?: CollectionOptions["security"];
   private get globalQueryCache(): LCRCache<any[]> | null {
     const engine = (this as any)._cacheEngine as import("./cacheEngine.js").GlobalCacheEngine | undefined;
     if (!engine || !engine.isEnabled()) return null;
@@ -149,8 +171,17 @@ export class Collection<T = any> {
     (this as any)._leveldbOptions = this.leveldbOptions;
     this.metrics = options?.metrics;
     this.dbName = options?.dbName;
+    this.admission = options?.admission;
+    this.compute = options?.compute;
+    this.tenancy = options?.tenancy;
+    this.security = options?.security;
     if (options?.tieredStorage) {
-      this.blobStore = new BlobStore(this.dir, options.tieredStorage);
+      const limits = this.tenancy?.getLimits?.();
+      const merged: TieredStorageOptions = {
+        ...options.tieredStorage,
+        maxBlobBytes: limits?.maxBlobBytes
+      };
+      this.blobStore = new BlobStore(this.dir, merged);
       this.blobStore.validateConfig();
     }
     this.batchChunkSize = Math.max(1, Math.trunc(options?.batchChunkSize ?? 500));
@@ -168,6 +199,7 @@ export class Collection<T = any> {
 
     // injected by LioranDB when created via DB-managed collections
     (this as any)._cacheEngine = options?.cacheEngine;
+    (this as any)._computeExec = options?.compute?.exec;
   }
 
   /* ===================== INTERNAL ===================== */
@@ -255,7 +287,8 @@ export class Collection<T = any> {
   /* ===================== WRITE SERIALIZATION ===================== */
 
   private _enqueueWrite<R>(task: () => Promise<R>): Promise<R> {
-    const resultPromise = this.writeQueue.then(task);
+    const runOne = () => (this.admission?.write ? this.admission.write(task) : task());
+    const resultPromise = this.writeQueue.then(runOne);
     this.writeQueue = resultPromise.then(
       () => undefined,
       () => undefined
@@ -376,20 +409,25 @@ export class Collection<T = any> {
     const mode = this.latency?.onViolation;
     const startedAt = Date.now();
 
-    if (this.scheduler) {
-      return withLatencyBudget(`read:${this.dir}`, budget, mode, async () => {
+    const runOne = async () => {
+      try { this.security?.read?.(); } catch {}
+      if (this.scheduler) {
         const result = await this.scheduler!.maintenance(task);
         try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
         return result;
-      });
-    }
+      }
 
-    // Best-effort read-after-write consistency for local (non-scheduler) mode.
-    return withLatencyBudget(`read:${this.dir}`, budget, mode, async () => {
+      // Best-effort read-after-write consistency for local (non-scheduler) mode.
       const result = await this.writeQueue.then(task);
       try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
       return result;
-    });
+    };
+
+    const admitted = this.admission?.read
+      ? () => this.admission!.read!(runOne)
+      : runOne;
+
+    return withLatencyBudget(`read:${this.dir}`, budget, mode, admitted);
   }
 
   /* ===================== COMPACTION ===================== */
@@ -500,6 +538,11 @@ export class Collection<T = any> {
     this.assertWritable();
     await this.ensureMetaLoaded();
 
+    const limits = this.tenancy?.getLimits?.();
+    if (limits?.maxDocBytes) {
+      assertDocSizeWithinLimits(doc, limits.maxDocBytes, { op: "insertOne" });
+    }
+
     const _id = doc._id ?? uuid();
     if (String(_id).startsWith(META_KEY_PREFIX)) {
       throw new LiorandbError(
@@ -516,7 +559,7 @@ export class Collection<T = any> {
       });
     }
 
-    const externalized = this.blobStore ? this.blobStore.externalizeDoc(doc).doc : doc;
+    const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(doc)).doc : doc;
 
     const final = this.validate({
       _id,
@@ -568,6 +611,13 @@ export class Collection<T = any> {
     this.assertWritable();
     await this.ensureMetaLoaded();
 
+    const limits = this.tenancy?.getLimits?.();
+    if (limits?.maxDocBytes) {
+      for (const d of docs) {
+        assertDocSizeWithinLimits(d, limits.maxDocBytes, { op: "insertMany" });
+      }
+    }
+
     const batch: any[] = [];
     const out = [];
     const seenIds = new Set<string>();
@@ -597,7 +647,7 @@ export class Collection<T = any> {
       }
 
       seenIds.add(id);
-      const externalized = this.blobStore ? this.blobStore.externalizeDoc(d).doc : d;
+      const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(d)).doc : d;
       const final = this.validate({
         _id,
         ...externalized,
@@ -766,7 +816,7 @@ export class Collection<T = any> {
       }
     }
 
-    const hydrated = this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated;
+    const hydrated = this.blobStore ? await this.blobStore.hydrateDocAsync(migrated) : migrated;
     if (docCache) {
       docCache.set(docCache.makeKey({ c: this.dir, id }), hydrated);
     }
@@ -1048,7 +1098,7 @@ export class Collection<T = any> {
           }
         }
 
-        out.push(this.projectDocument(this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated, projection) as unknown as R);
+        out.push(this.projectDocument(this.blobStore ? await this.blobStore.hydrateDocAsync(migrated) : migrated, projection) as unknown as R);
 
         return finalize({
           results: out,
@@ -1164,7 +1214,7 @@ export class Collection<T = any> {
             continue;
           }
 
-          out.push(this.projectDocument(this.blobStore ? this.blobStore.hydrateDoc(migrated) : migrated, projection) as unknown as R);
+          out.push(this.projectDocument(this.blobStore ? await this.blobStore.hydrateDocAsync(migrated) : migrated, projection) as unknown as R);
           if (out.length >= finalLimit) break;
         }
 
@@ -1274,12 +1324,56 @@ export class Collection<T = any> {
 
     const ids = await this._getCandidateIds(query);
 
+    const computeExec = this.compute?.exec;
+    const useComputeWorker =
+      typeof computeExec === "function" &&
+      isPlainObject &&
+      typeof query !== "function" &&
+      !this.blobStore; // keep blob hydration on the main thread (disk IO)
+
+    const computeBatchSize = 128;
+    let computeBatch: any[] = [];
+
+    const flushComputeBatch = async () => {
+      if (computeBatch.length === 0) return;
+      const batch = computeBatch;
+      computeBatch = [];
+
+      const result = await computeExec!<{ docs: any[] }>({
+        type: "filterProject",
+        docs: batch,
+        query,
+        projection
+      }).catch(() => null);
+
+      const matched = result?.docs ?? [];
+      for (const doc of matched) {
+        if (skipped < offset) {
+          skipped++;
+          continue;
+        }
+        out.push(doc as unknown as R);
+        if (out.length >= finalLimit) break;
+      }
+    };
+
     for (const id of ids) {
       scannedDocuments++;
 
       try {
         const doc = await this._readAndMigrate(id);
-        if (doc && matchDocument(doc, query)) {
+        if (!doc) continue;
+
+        if (useComputeWorker) {
+          computeBatch.push(doc);
+          if (computeBatch.length >= computeBatchSize) {
+            await flushComputeBatch();
+            if (out.length >= finalLimit) break;
+          }
+          continue;
+        }
+
+        if (matchDocument(doc, query)) {
           if (skipped < offset) {
             skipped++;
             continue;
@@ -1292,6 +1386,10 @@ export class Collection<T = any> {
           }
         }
       } catch {}
+    }
+
+    if (useComputeWorker && out.length < finalLimit) {
+      await flushComputeBatch();
     }
 
     const result = {
@@ -1499,6 +1597,7 @@ export class Collection<T = any> {
     this.assertWritable();
 
     const ids = await this._getCandidateIds(filter);
+    const limits = this.tenancy?.getLimits?.();
 
     for (const id of ids) {
       const existing = await this._readAndMigrate(id);
@@ -1507,7 +1606,10 @@ export class Collection<T = any> {
       if (matchDocument(existing, filter)) {
         const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
         const applied = applyUpdate(existing, update);
-        const externalized = this.blobStore ? this.blobStore.externalizeDoc(applied).doc : applied;
+        if (limits?.maxDocBytes) {
+          assertDocSizeWithinLimits(applied, limits.maxDocBytes, { op: "updateOne" });
+        }
+        const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(applied)).doc : applied;
 
         const updated = this.validate({
           ...externalized,
@@ -1553,6 +1655,7 @@ export class Collection<T = any> {
 
     const ids = await this._getCandidateIds(filter);
     const out = [];
+    const limits = this.tenancy?.getLimits?.();
 
     for (const id of ids) {
       const existing = await this._readAndMigrate(id);
@@ -1561,7 +1664,10 @@ export class Collection<T = any> {
       if (matchDocument(existing, filter)) {
         const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
         const applied = applyUpdate(existing, update);
-        const externalized = this.blobStore ? this.blobStore.externalizeDoc(applied).doc : applied;
+        if (limits?.maxDocBytes) {
+          assertDocSizeWithinLimits(applied, limits.maxDocBytes, { op: "updateMany" });
+        }
+        const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(applied)).doc : applied;
 
         const updated = this.validate({
           ...externalized,
@@ -1684,6 +1790,7 @@ export class Collection<T = any> {
   /* ===================== PUBLIC API ===================== */
 
   insertOne(doc: any) {
+    try { this.security?.write?.("insertOne"); } catch {}
     if (this.scheduler) {
       return this.scheduler.write("insertOne", [doc]);
     }
@@ -1778,6 +1885,7 @@ export class Collection<T = any> {
   }
 
   async insertMany(docs: any[], options?: { chunkSize?: number }) {
+    try { this.security?.write?.("insertMany"); } catch {}
     const chunkSize = Math.max(
       1,
       Math.trunc(
@@ -1870,6 +1978,7 @@ export class Collection<T = any> {
   }
 
   updateOne(filter: any, update: any, options?: UpdateOptions) {
+    try { this.security?.write?.("updateOne"); } catch {}
     if (this.scheduler) {
       return this.scheduler.write("updateOne", [filter, update, options]);
     }
@@ -1877,6 +1986,7 @@ export class Collection<T = any> {
   }
 
   updateMany(filter: any, update: any) {
+    try { this.security?.write?.("updateMany"); } catch {}
     if (this.scheduler) {
       return this.scheduler.write("updateMany", [filter, update]);
     }
@@ -1884,6 +1994,7 @@ export class Collection<T = any> {
   }
 
   deleteOne(filter: any) {
+    try { this.security?.write?.("deleteOne"); } catch {}
     if (this.scheduler) {
       return this.scheduler.write("deleteOne", [filter]);
     }
@@ -1891,6 +2002,7 @@ export class Collection<T = any> {
   }
 
   deleteMany(filter: any) {
+    try { this.security?.write?.("deleteMany"); } catch {}
     if (this.scheduler) {
       return this.scheduler.write("deleteMany", [filter]);
     }

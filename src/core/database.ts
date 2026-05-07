@@ -22,6 +22,7 @@ import type { TieredStorageOptions } from "./blobstore.js";
 import { ShardedCollection } from "../sharding/shardedCollection.js";
 import { shardForId } from "../sharding/hash.js";
 import { withLatencyBudget } from "../utils/latency.js";
+import type { AdmissionKind } from "../utils/admission.js";
 
 /* ----------------------------- TYPES ----------------------------- */
 
@@ -91,6 +92,26 @@ export type LioranDBRuntimeOptions = {
        * Minimum time between adaptive aggressive runs.
        */
       minAggressiveIntervalMs?: number;
+      /**
+       * Hard cap for maintenance time per tick to avoid long stalls.
+       */
+      maxWorkMsPerTick?: number;
+      /**
+       * Maximum number of collections compacted per tick.
+       */
+      maxCollectionsPerTick?: number;
+      /**
+       * Minimum time between compactions for a given collection.
+       */
+      minCollectionIntervalMs?: number;
+      /**
+       * Skip compaction if writer queue is busy.
+       */
+      skipIfWriterPendingAbove?: number;
+      /**
+       * Per-collection write threshold to treat that collection as "debt-heavy".
+       */
+      perCollectionWriteDebtThreshold?: number;
     };
   };
   latency?: {
@@ -238,11 +259,14 @@ export class LioranDB {
   private maintenanceWindowStartedAt = Date.now();
   private readAmpSum = 0;
   private readAmpCount = 0;
+  private perCollectionDebt = new Map<string, { writes: number; readAmpSum: number; readAmpCount: number; lastCompactedAt: number }>();
   private maintenanceStats = {
     lightCompactions: 0,
     fullCompactions: 0,
     lastDurationMs: 0,
-    lastErrorAt: 0
+    lastErrorAt: 0,
+    skippedBusyWriter: 0,
+    skippedTimeBudget: 0
   };
   private closed = false;
 
@@ -349,7 +373,10 @@ export class LioranDB {
       throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
     }
     if (this.replicaMode && !allowReplicaWrites) {
-      throw new LiorandbError("READONLY_MODE", "Database is in read-replica mode");
+      const leader = (this.manager as any)?.clusterLeader ?? null;
+      throw new LiorandbError("NOT_LEADER", "Writes must be sent to leader", {
+        details: { leader }
+      });
     }
   }
 
@@ -438,13 +465,41 @@ export class LioranDB {
 
     await this.ready;
 
+    const adaptive = this.runtimeOptions.storage?.adaptiveCompaction;
+    const adaptiveEnabled = adaptive?.enabled ?? true;
+
+    const skipIfWriterPendingAbove = Math.max(0, Math.trunc(adaptive?.skipIfWriterPendingAbove ?? 250));
+    if (this.writer.getPendingCount() > skipIfWriterPendingAbove) {
+      this.maintenanceStats.skippedBusyWriter++;
+      return;
+    }
+
     this.maintenanceRunning = true;
     const started = Date.now();
     const isFullDue = (Date.now() - this.lastFullCompactionAt) >= 10 * 60 * 1000;
 
-    const adaptive = this.runtimeOptions.storage?.adaptiveCompaction;
-    const adaptiveEnabled = adaptive?.enabled ?? true;
     const minAggressiveIntervalMs = Math.max(5_000, Math.trunc(adaptive?.minAggressiveIntervalMs ?? 60_000));
+    const tenantLimits = (this.manager as any)?._getTenantLimits?.();
+    const maxWorkMsPerTick = Math.max(
+      1,
+      Math.trunc(
+        Math.min(
+          adaptive?.maxWorkMsPerTick ?? 2_000,
+          tenantLimits?.background?.maxWorkMsPerTick ?? Number.POSITIVE_INFINITY
+        )
+      )
+    );
+    const maxCollectionsPerTick = Math.max(
+      1,
+      Math.trunc(
+        Math.min(
+          adaptive?.maxCollectionsPerTick ?? 2,
+          tenantLimits?.background?.maxCollectionsPerTick ?? Number.POSITIVE_INFINITY
+        )
+      )
+    );
+    const minCollectionIntervalMs = Math.max(0, Math.trunc(adaptive?.minCollectionIntervalMs ?? 5 * 60_000));
+    const perCollectionWriteDebtThreshold = Math.max(1, Math.trunc(adaptive?.perCollectionWriteDebtThreshold ?? 25_000));
 
     const windowMs = Math.max(1, Date.now() - this.maintenanceWindowStartedAt);
     const writesPerMin = (this.writesSinceMaintenance / windowMs) * 60_000;
@@ -467,12 +522,56 @@ export class LioranDB {
       await this._runInWriter(async () => {
         if (this.closed) return;
 
+        const tickStartedAt = Date.now();
         const collectionNames = this.getAllCollectionNames();
 
-        for (const name of collectionNames) {
+        const debtScore = (col: string) => {
+          const b = this.perCollectionDebt.get(col);
+          const writes = b?.writes ?? 0;
+          const ampAvg = (b && b.readAmpCount > 0) ? (b.readAmpSum / b.readAmpCount) : 1;
+          const wScore = Math.min(10, writes / perCollectionWriteDebtThreshold);
+          const aScore = Math.min(10, ampAvg / readAmpThreshold);
+          return wScore + aScore;
+        };
+
+        const candidates = collectionNames
+          .map(name => ({ name, score: debtScore(name) }))
+          .sort((a, b) => b.score - a.score);
+
+        let compacted = 0;
+
+        for (const { name } of candidates) {
+          if (compacted >= maxCollectionsPerTick) break;
+          const elapsed = Date.now() - tickStartedAt;
+          if (elapsed >= maxWorkMsPerTick) {
+            this.maintenanceStats.skippedTimeBudget++;
+            break;
+          }
+
+          const bucket = this.perCollectionDebt.get(name) ?? {
+            writes: 0,
+            readAmpSum: 0,
+            readAmpCount: 0,
+            lastCompactedAt: 0
+          };
+
+          const since = Date.now() - (bucket.lastCompactedAt || 0);
+          if (since < minCollectionIntervalMs) continue;
+
+          const ampAvg = bucket.readAmpCount > 0 ? (bucket.readAmpSum / bucket.readAmpCount) : 1;
+          const heavy = bucket.writes >= perCollectionWriteDebtThreshold || ampAvg >= readAmpThreshold;
+          const aggressiveForCol = aggressive || heavy;
+
           try {
             const col = this.collection(name);
-            await col.compact({ aggressive } as any);
+            await col.compact({ aggressive: aggressiveForCol } as any);
+            compacted++;
+
+            bucket.writes = 0;
+            bucket.readAmpSum = 0;
+            bucket.readAmpCount = 0;
+            bucket.lastCompactedAt = Date.now();
+            this.perCollectionDebt.set(name, bucket);
           } catch (e) {
             console.warn(`[Maintenance] Failed for collection ${name}`, e);
           }
@@ -488,10 +587,11 @@ export class LioranDB {
       if (aggressive) this.maintenanceStats.fullCompactions++;
       else this.maintenanceStats.lightCompactions++;
 
-      // Reset rolling window after successful maintenance.
-      this.writesSinceMaintenance = 0;
-      this.readAmpSum = 0;
-      this.readAmpCount = 0;
+      // Keep rolling window; decay rather than hard-reset so we don't lose signal
+      // when maintenance is throttled to a subset of collections.
+      this.writesSinceMaintenance = Math.floor(this.writesSinceMaintenance * 0.5);
+      this.readAmpSum = this.readAmpSum * 0.5;
+      this.readAmpCount = Math.floor(this.readAmpCount * 0.5);
       this.maintenanceWindowStartedAt = Date.now();
     } catch (err) {
       console.error("[Maintenance] Error:", err);
@@ -839,12 +939,66 @@ export class LioranDB {
               const amp = scanned / denom;
               this.readAmpSum += amp;
               this.readAmpCount += 1;
+
+              const bucket = this.perCollectionDebt.get(name) ?? {
+                writes: 0,
+                readAmpSum: 0,
+                readAmpCount: 0,
+                lastCompactedAt: 0
+              };
+              bucket.readAmpSum += amp;
+              bucket.readAmpCount += 1;
+              this.perCollectionDebt.set(name, bucket);
             } catch {}
           },
           latency: {
             enabled: this.runtimeOptions.latency?.enabled,
             readBudgetMs: this.runtimeOptions.latency?.readBudgetMs ?? 100,
             onViolation: this.runtimeOptions.latency?.onViolation
+          },
+          admission: {
+            read: <R>(task: () => Promise<R>) => {
+              const mgr: any = this.manager as any;
+              return typeof mgr._admit === "function" ? mgr._admit("read" as AdmissionKind, task, { dbName: this.dbName }) : task();
+            },
+            write: <R>(task: () => Promise<R>) => {
+              const mgr: any = this.manager as any;
+              return typeof mgr._admit === "function" ? mgr._admit("write" as AdmissionKind, task, { dbName: this.dbName }) : task();
+            },
+            maintenance: <R>(task: () => Promise<R>) => {
+              const mgr: any = this.manager as any;
+              return typeof mgr._admit === "function" ? mgr._admit("maintenance" as AdmissionKind, task, { dbName: this.dbName }) : task();
+            }
+          },
+          compute: {
+            exec: <R>(task: any) => {
+              const mgr: any = this.manager as any;
+              return typeof mgr._compute === "function" ? mgr._compute(task) : Promise.resolve(task as R);
+            }
+          },
+          tenancy: {
+            getLimits: () => {
+              const mgr: any = this.manager as any;
+              return typeof mgr._getTenantLimits === "function" ? mgr._getTenantLimits() : ({ maxDocBytes: 1_048_576, maxBlobBytes: 33_554_432 } as any);
+            }
+          },
+          security: {
+            read: () => {
+              const mgr: any = this.manager as any;
+              mgr?._authorize?.("db:read", { db: this.dbName, collection: name, op: "read" }, true);
+            },
+            write: (op?: string) => {
+              const mgr: any = this.manager as any;
+              mgr?._authorize?.("db:write", { db: this.dbName, collection: name, op: op ?? "write" }, true);
+            },
+            index: (op: "create" | "drop" | "rebuild", field?: string) => {
+              const mgr: any = this.manager as any;
+              mgr?._authorize?.(op === "create" ? "db:index:create" : "db:index:drop", { db: this.dbName, collection: name, op: field ? `${op}:${field}` : op }, true);
+            },
+            maintenance: (op: string) => {
+              const mgr: any = this.manager as any;
+              mgr?._authorize?.("db:compact", { db: this.dbName, collection: name, op }, true);
+            }
           },
           resolveCollection: (otherName: string) => this.collection(otherName),
           scheduler: this.readonlyMode
@@ -906,6 +1060,7 @@ export class LioranDB {
   ) {
     try {
       this.assertWritable();
+      try { (this.manager as any)?._authorize?.("db:index:create", { db: this.dbName, collection, op: `createIndex:${field}` }, true); } catch {}
 
       await this._commitTransaction(++LioranDB.TX_SEQ, [
         {
@@ -982,6 +1137,7 @@ export class LioranDB {
   async rotateEncryptionKey(newKey: string | Buffer) {
     try {
       this.assertWritable();
+      try { (this.manager as any)?._authorize?.("db:key:rotate", { db: this.dbName, op: "rotateEncryptionKey" }, true); } catch {}
 
       const oldKey = getEncryptionKey();
       const nextKey = deriveEncryptionKey(newKey);
@@ -1105,7 +1261,11 @@ export class LioranDB {
     if (this.readonlyMode) {
       throw new LiorandbError("READONLY_MODE", "Database is in readonly replica mode");
     }
-    return this._runInWriter(task);
+    const mgr: any = this.manager as any;
+    const run = () => this._runInWriter(task);
+    return typeof mgr._admit === "function"
+      ? mgr._admit("maintenance" as AdmissionKind, run, { dbName: this.dbName })
+      : run();
   }
 
   async createTextIndex(
@@ -1115,6 +1275,7 @@ export class LioranDB {
   ) {
     try {
       this.assertWritable();
+      try { (this.manager as any)?._authorize?.("db:index:create", { db: this.dbName, collection, op: `createTextIndex:${field}` }, true); } catch {}
 
       await this._commitTransaction(++LioranDB.TX_SEQ, [
         {
@@ -1142,9 +1303,15 @@ export class LioranDB {
 
     const useWAL = options.wal ?? true;
 
-    return this._runInWriter(async () => {
-      return this._commitTransactionInternal(txId, ops, useWAL);
-    });
+    const mgr: any = this.manager as any;
+    const run = () =>
+      this._runInWriter(async () => {
+        return this._commitTransactionInternal(txId, ops, useWAL);
+      });
+
+    return typeof mgr._admit === "function"
+      ? mgr._admit("write" as AdmissionKind, run, { dbName: this.dbName })
+      : run();
   }
 
   private async _commitTransactionInternal(
@@ -1205,6 +1372,19 @@ export class LioranDB {
 
           // Track write load for adaptive compaction (primary only).
           this.writesSinceMaintenance += ops.length;
+          try {
+            for (const op of ops) {
+              if (!op?.col || op.col === DB_META_COL) continue;
+              const bucket = this.perCollectionDebt.get(op.col) ?? {
+                writes: 0,
+                readAmpSum: 0,
+                readAmpCount: 0,
+                lastCompactedAt: 0
+              };
+              bucket.writes += 1;
+              this.perCollectionDebt.set(op.col, bucket);
+            }
+          } catch {}
 
           if (effectiveUseWAL) {
             const appliedLSN = await this.wal.append({
@@ -1255,6 +1435,17 @@ export class LioranDB {
     if (!isPhysical && shardCount > 1) {
       // Persist meta once (logical), then build the same index on each shard physical collection.
       if (persistMeta) {
+        const limits = (this.manager as any)?._getTenantLimits?.();
+        const maxIndexes = limits?.maxIndexesPerCollection;
+        if (typeof maxIndexes === "number" && Number.isFinite(maxIndexes) && maxIndexes >= 0) {
+          const existing = this.meta.indexes[logicalNameForMeta] ?? [];
+          const nonId = existing.filter(i => i.field !== "_id" && (i.type ?? "btree") === "btree").length;
+          if (field !== "_id" && nonId >= maxIndexes) {
+            throw new LiorandbError("VALIDATION_FAILED", "Tenant index limit exceeded", {
+              details: { collection: logicalNameForMeta, field, maxIndexesPerCollection: maxIndexes, existingIndexes: nonId }
+            });
+          }
+        }
         const normalizedOptions: IndexOptions = { unique: !!options.unique };
         const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "btree");
         if (!existingMeta) {
@@ -1326,6 +1517,17 @@ export class LioranDB {
     }
 
     if (!existingMeta && persistMeta) {
+      const limits = (this.manager as any)?._getTenantLimits?.();
+      const maxIndexes = limits?.maxIndexesPerCollection;
+      if (typeof maxIndexes === "number" && Number.isFinite(maxIndexes) && maxIndexes >= 0) {
+        const existing = this.meta.indexes[logicalNameForMeta] ?? [];
+        const nonId = existing.filter(i => i.field !== "_id" && (i.type ?? "btree") === "btree").length;
+        if (field !== "_id" && nonId >= maxIndexes) {
+          throw new LiorandbError("VALIDATION_FAILED", "Tenant index limit exceeded", {
+            details: { collection: logicalNameForMeta, field, maxIndexesPerCollection: maxIndexes, existingIndexes: nonId }
+          });
+        }
+      }
       this.meta.indexes[logicalNameForMeta].push({ field, options: normalizedOptions, type: "btree" });
       this.saveMeta();
     }
@@ -1349,6 +1551,17 @@ export class LioranDB {
 
     if (!isPhysical && shardCount > 1) {
       if (persistMeta) {
+        const limits = (this.manager as any)?._getTenantLimits?.();
+        const maxText = limits?.maxTextIndexesPerCollection;
+        if (typeof maxText === "number" && Number.isFinite(maxText) && maxText >= 0) {
+          const existing = this.meta.indexes[logicalNameForMeta] ?? [];
+          const count = existing.filter(i => (i.type ?? "btree") === "text").length;
+          if (count >= maxText) {
+            throw new LiorandbError("VALIDATION_FAILED", "Tenant text-index limit exceeded", {
+              details: { collection: logicalNameForMeta, field, maxTextIndexesPerCollection: maxText, existingTextIndexes: count }
+            });
+          }
+        }
         const existingMeta = this.meta.indexes[logicalNameForMeta]?.find(i => i.field === field && (i.type ?? "btree") === "text");
         if (!existingMeta) {
           if (!this.meta.indexes[logicalNameForMeta]) this.meta.indexes[logicalNameForMeta] = [];
@@ -1402,6 +1615,17 @@ export class LioranDB {
     }
 
     if (persistMeta) {
+      const limits = (this.manager as any)?._getTenantLimits?.();
+      const maxText = limits?.maxTextIndexesPerCollection;
+      if (typeof maxText === "number" && Number.isFinite(maxText) && maxText >= 0) {
+        const existing = this.meta.indexes[logicalNameForMeta] ?? [];
+        const count = existing.filter(i => (i.type ?? "btree") === "text").length;
+        if (count >= maxText) {
+          throw new LiorandbError("VALIDATION_FAILED", "Tenant text-index limit exceeded", {
+            details: { collection: logicalNameForMeta, field, maxTextIndexesPerCollection: maxText, existingTextIndexes: count }
+          });
+        }
+      }
       this.meta.indexes[logicalNameForMeta].push({ field, options: {}, type: "text", textOptions: options });
       this.saveMeta();
     }

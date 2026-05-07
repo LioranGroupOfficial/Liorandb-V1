@@ -115,6 +115,7 @@ export class WALManager {
   private openPromise: Promise<void> | null = null;
   private readonlyMode: boolean;
   private events = new EventEmitter();
+  private currentSizeBytes = 0;
   private durability: {
     flushStrategy: WALFlushStrategy;
     batch: { maxRecords: number; maxDelayMs: number };
@@ -230,6 +231,8 @@ export class WALManager {
 
     this.openPromise = (async () => {
       this.fd = await fs.promises.open(this.walPath(), "a");
+      const stat = await this.fd.stat();
+      this.currentSizeBytes = stat.size;
     })();
 
     try {
@@ -293,6 +296,7 @@ export class WALManager {
       this.fd = null;
     }
     this.currentGen++;
+    this.currentSizeBytes = 0;
   }
 
   async close(): Promise<void> {
@@ -383,6 +387,7 @@ export class WALManager {
       const frame = encodeFrame(line);
       await this.fd!.write(frame);
       this.pendingSinceSync++;
+      this.currentSizeBytes += frame.length;
 
       const flushMode = options.flush ?? "await";
       if (flushMode === "await") {
@@ -391,8 +396,7 @@ export class WALManager {
         this.requestFlush();
       }
 
-      const stat = await this.fd!.stat();
-      if (stat.size >= MAX_WAL_SIZE) {
+      if (this.currentSizeBytes >= MAX_WAL_SIZE) {
         await this.rotate();
       }
 

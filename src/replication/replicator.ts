@@ -54,6 +54,16 @@ export class ReplicaReplicator {
         this.streamClient.bindReplica(async name => {
           // Ensure DB is open and passed instance is the same if already opened.
           return (await this.manager.db(name)) as any;
+        }, {
+          onProgress: (info) => {
+            try {
+              (this.manager as any)?.metrics?.observeReplicaProgress?.(info.db, {
+                leaderLSN: info.leaderLSN,
+                appliedLSN: info.appliedLSN,
+                commitTimeMs: info.commitTimeMs
+              });
+            } catch {}
+          }
         });
       }
 
@@ -89,12 +99,32 @@ export class ReplicaReplicator {
         });
 
         const records = payload?.records ?? [];
+        const leaderLSN = Math.max(0, Math.trunc(payload?.lastLSN ?? fromLSN));
         if (records.length === 0) {
+          try {
+            (this.manager as any)?.metrics?.observeReplicaProgress?.(dbName, {
+              leaderLSN,
+              appliedLSN: fromLSN
+            });
+          } catch {}
           await sleep(this.opts.pollMs);
           continue;
         }
 
-        await db.applyReplicatedWAL(records);
+        const appliedLSN = await db.applyReplicatedWAL(records);
+        const commitTimeMs = records.reduce((m: number, r: any) => {
+          if (r?.type !== "commit") return m;
+          const t = r?.time;
+          return typeof t === "number" && Number.isFinite(t) ? Math.max(m, Math.trunc(t)) : m;
+        }, 0);
+
+        try {
+          (this.manager as any)?.metrics?.observeReplicaProgress?.(dbName, {
+            leaderLSN,
+            appliedLSN,
+            commitTimeMs: commitTimeMs || undefined
+          });
+        } catch {}
       } catch (err) {
         const e = asLiorandbError(err, {
           code: "IO_ERROR",

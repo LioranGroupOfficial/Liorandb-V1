@@ -278,7 +278,9 @@ export class WALStreamClient {
    * Connects this client to a local replica DB instance.
    * The provided `getDb` callback should return a DB in replica mode.
    */
-  bindReplica(getDb: (name: string) => Promise<LioranDB>) {
+  bindReplica(getDb: (name: string) => Promise<LioranDB>, options?: {
+    onProgress?: (info: { db: string; leaderLSN: number; appliedLSN: number; commitTimeMs?: number }) => void;
+  }) {
     const maxBatch = Math.max(1, Math.trunc(this.opts.maxApplyBatch ?? 5_000));
 
     const flush = async () => {
@@ -289,6 +291,13 @@ export class WALStreamClient {
         try {
           const db = await getDb(dbName);
           const last = await (db as any).applyReplicatedWAL(batch);
+          const leaderLSN = batch.reduce((m, r) => Math.max(m, Math.trunc((r as any).lsn ?? 0)), 0);
+          const commitTimeMs = batch.reduce((m, r) => {
+            if ((r as any).type !== "commit") return m;
+            const t = (r as any).time;
+            return typeof t === "number" && Number.isFinite(t) ? Math.max(m, Math.trunc(t)) : m;
+          }, 0);
+          options?.onProgress?.({ db: dbName, leaderLSN, appliedLSN: last, commitTimeMs: commitTimeMs || undefined });
           this.socket?.write(safeJsonLine({ type: "ack", db: dbName, lsn: last } satisfies AckMsg));
         } catch {
           // On local apply failure, just stop acking (leader will retry via stream).

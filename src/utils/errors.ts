@@ -1,5 +1,7 @@
 export type LiorandbErrorCode =
   | "READONLY_MODE"
+  | "NOT_LEADER"
+  | "STALE_READ"
   | "CLOSED"
   | "VALIDATION_FAILED"
   | "RESERVED_KEY"

@@ -2,6 +2,29 @@ import { LiorandbError } from "./errors.js";
 
 export type LatencyViolationMode = "none" | "warn" | "throw";
 
+export type LatencyBudgetViolation = {
+  label: string;
+  elapsedMs: number;
+  budgetMs: number;
+};
+
+export type LatencyBudgetReporter = (v: LatencyBudgetViolation) => void;
+
+let reporter: LatencyBudgetReporter = (() => {
+  // Default: stay silent in production unless explicitly enabled.
+  // Console logging is surprisingly expensive under load and can amplify tail latency.
+  const enabled = process.env.LIORANDB_LATENCY_BUDGET_LOG === "1";
+  if (!enabled) return () => {};
+  return v => {
+    // eslint-disable-next-line no-console
+    console.warn(`[LatencyBudget] ${v.label} exceeded budget`, { elapsedMs: v.elapsedMs, budgetMs: v.budgetMs });
+  };
+})();
+
+export function setLatencyBudgetReporter(next: LatencyBudgetReporter | null | undefined): void {
+  reporter = next ?? (() => {});
+}
+
 export async function withLatencyBudget<T>(
   label: string,
   budgetMs: number | undefined,
@@ -20,8 +43,7 @@ export async function withLatencyBudget<T>(
     const result = await task();
     const elapsed = Date.now() - startedAt;
     if (elapsed > ms) {
-      // eslint-disable-next-line no-console
-      console.warn(`[LatencyBudget] ${label} exceeded budget`, { elapsedMs: elapsed, budgetMs: ms });
+      reporter({ label, elapsedMs: elapsed, budgetMs: ms });
     }
     return result;
   }
@@ -51,4 +73,3 @@ export async function withLatencyBudget<T>(
     if (timeout) clearTimeout(timeout);
   }
 }
-

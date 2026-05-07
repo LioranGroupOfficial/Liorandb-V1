@@ -172,6 +172,7 @@ export async function rebuildIndexes(col: Collection) {
   // Rebuild may run right after a reopen; ensure the handle is open for iterators.
   await col.db.open();
   const indexRoot = path.join(col.dir, INDEX_DIR);
+  const computeExec = (col as any)._computeExec as (<R>(task: any) => Promise<R>) | undefined;
 
   const oldIndexes = new Map(col["indexes"]);
   const oldTextIndexes = new Map(col["textIndexes"] ?? []);
@@ -197,6 +198,22 @@ export async function rebuildIndexes(col: Collection) {
       unique: idx.unique
     }, (col as any)._leveldbOptions);
     const docs: any[] = [];
+    const encBatch: string[] = [];
+
+    const decryptIntoDocs = async () => {
+      if (encBatch.length === 0) return;
+      if (computeExec) {
+        const r = await computeExec<{ docs: any[] }>({ type: "decryptDocs", enc: encBatch }).catch(() => null);
+        if (r?.docs?.length) docs.push(...r.docs);
+      } else {
+        for (const enc of encBatch) {
+          try {
+            docs.push(decryptData(enc));
+          } catch {}
+        }
+      }
+      encBatch.length = 0;
+    };
     const flush = async () => {
       if (docs.length === 0) return;
       await rebuilt.bulkInsert(docs);
@@ -207,9 +224,9 @@ export async function rebuildIndexes(col: Collection) {
       if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
 
       try {
-        const doc = decryptData(enc);
-        docs.push(doc);
-        if (docs.length >= 5000) {
+        encBatch.push(enc);
+        if (encBatch.length >= 5000) {
+          await decryptIntoDocs();
           await flush();
         }
       } catch {
@@ -217,6 +234,7 @@ export async function rebuildIndexes(col: Collection) {
       }
     }
 
+    await decryptIntoDocs();
     await flush();
 
     rebuiltIndexes.set(idx.field, rebuilt);
@@ -227,6 +245,22 @@ export async function rebuildIndexes(col: Collection) {
   for (const idx of oldTextIndexes.values()) {
     const rebuilt = new TextIndex(col.dir, idx.field, (idx as any).options ?? {}, (col as any)._leveldbOptions);
     const docs: any[] = [];
+    const encBatch: string[] = [];
+
+    const decryptIntoDocs = async () => {
+      if (encBatch.length === 0) return;
+      if (computeExec) {
+        const r = await computeExec<{ docs: any[] }>({ type: "decryptDocs", enc: encBatch }).catch(() => null);
+        if (r?.docs?.length) docs.push(...r.docs);
+      } else {
+        for (const enc of encBatch) {
+          try {
+            docs.push(decryptData(enc));
+          } catch {}
+        }
+      }
+      encBatch.length = 0;
+    };
     const flush = async () => {
       if (docs.length === 0) return;
       await rebuilt.bulkInsert(docs);
@@ -236,11 +270,15 @@ export async function rebuildIndexes(col: Collection) {
     for await (const [key, enc] of col.db.iterator()) {
       if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
       try {
-        docs.push(decryptData(enc));
-        if (docs.length >= 5000) await flush();
+        encBatch.push(enc);
+        if (encBatch.length >= 5000) {
+          await decryptIntoDocs();
+          await flush();
+        }
       } catch {}
     }
 
+    await decryptIntoDocs();
     await flush();
     rebuiltTextIndexes.set(idx.field, rebuilt);
   }

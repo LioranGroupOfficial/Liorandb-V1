@@ -44,6 +44,12 @@ type DbMetrics = {
     maxCommitTimes: number;
     lastAckDelayMs: number;
     lastWalLag: number;
+
+    // replica-side view
+    replicaLeaderLSN: number;
+    replicaAppliedLSN: number;
+    replicaWalLag: number;
+    replicaDelayMs: number;
   };
 };
 
@@ -77,7 +83,11 @@ export class MetricsCollector {
         commitTimeQueue: [],
         maxCommitTimes: 50_000,
         lastAckDelayMs: 0,
-        lastWalLag: 0
+        lastWalLag: 0,
+        replicaLeaderLSN: 0,
+        replicaAppliedLSN: 0,
+        replicaWalLag: 0,
+        replicaDelayMs: 0
       }
     };
     this.byDb.set(dbName, created);
@@ -131,6 +141,19 @@ export class MetricsCollector {
     }
   }
 
+  observeReplicaProgress(dbName: string, info: { leaderLSN: number; appliedLSN: number; commitTimeMs?: number }, nowMs = Date.now()) {
+    const m = this.db(dbName);
+    const leader = Math.max(0, Math.trunc(info.leaderLSN));
+    const applied = Math.max(0, Math.trunc(info.appliedLSN));
+    m.replication.replicaLeaderLSN = Math.max(m.replication.replicaLeaderLSN, leader);
+    m.replication.replicaAppliedLSN = Math.max(m.replication.replicaAppliedLSN, applied);
+    m.replication.replicaWalLag = Math.max(0, m.replication.replicaLeaderLSN - m.replication.replicaAppliedLSN);
+    const ct = info.commitTimeMs ? Math.trunc(info.commitTimeMs) : 0;
+    if (ct > 0) {
+      m.replication.replicaDelayMs = Math.max(0, nowMs - ct);
+    }
+  }
+
   snapshot(dbName: string) {
     const m = this.db(dbName);
     const read = ringValues(m.latency.read);
@@ -157,9 +180,13 @@ export class MetricsCollector {
       replication: {
         leaderLSN: m.replication.lastLeaderLSN,
         walLag: m.replication.lastWalLag,
-        replicationDelayMs: m.replication.lastAckDelayMs
+        replicationDelayMs: m.replication.lastAckDelayMs,
+        // replica-side (best-effort)
+        replicaLeaderLSN: m.replication.replicaLeaderLSN,
+        replicaAppliedLSN: m.replication.replicaAppliedLSN,
+        replicaWalLag: m.replication.replicaWalLag,
+        replicaDelayMs: m.replication.replicaDelayMs
       }
     };
   }
 }
-

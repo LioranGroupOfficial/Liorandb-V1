@@ -34,9 +34,10 @@ export class IPCWorkerPool {
       this.spawnWorker();
     }
 
-    console.log(
-      `[WorkerPool] Started ${this.workerCount} worker threads`
-    );
+    if (process.env.LIORANDB_WORKERPOOL_LOG === "1") {
+      // eslint-disable-next-line no-console
+      console.log(`[WorkerPool] Started ${this.workerCount} worker threads`);
+    }
   }
 
   /* -------------------------------------------------- */
@@ -120,7 +121,10 @@ export class IPCWorkerPool {
   async shutdown() {
     this.shuttingDown = true;
 
-    console.log("[WorkerPool] Shutting down worker threads...");
+    if (process.env.LIORANDB_WORKERPOOL_LOG === "1") {
+      // eslint-disable-next-line no-console
+      console.log("[WorkerPool] Shutting down worker threads...");
+    }
 
     for (const worker of this.workers) {
       try {

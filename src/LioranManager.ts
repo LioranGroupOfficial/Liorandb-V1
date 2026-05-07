@@ -13,6 +13,12 @@ import { ClusterController, type ClusterNodeConfig } from "./cluster/controller.
 import type { ReplicationCoordinator } from "./replication/coordinator.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { BackgroundScheduler, type BackgroundSchedulerOptions } from "./background/scheduler.js";
+import { AdmissionController, type AdmissionConfig } from "./utils/admission.js";
+import { IPCWorkerPool } from "./ipc/pool.js";
+import { resolveTenantLimits, type TenantLimits, type TenancyConfig } from "./utils/tenancy.js";
+import { SecurityContextManager, type Principal } from "./security/context.js";
+import { defaultAuthorize, type AuthorizeHook, type SecurityAction } from "./security/authorize.js";
+import { AuditSink } from "./audit/sink.js";
 import {
   createIncrementalBackupArchive,
   filterWALForPITR,
@@ -72,6 +78,48 @@ export interface LioranManagerOptions {
     batchLimit?: number;
     walStream?: { host: string; port: number };
   };
+  slo?: {
+    maxTenants?: number;
+    read?: AdmissionConfig;
+    write?: AdmissionConfig;
+    maintenance?: AdmissionConfig;
+    perTenant?: {
+      enabled?: boolean;
+      read?: AdmissionConfig;
+      write?: AdmissionConfig;
+      maintenance?: AdmissionConfig;
+    };
+  };
+  compute?: {
+    enabled?: boolean;
+  };
+  consistency?: {
+    reads?: {
+      /**
+       * - stale_ok: always serve reads from local node.
+       * - bounded_stale: serve from replicas only if lag is within bounds.
+       * - leader_only: replicas reject reads (client must talk to leader).
+       */
+      mode?: "stale_ok" | "bounded_stale" | "leader_only";
+      maxLagLSN?: number;
+      maxLagMs?: number;
+      /**
+       * If true, bounded_stale will fall back to stale_ok instead of throwing.
+       */
+      autoDegradeToStaleOk?: boolean;
+    };
+  };
+  tenancy?: TenancyConfig;
+  security?: {
+    enabled?: boolean;
+    authorize?: AuthorizeHook;
+    audit?: {
+      enabled?: boolean;
+      dir?: string;
+      flushDelayMs?: number;
+      redact?: import("./audit/sink.js").AuditSinkOptions["redact"];
+    };
+  };
 }
 
 /* ---------------- MANAGER ---------------- */
@@ -81,6 +129,13 @@ export class LioranManager {
   openDBs: Map<string, LioranDB>;
   public readonly cache: GlobalCacheEngine;
   public readonly metrics: MetricsCollector;
+  public readonly admission: AdmissionController;
+  private computePool?: IPCWorkerPool;
+  private tenantLimitsCache = new Map<string, TenantLimits>();
+  private securityCtx = new SecurityContextManager();
+  private authorizeHook: AuthorizeHook;
+  private auditSink?: AuditSink;
+  private auditUnsubByDb = new Map<string, () => void>();
   private backgroundScheduler?: BackgroundScheduler;
   private closed = false;
   private mode: ProcessMode;
@@ -101,6 +156,12 @@ export class LioranManager {
     this.options = options;
     this.cache = new GlobalCacheEngine(options.cache);
     this.metrics = new MetricsCollector();
+    this.admission = new AdmissionController({
+      maxTenants: options.slo?.maxTenants,
+      read: options.slo?.read,
+      write: options.slo?.write,
+      maintenance: options.slo?.maintenance
+    });
 
     this.rootPath = rootPath || getDefaultRootPath();
 
@@ -113,6 +174,17 @@ export class LioranManager {
     }
 
     this.openDBs = new Map();
+
+    this.authorizeHook = options.security?.authorize ?? defaultAuthorize;
+    if (options.security?.audit?.enabled) {
+      const dir = options.security.audit.dir ?? path.join(this.rootPath, "__audit");
+      this.auditSink = new AuditSink({
+        dir,
+        flushDelayMs: options.security.audit.flushDelayMs,
+        redact: options.security.audit.redact
+      });
+      this.lifecycle.register(() => this.auditSink?.close());
+    }
 
     /* ---------------- MODE RESOLUTION ---------------- */
 
@@ -147,11 +219,133 @@ export class LioranManager {
       this._registerShutdownHooks();
       void this._ensureIpcServer();
       this._ensureBackgroundScheduler();
+      this._ensureComputePool();
     }
 
     if (this.mode === ProcessMode.REPLICA) {
       void this._ensureReplicaReplicator();
     }
+  }
+
+  withPrincipal<T>(principal: Principal, task: () => Promise<T>): Promise<T> {
+    return this.securityCtx.withPrincipal(principal, task);
+  }
+
+  _authorize(action: SecurityAction, resource: { db?: string; collection?: string; op?: string }, okIfDisabled = true) {
+    const enabled = this.options.security?.enabled ?? false;
+    if (!enabled) {
+      if (!okIfDisabled) {
+        throw new LiorandbError("VALIDATION_FAILED", "Security is disabled");
+      }
+      return;
+    }
+    const principal = this.securityCtx.currentPrincipal();
+    try {
+      this.authorizeHook(principal, action, resource);
+      this._auditSecurity(action, { db: resource.db, collection: resource.collection, ok: true });
+    } catch (err: any) {
+      this._auditSecurity(action, { db: resource.db, collection: resource.collection, ok: false, reason: err?.message ? String(err.message) : undefined });
+      throw err;
+    }
+  }
+
+  _auditSecurity(action: string, info: { db?: string; collection?: string; ok: boolean; reason?: string }) {
+    const principal = this.securityCtx.currentPrincipal();
+    this.auditSink?.append({
+      t: Date.now(),
+      kind: "security",
+      action,
+      db: info.db,
+      collection: info.collection,
+      principalId: principal?.id,
+      ok: info.ok,
+      reason: info.reason
+    });
+  }
+
+  _getTenantLimits(tenantId?: string): TenantLimits {
+    const tid = String(tenantId ?? this.admission.currentTenantId() ?? "default");
+    const cached = this.tenantLimitsCache.get(tid);
+    if (cached) return cached;
+    const resolved = resolveTenantLimits(this.options.tenancy, tid);
+    this.tenantLimitsCache.set(tid, resolved);
+    // Keep cache bounded (best-effort)
+    if (this.tenantLimitsCache.size > 10_000) {
+      const first = this.tenantLimitsCache.keys().next().value as string | undefined;
+      if (first) this.tenantLimitsCache.delete(first);
+    }
+    return resolved;
+  }
+
+  private _ensureComputePool() {
+    if (this.computePool) return;
+    if (this.options.compute?.enabled === false) return;
+    this.computePool = new IPCWorkerPool(this.options.cores);
+    this.computePool.start();
+    this.lifecycle.register(() => this.computePool?.shutdown());
+  }
+
+  withTenant<T>(tenantId: string, task: () => Promise<T>): Promise<T> {
+    return this.admission.withTenant(tenantId, task);
+  }
+
+  _admit<T>(kind: import("./utils/admission.js").AdmissionKind, task: () => Promise<T>, ctx?: { dbName?: string }): Promise<T> {
+    const perTenant = this.options.slo?.perTenant;
+    const perTenantCfg: AdmissionConfig | undefined =
+      kind === "read"
+        ? perTenant?.read
+        : kind === "write"
+          ? perTenant?.write
+          : perTenant?.maintenance;
+
+    return this.admission.run(kind, () => {
+      if (kind === "read") {
+        return this._guardRead(task as any, ctx?.dbName) as any;
+      }
+      return task();
+    }, {
+      perTenant: perTenant?.enabled ? { ...(perTenantCfg ?? {}), enabled: true } : undefined
+    });
+  }
+
+  private _guardRead<T>(task: () => Promise<T>, dbName?: string): Promise<T> {
+    // Only meaningful in replica mode (followers).
+    if (!this.isReplica()) return task();
+
+    const mode = this.options.consistency?.reads?.mode ?? "stale_ok";
+    if (mode === "stale_ok") return task();
+
+    const leader = this.clusterLeader;
+    if (mode === "leader_only") {
+      throw new LiorandbError("NOT_LEADER", "Reads must be sent to leader", {
+        details: { leader }
+      });
+    }
+
+    // bounded_stale
+    const maxLagLSN = Math.max(0, Math.trunc(this.options.consistency?.reads?.maxLagLSN ?? 0));
+    const maxLagMs = Math.max(0, Math.trunc(this.options.consistency?.reads?.maxLagMs ?? 0));
+    const autoDegrade = !!this.options.consistency?.reads?.autoDegradeToStaleOk;
+
+    if (!dbName) {
+      return autoDegrade ? task() : Promise.reject(new LiorandbError("INTERNAL", "bounded_stale requires dbName context"));
+    }
+
+    const snap = this.metrics.snapshot(dbName)?.replication ?? {};
+    const lagLSN = Math.max(0, Math.trunc((snap as any).replicaWalLag ?? 0));
+    const lagMs = Math.max(0, Math.trunc((snap as any).replicaDelayMs ?? 0));
+
+    const tooFarLSN = maxLagLSN > 0 && lagLSN > maxLagLSN;
+    const tooFarMs = maxLagMs > 0 && lagMs > maxLagMs;
+
+    if (tooFarLSN || tooFarMs) {
+      if (autoDegrade) return task();
+      throw new LiorandbError("STALE_READ", "Replica is too far behind leader", {
+        details: { leader, db: dbName, lagLSN, lagMs, maxLagLSN, maxLagMs }
+      });
+    }
+
+    return task();
   }
 
   private _ensureBackgroundScheduler() {
@@ -225,6 +419,7 @@ export class LioranManager {
 
     this._registerShutdownHooks();
     await this._ensureIpcServer();
+    this._ensureComputePool();
   }
 
   async _becomeClusterFollower(leaderHost: string, walStreamPort: number) {
@@ -242,6 +437,16 @@ export class LioranManager {
     try { this.replicaReplicator?.stop(); } catch {}
     this.replicaReplicator = undefined;
     await this._ensureReplicaReplicator();
+  }
+
+  async _compute<T>(task: any): Promise<T> {
+    if (!this.computePool) {
+      this._ensureComputePool();
+    }
+    if (!this.computePool) {
+      return task as T;
+    }
+    return await this.computePool.exec(task);
   }
 
   /* ---------------- QUEUE HELPER ---------------- */
@@ -364,6 +569,25 @@ export class LioranManager {
       await db.ready;
       this.openDBs.set(name, db);
 
+      // Audit WAL stream (leader only): best-effort, non-blocking.
+      try {
+        if (this.auditSink && this.isPrimary() && !this.auditUnsubByDb.has(name)) {
+          const unsub = (db as any).wal?.onAppend?.((r: any) => {
+            this.auditSink?.append({
+              t: Date.now(),
+              kind: "wal",
+              db: name,
+              lsn: Math.trunc(r?.lsn ?? 0),
+              tx: Math.trunc(r?.tx ?? 0),
+              type: String(r?.type ?? ""),
+              time: typeof r?.time === "number" ? Math.trunc(r.time) : undefined,
+              payload: r?.type === "op" ? r?.payload : undefined
+            });
+          });
+          if (typeof unsub === "function") this.auditUnsubByDb.set(name, unsub);
+        }
+      } catch {}
+
       if (this.mode === ProcessMode.REPLICA) {
         await this._ensureReplicaReplicator();
         this.replicaReplicator?.ensure(name, db);
@@ -390,6 +614,8 @@ export class LioranManager {
     if (this.mode === ProcessMode.READONLY) {
       throw new LiorandbError("READONLY_MODE", "Snapshot not allowed in readonly mode");
     }
+
+    this._authorize("db:backup", { op: "snapshot" }, true);
 
     return await this.opsMutex.runExclusive(async () => {
       for (const db of this.openDBs.values()) {
@@ -440,6 +666,8 @@ export class LioranManager {
       throw new LiorandbError("READONLY_MODE", "Restore not allowed in readonly mode");
     }
 
+    this._authorize("db:restore", { op: "restore" }, true);
+
     await this.opsMutex.runExclusive(async () => {
       await this.closeAll();
 
@@ -481,6 +709,8 @@ export class LioranManager {
         throw new LiorandbError("READONLY_MODE", "Incremental backup not allowed in readonly mode");
       }
 
+      this._authorize("db:backup", { op: "incrementalBackup" }, true);
+
       return await this.opsMutex.runExclusive(async () => {
         for (const db of this.openDBs.values()) {
           try {
@@ -516,6 +746,8 @@ export class LioranManager {
       if (this.mode === ProcessMode.READONLY) {
         throw new LiorandbError("READONLY_MODE", "Applying backups not allowed in readonly mode");
       }
+
+      this._authorize("db:restore", { op: "applyIncrementalBackup" }, true);
 
       return await this.opsMutex.runExclusive(async () => {
         const { recordsByDb } = await readIncrementalBackupArchive(backupPath);
@@ -563,6 +795,10 @@ export class LioranManager {
     }
 
     this.openDBs.clear();
+    for (const unsub of this.auditUnsubByDb.values()) {
+      try { unsub(); } catch {}
+    }
+    this.auditUnsubByDb.clear();
 
     try {
       await this.lifecycle.close();
