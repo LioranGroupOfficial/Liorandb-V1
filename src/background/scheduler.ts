@@ -153,7 +153,10 @@ export class BackgroundScheduler {
   private async runSnapshot(nowMs: number) {
     const dir = this.backupDir();
     const out = path.join(dir, `snapshot-${nowMs}.tar.gz`);
-    await (this.manager as any).snapshot(out);
+    const tmp = out + ".tmp";
+    try { await fs.promises.rm(tmp, { force: true }); } catch {}
+    await (this.manager as any).snapshot(tmp);
+    await fs.promises.rename(tmp, out);
     this.lastSnapshotAt = nowMs;
     await this.pruneRetention(dir);
   }
@@ -161,7 +164,10 @@ export class BackgroundScheduler {
   private async runIncrementalBackup(nowMs: number) {
     const dir = this.backupDir();
     const out = path.join(dir, `pitr-${nowMs}.tar.gz`);
-    const manifest = await (this.manager as any).incrementalBackup(out, { fromLSNByDb: this.lastIncLSNByDb });
+    const tmp = out + ".tmp";
+    try { await fs.promises.rm(tmp, { force: true }); } catch {}
+    const manifest = await (this.manager as any).incrementalBackup(tmp, { fromLSNByDb: this.lastIncLSNByDb });
+    await fs.promises.rename(tmp, out);
     try {
       for (const [dbName, info] of Object.entries((manifest as any).dbs ?? {})) {
         const last = Math.max(0, Math.trunc((info as any).lastLSN ?? 0));

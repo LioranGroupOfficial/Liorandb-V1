@@ -32,8 +32,22 @@ let manager;
 try {
   manager = new LioranManager({
     rootPath,
+    cores: Math.max(1, Math.trunc(Number(process.env.LIORAN_CORES ?? 4))),
+    cache: {
+      enabled: true,
+      // Total across 4 nodes ~= 10 GiB
+      maxRAMMB: Math.max(64, Math.trunc((Number(process.env.LIORAN_CACHE_MB ?? 2560)))),
+      partitions: { query: 0.2, docs: 0.6, index: 0.2 },
+      decay: { intervalMs: 60_000, multiplier: 0.95 }
+    },
     storage: {
-      adaptiveCompaction: { enabled: false }
+      adaptiveCompaction: { enabled: false },
+      leveldb: {
+        // Reduce disk reads for hot point-lookups.
+        cacheSize: Math.max(64 * 1024 * 1024, Math.trunc(Number(process.env.LIORAN_LEVEL_CACHE_BYTES ?? (512 * 1024 * 1024)))),
+        maxOpenFiles: Math.max(256, Math.trunc(Number(process.env.LIORAN_LEVEL_MAX_OPEN_FILES ?? 2048))),
+        compression: process.env.LIORAN_LEVEL_COMPRESSION ? process.env.LIORAN_LEVEL_COMPRESSION !== "0" : true
+      }
     },
     cluster: {
       enabled: true,
@@ -43,6 +57,8 @@ try {
       walStreamPort,
       clientPort,
       peers,
+      heartbeatMs: 500,
+      electionTimeoutMs: { min: 1500, max: 3000 },
       waitForMajority: false,
       waitTimeoutMs: 1500,
       client: {
@@ -64,12 +80,12 @@ try {
       intervalMs: 2000,
       dbTicksEnabled: false,
       backup: {
-        enabled: true,
+        enabled: process.env.SOAK_BACKUPS ? process.env.SOAK_BACKUPS !== "0" : true,
         outDir: backupDir,
-        snapshotEveryMs: 15_000,
-        incrementalEveryMs: 3000,
+        snapshotEveryMs: Math.max(60_000, Math.trunc(Number(process.env.SOAK_SNAPSHOT_MS ?? 5 * 60_000))),
+        incrementalEveryMs: Math.max(5_000, Math.trunc(Number(process.env.SOAK_PITR_MS ?? 30_000))),
         retention: { snapshots: 5, incrementals: 50 },
-        verifyRestoreEveryMs: 20_000,
+        verifyRestoreEveryMs: Math.max(60_000, Math.trunc(Number(process.env.SOAK_VERIFY_MS ?? 10 * 60_000))),
         verifyPitrDelayMs: 2000
       }
     },
@@ -160,7 +176,7 @@ process.on("uncaughtException", err => {
 process.on("unhandledRejection", err => {
   const msg = String((err && err.stack) || err);
   // Expected during chaos (leader kill / restarts).
-  if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") || msg.includes("EPIPE")) return;
+  if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") || msg.includes("EPIPE") || msg.includes("EADDRINUSE")) return;
   parentPort.postMessage({ ok: false, type: "unhandled", nodeId, error: msg });
 });
 

@@ -698,11 +698,7 @@ export class LioranManager {
         try {
           await db.wal?.flush?.();
         } catch {}
-        try {
-          await db.close();
-        } catch {}
       }
-      this.openDBs.clear();
 
       fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
 
@@ -792,12 +788,7 @@ export class LioranManager {
           try {
             await db.wal?.flush?.();
           } catch {}
-          try {
-            await db.close();
-          } catch {}
         }
-        this.openDBs.clear();
-
         return await createIncrementalBackupArchive(this.rootPath, backupPath, options);
       });
     } catch (err) {
