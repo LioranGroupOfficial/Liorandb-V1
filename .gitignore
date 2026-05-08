@@ -164,6 +164,8 @@ vite.config.ts.timestamp-*
 .tmp
 build
 __soak_test__
+__cluster_soak__
+__tmpx
 __tests__
 log-s.txt
 log-c.txt
