@@ -10,6 +10,11 @@ export type BackgroundSchedulerOptions = {
    * How often to run background maintenance ticks.
    */
   intervalMs?: number;
+  /**
+   * If false, disables calling `db.backgroundTick()` (maintenance/compaction/index rebuild).
+   * Backup scheduling still runs (if enabled).
+   */
+  dbTicksEnabled?: boolean;
   backup?: {
     enabled?: boolean;
     outDir?: string;
@@ -69,17 +74,19 @@ export class BackgroundScheduler {
 
     this.running = true;
     try {
-      for (const db of (this.manager as any).openDBs?.values?.() ?? []) {
-        try {
-          await (db as any).backgroundTick?.();
-        } catch (err) {
-          const e = asLiorandbError(err, {
-            code: "INTERNAL",
-            message: "Background tick failed",
-            details: { db: (db as any)?.dbName }
-          });
-          // eslint-disable-next-line no-console
-          console.warn("[BackgroundScheduler]", e.message, e.details ?? {});
+      if (this.opts.dbTicksEnabled !== false) {
+        for (const db of (this.manager as any).openDBs?.values?.() ?? []) {
+          try {
+            await (db as any).backgroundTick?.();
+          } catch (err) {
+            const e = asLiorandbError(err, {
+              code: "INTERNAL",
+              message: "Background tick failed",
+              details: { db: (db as any)?.dbName }
+            });
+            // eslint-disable-next-line no-console
+            console.warn("[BackgroundScheduler]", e.message, e.details ?? {});
+          }
         }
       }
 

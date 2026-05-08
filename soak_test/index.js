@@ -151,23 +151,49 @@ async function rpcCall(target, payload, timeoutMs = 4000) {
 }
 
 async function rpcExecAny(action, args) {
-  const node = pick(nodes);
+  const baseNode = pick(nodes);
   const id = `${Date.now()}-${randId()}`;
-  const res = await rpcCall(node, { id, action, args, token }, 5000);
-  if (res.ok) return res.result;
-  const err = res.error;
-  if (err?.code === "NOT_LEADER") {
-    const hinted = err?.details?.leader?.clientPort;
-    const fallback = CURRENT_LEADER_PORT;
-    const port = hinted ?? fallback;
-    if (port) {
-      const leader = { port };
-      const res2 = await rpcCall(leader, { id, action, args, token }, 5000);
-      if (res2.ok) return res2.result;
-      throw new Error(`rpc failed: ${JSON.stringify(res2.error)}`);
+
+  let target = baseNode;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const res = await rpcCall(target, { id, action, args, token }, 5000);
+    if (res.ok) return res.result;
+    const err = res.error;
+
+    // Redirect to leader if known.
+    if (err?.code === "NOT_LEADER") {
+      const hinted = err?.details?.leader?.clientPort;
+      const fallback = CURRENT_LEADER_PORT;
+      const port = hinted ?? fallback;
+      if (port) {
+        target = { port };
+        await sleep(Math.min(250, 25 * (attempt + 1)));
+        continue;
+      }
     }
+
+    // Transient during leader role switch (DB close/reopen).
+    const msg = String(err?.message ?? "");
+    const lower = msg.toLowerCase();
+    const origMsg = String(err?.details?.originalMessage ?? "");
+    const origLower = origMsg.toLowerCase();
+    const causeCode = String(err?.cause?.code ?? err?.details?.cause?.code ?? "");
+    const transient =
+      (err?.code === "IO_ERROR" && lower.includes("database is not open")) ||
+      (err?.code === "INTERNAL" && (origLower.includes("database is not open") || causeCode === "LEVEL_DATABASE_NOT_OPEN")) ||
+      (err?.code === "CLOSED" && lower.includes("writer is closed")) ||
+      (lower.includes("writer is closed"));
+    if (transient) {
+      await sleep(Math.min(500, 50 * (attempt + 1)));
+      // Prefer leader if we have it.
+      target = CURRENT_LEADER_PORT ? { port: CURRENT_LEADER_PORT } : baseNode;
+      continue;
+    }
+
+    throw new Error(`rpc failed: ${JSON.stringify(err)}`);
   }
-  throw new Error(`rpc failed: ${JSON.stringify(err)}`);
+
+  throw new Error(`rpc failed: exceeded retries for action=${action}`);
 }
 
 async function detectLeaderPort() {
@@ -302,6 +328,7 @@ async function main() {
     let reads = 0;
     const seen = [];
     let restoreVerified = false;
+    let restoreAttempted = false;
 
     // Ensure DB is opened on all nodes so replicas subscribe and majority acks can succeed.
     await Promise.allSettled(
@@ -384,7 +411,8 @@ async function main() {
           await workerCmd(children.get(lagNode.id), { type: "set_replication_delay", ms: 750 }).catch(() => {});
 
           // Verify backup/restore once (uses leader backups).
-          if (!restoreVerified && seen.length > 10) {
+          if (!restoreAttempted && !restoreVerified && seen.length > 10 && Date.now() < deadline - 5000) {
+            restoreAttempted = true;
             const leaderRoot = nodes.find(n => n.clientPort === leaderPort)?.root;
             if (leaderRoot) {
               try {

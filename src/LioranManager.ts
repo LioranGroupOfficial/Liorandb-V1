@@ -196,7 +196,6 @@ export class LioranManager {
       // Start as follower/replica until a leader is elected.
       this.mode = ProcessMode.REPLICA;
       this._registerShutdownHooks();
-      void this._ensureReplicaReplicator();
       void this._ensureClusterController();
       return;
     }
@@ -661,8 +660,13 @@ export class LioranManager {
       } catch {}
 
       if (this.mode === ProcessMode.REPLICA) {
-        await this._ensureReplicaReplicator();
-        this.replicaReplicator?.ensure(name, db);
+        // In cluster mode we should only replicate once we know the leader WAL stream endpoint.
+        const hasWalStream = !!this.options.replication?.walStream;
+        const clusterEnabled = this.options.cluster?.enabled === true;
+        if (!clusterEnabled || hasWalStream) {
+          await this._ensureReplicaReplicator();
+          this.replicaReplicator?.ensure(name, db);
+        }
       }
       return db;
     } catch (err) {

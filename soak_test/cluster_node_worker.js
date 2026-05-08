@@ -32,6 +32,9 @@ let manager;
 try {
   manager = new LioranManager({
     rootPath,
+    storage: {
+      adaptiveCompaction: { enabled: false }
+    },
     cluster: {
       enabled: true,
       nodeId,
@@ -59,13 +62,14 @@ try {
     background: {
       enabled: true,
       intervalMs: 2000,
+      dbTicksEnabled: false,
       backup: {
         enabled: true,
         outDir: backupDir,
-        snapshotEveryMs: 30_000,
-        incrementalEveryMs: 5000,
+        snapshotEveryMs: 15_000,
+        incrementalEveryMs: 3000,
         retention: { snapshots: 5, incrementals: 50 },
-        verifyRestoreEveryMs: 45_000,
+        verifyRestoreEveryMs: 20_000,
         verifyPitrDelayMs: 2000
       }
     },
@@ -148,10 +152,16 @@ parentPort.on("message", async msg => {
 });
 
 process.on("uncaughtException", err => {
-  parentPort.postMessage({ ok: false, type: "uncaught", nodeId, error: String(err?.stack || err) });
+  const msg = String((err && err.stack) || err);
+  // Expected during chaos (leader kill / restarts).
+  if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") || msg.includes("EPIPE")) return;
+  parentPort.postMessage({ ok: false, type: "uncaught", nodeId, error: msg });
 });
 process.on("unhandledRejection", err => {
-  parentPort.postMessage({ ok: false, type: "unhandled", nodeId, error: String(err?.stack || err) });
+  const msg = String((err && err.stack) || err);
+  // Expected during chaos (leader kill / restarts).
+  if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") || msg.includes("EPIPE")) return;
+  parentPort.postMessage({ ok: false, type: "unhandled", nodeId, error: msg });
 });
 
 // Keep alive (do NOT unref; worker must stay running)

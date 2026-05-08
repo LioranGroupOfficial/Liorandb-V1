@@ -40,54 +40,59 @@ export class ReplicaReplicator {
   }
 
   private async runStream(dbName: string, db: LioranDB) {
-    try {
-      if (!this.streamClient) {
-        this.streamClient = new WALStreamClient({
-          host: this.opts.walStream!.host,
-          port: this.opts.walStream!.port
+    const host = this.opts.walStream!.host;
+    const port = this.opts.walStream!.port;
+
+    while (!this.stopped) {
+      try {
+        if (!this.streamClient) {
+          this.streamClient = new WALStreamClient({ host, port });
+        }
+
+        if (!this.streamStarted) {
+          this.streamStarted = true;
+          await this.streamClient.start();
+          this.streamClient.bindReplica(async name => {
+            // Ensure we bind to the *local* DB instance (replicas must apply WAL locally).
+            // In cluster follower mode, `manager.db()` returns a routing proxy, so bypass it.
+            const local = (this.manager as any).openDatabase
+              ? await (this.manager as any).openDatabase(name)
+              : await this.manager.db(name);
+            return local as any;
+          }, {
+            onProgress: (info) => {
+              try {
+                (this.manager as any)?.metrics?.observeReplicaProgress?.(info.db, {
+                  leaderLSN: info.leaderLSN,
+                  appliedLSN: info.appliedLSN,
+                  commitTimeMs: info.commitTimeMs
+                });
+              } catch {}
+            }
+          });
+        }
+
+        // Subscribe from current checkpoint and rely on push replication.
+        const fromLSN = db.getCheckpointLSN();
+        this.streamClient.subscribe(dbName, fromLSN);
+
+        while (!this.stopped) {
+          await sleep(250);
+        }
+        return;
+      } catch (err) {
+        const e = asLiorandbError(err, {
+          code: "IO_ERROR",
+          message: "Replica WAL stream failed",
+          details: { db: dbName }
         });
-      }
+        console.warn("[ReplicaReplicator:stream]", e.message, e.details ?? {});
 
-      if (!this.streamStarted) {
-        this.streamStarted = true;
-        await this.streamClient.start();
-        this.streamClient.bindReplica(async name => {
-          // Ensure we bind to the *local* DB instance (replicas must apply WAL locally).
-          // In cluster follower mode, `manager.db()` returns a routing proxy, so bypass it.
-          const local = (this.manager as any).openDatabase
-            ? await (this.manager as any).openDatabase(name)
-            : await this.manager.db(name);
-          return local as any;
-        }, {
-          onProgress: (info) => {
-            try {
-              (this.manager as any)?.metrics?.observeReplicaProgress?.(info.db, {
-                leaderLSN: info.leaderLSN,
-                appliedLSN: info.appliedLSN,
-                commitTimeMs: info.commitTimeMs
-              });
-            } catch {}
-          }
-        });
-      }
-
-      // Subscribe from current checkpoint and rely on push replication.
-      const fromLSN = db.getCheckpointLSN();
-      this.streamClient.subscribe(dbName, fromLSN);
-
-      while (!this.stopped) {
-        await sleep(250);
-      }
-    } catch (err) {
-      const e = asLiorandbError(err, {
-        code: "IO_ERROR",
-        message: "Replica WAL stream failed",
-        details: { db: dbName }
-      });
-      console.warn("[ReplicaReplicator:stream]", e.message, e.details ?? {});
-      // Fallback to polling loop if stream fails.
-      if (!this.stopped) {
-        await this.runLoop(dbName, db);
+        // In cluster mode, polling fallback via IPC will never work, so keep retrying the stream.
+        try { await this.streamClient?.stop(); } catch {}
+        this.streamClient = null;
+        this.streamStarted = false;
+        await sleep(Math.min(1000, Math.max(50, this.opts.pollMs)));
       }
     }
   }
