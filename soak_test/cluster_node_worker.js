@@ -67,6 +67,11 @@ try {
         auth: { token, required: true }
       }
     },
+    slo: {
+      // Soak harness runs many parallel client loops; use bounded waiting instead of immediate reject.
+      read: { enabled: true, mode: "wait", maxInFlight: Math.max(256, Math.trunc(Number(process.env.LIORAN_READ_MAX_INFLIGHT ?? 2048))), maxQueue: Math.max(0, Math.trunc(Number(process.env.LIORAN_READ_MAX_QUEUE ?? 4096))), timeoutMs: Math.max(0, Math.trunc(Number(process.env.LIORAN_READ_TIMEOUT_MS ?? 250))) },
+      write: { enabled: true, mode: "wait", maxInFlight: Math.max(64, Math.trunc(Number(process.env.LIORAN_WRITE_MAX_INFLIGHT ?? 512))), maxQueue: Math.max(0, Math.trunc(Number(process.env.LIORAN_WRITE_MAX_QUEUE ?? 10000))), timeoutMs: Math.max(0, Math.trunc(Number(process.env.LIORAN_WRITE_TIMEOUT_MS ?? 30000))) }
+    },
     consistency: {
       reads: {
         mode: "bounded_stale",
@@ -74,6 +79,13 @@ try {
         maxLagLSN: 5000,
         autoDegradeToStaleOk: false
       }
+    },
+    // Relax read-after-write coupling inside a node; soak focuses on latency under load.
+    writeQueue: {
+      // Prevent reads from being blocked behind very deep writer backlog due to forced ordering.
+      maxSize: Math.max(10_000, Math.trunc(Number(process.env.LIORAN_WRITEQUEUE_MAX ?? 50_000))),
+      mode: "wait",
+      timeoutMs: Math.max(1, Math.trunc(Number(process.env.LIORAN_WRITEQUEUE_TIMEOUT_MS ?? 200)))
     },
     background: {
       enabled: true,

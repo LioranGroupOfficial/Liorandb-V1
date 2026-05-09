@@ -44,7 +44,8 @@ function classifyErr(err) {
       const code = String(err.code ?? "unknown");
       const msg = String(err.message ?? "unknown");
       const orig = err?.details?.originalMessage ? ` | ${String(err.details.originalMessage)}` : "";
-      return { key: `${code}: ${msg}${orig}`, code, msg: msg + orig };
+      const det = err?.details ? ` | details=${JSON.stringify(err.details)}` : "";
+      return { key: `${code}: ${msg}${orig}`, code, msg: msg + orig + det };
     }
     const msg = String(err?.message ?? err);
     return { key: msg, code: "exception", msg };
@@ -139,6 +140,22 @@ async function workerCmd(worker, msg, timeoutMs = 1000) {
 
 // Tiny RPC helper (no dependency on internal client) to keep harness simple
 const rpcClients = new Map();
+const portQuarantine = new Map(); // port -> deadUntilMs
+
+function markPortDead(port, deadForMs = 2000) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) return;
+  const until = Date.now() + Math.max(250, Math.trunc(deadForMs));
+  const prev = portQuarantine.get(p) ?? 0;
+  if (until > prev) portQuarantine.set(p, until);
+}
+
+function isPortDead(port) {
+  const p = Number(port);
+  const until = portQuarantine.get(p) ?? 0;
+  return until > Date.now();
+}
+
 function getRpcClient(port) {
   const key = String(port);
   const existing = rpcClients.get(key);
@@ -148,6 +165,18 @@ function getRpcClient(port) {
   let sock = null;
   let buf = "";
   const inflight = new Map();
+
+  const destroySocket = (why) => {
+    try { sock?.destroy?.(); } catch {}
+    sock = null;
+    buf = "";
+    // Reject any in-flight calls so callers can retry elsewhere.
+    for (const p of inflight.values()) {
+      try { if (p.t) clearTimeout(p.t); } catch {}
+      try { p.reject(why ?? new Error("rpc socket destroyed")); } catch {}
+    }
+    inflight.clear();
+  };
 
   async function connect() {
     if (sock && !sock.destroyed) return;
@@ -174,13 +203,7 @@ function getRpcClient(port) {
       }
     });
     const failAll = (err) => {
-      for (const p of inflight.values()) {
-        if (p.t) clearTimeout(p.t);
-        p.reject(err);
-      }
-      inflight.clear();
-      try { sock?.destroy?.(); } catch {}
-      sock = null;
+      destroySocket(err);
     };
     sock.on("error", failAll);
     sock.on("close", () => failAll(new Error("rpc socket closed")));
@@ -197,7 +220,11 @@ function getRpcClient(port) {
     return await new Promise((resolve, reject) => {
       const t = setTimeout(() => {
         inflight.delete(id);
-        reject(new Error("rpc timeout"));
+        // Timeout means the remote is too slow or the socket is wedged; force reconnect.
+        const err = new Error("rpc timeout");
+        markPortDead(port, 1500);
+        destroySocket(err);
+        reject(err);
       }, timeoutMs);
       t.unref?.();
       inflight.set(id, { resolve, reject, t });
@@ -219,6 +246,7 @@ function getRpcClient(port) {
 async function rpcCall(target, payload, timeoutMs = 4000) {
   const port = Number(target?.port ?? target?.clientPort);
   if (!Number.isFinite(port) || port <= 0) throw new Error("rpc target missing port");
+  if (isPortDead(port)) throw new Error(`rpc port quarantined: ${port}`);
   const client = getRpcClient(port);
   return await client.call(payload, timeoutMs);
 }
@@ -229,7 +257,20 @@ async function rpcExecAny(action, args) {
 
   let target = baseNode;
   for (let attempt = 0; attempt < 10; attempt++) {
-    const res = await rpcCall(target, { id, action, args, token }, 5000);
+    let res;
+    try {
+      res = await rpcCall(target, { id, action, args, token }, 5000);
+    } catch (e) {
+      // Socket-level failures/timeouts: retry on another node (prefer known leader).
+      const msg = String(e?.message ?? e);
+      const transient = msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("socket closed") || msg.toLowerCase().includes("econnreset");
+      if (transient) {
+        await sleep(Math.min(500, 50 * (attempt + 1)));
+        target = CURRENT_LEADER_PORT ? { port: CURRENT_LEADER_PORT } : baseNode;
+        continue;
+      }
+      throw e;
+    }
     if (res.ok) return res.result;
     const err = res.error;
 
@@ -255,7 +296,8 @@ async function rpcExecAny(action, args) {
       (err?.code === "IO_ERROR" && lower.includes("database is not open")) ||
       (err?.code === "INTERNAL" && (origLower.includes("database is not open") || causeCode === "LEVEL_DATABASE_NOT_OPEN")) ||
       (err?.code === "CLOSED" && lower.includes("writer is closed")) ||
-      (lower.includes("writer is closed"));
+      (lower.includes("writer is closed")) ||
+      (err?.code === "IO_ERROR" && lower.includes("rpc timeout"));
     if (transient) {
       await sleep(Math.min(500, 50 * (attempt + 1)));
       // Prefer leader if we have it.
@@ -267,6 +309,57 @@ async function rpcExecAny(action, args) {
   }
 
   throw new Error(`rpc failed: exceeded retries for action=${action}`);
+}
+
+async function rpcExecRead(method, params) {
+  // Prefer followers for reads, but fall back to leader if needed.
+  const candidates = [];
+  const leaderPort = CURRENT_LEADER_PORT;
+  for (const n of nodes) {
+    if (leaderPort && n.clientPort === leaderPort) continue;
+    if (!isPortDead(n.clientPort)) candidates.push({ port: n.clientPort });
+  }
+  if (leaderPort && !isPortDead(leaderPort)) candidates.push({ port: leaderPort });
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const target = candidates.length ? candidates[attempt % candidates.length] : pick(nodes);
+    try {
+      const res = await rpcCall(
+        target,
+        { id: `${Date.now()}-${randId()}`, action: "op", args: { db: "soak", col: "items", method, params }, token },
+        3500
+      );
+      if (res.ok) return { ok: true, result: res.result };
+      lastErr = res.error ?? lastErr;
+      const code = res?.error?.code;
+      if (code === "STALE_READ" || code === "NOT_LEADER") {
+        // Expected under bounded-stale or during elections.
+        return { ok: false, error: res.error, expectedSkip: true };
+      }
+      // Transient on node restarts/elections.
+      const msg = String(res?.error?.message ?? "").toLowerCase();
+      if (msg.includes("writer is closed") || msg.includes("database is not open") || msg.includes("timeout")) {
+        await sleep(Math.min(250, 25 * (attempt + 1)));
+        continue;
+      }
+      return { ok: false, error: res.error, expectedSkip: false };
+    } catch (e) {
+      lastErr = e ?? lastErr;
+      const msg = String(e?.message ?? e).toLowerCase();
+      if (msg.includes("quarantined")) {
+        await sleep(Math.min(150, 25 * (attempt + 1)));
+        continue;
+      }
+      if (msg.includes("timeout") || msg.includes("socket closed") || msg.includes("econnreset") || msg.includes("econnrefused")) {
+        try { markPortDead(target?.port ?? target?.clientPort, 1500); } catch {}
+        await sleep(Math.min(250, 25 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  return { ok: false, error: lastErr ?? new Error("read exceeded retries"), expectedSkip: false };
 }
 
 async function detectLeaderPort() {
@@ -438,7 +531,10 @@ async function main() {
     const writerOpsPerSec = Math.max(1, Math.trunc(Number(process.env.WRITE_QPS ?? 250)));
     const readerOpsPerSec = Math.max(1, Math.trunc(Number(process.env.READ_QPS ?? 500)));
     const writerConcurrency = Math.max(1, Math.trunc(Number(process.env.WRITE_CONCURRENCY ?? 4)));
-    const readerConcurrency = Math.max(1, Math.trunc(Number(process.env.READ_CONCURRENCY ?? 8)));
+    // Default lower to avoid overwhelming disk-bound reads; tune via env.
+    const readerConcurrency = Math.max(1, Math.trunc(Number(process.env.READ_CONCURRENCY ?? 4)));
+    const insertBatchSize = Math.max(1, Math.trunc(Number(process.env.INSERT_BATCH_SIZE ?? 500)));
+    const readRepeat = Math.max(1, Math.trunc(Number(process.env.READ_REPEAT ?? 25)));
     const logEveryMs = Math.max(5_000, Math.trunc(Number(process.env.LOG_EVERY_MS ?? 10_000)));
     const diskEveryMs = Math.max(10_000, Math.trunc(Number(process.env.DISK_EVERY_MS ?? 60_000)));
     const errSampleForMs = Math.max(0, Math.trunc(Number(process.env.ERR_SAMPLE_MS ?? 180_000))); // default 3 minutes
@@ -541,58 +637,95 @@ async function main() {
     let lastLogAt = 0;
     let lastDiskAt = 0;
 
+    // Sleep per lane to approximate total target QPS (best-effort; ignores per-op variability).
     const writerTargetSleepMs = Math.max(0, Math.floor(1000 / (writerOpsPerSec / writerConcurrency)));
-    const readerTargetSleepMs = Math.max(0, Math.floor(1000 / (readerOpsPerSec / readerConcurrency)));
+    // Each reader loop issues `readRepeat` reads, so scale the sleep accordingly.
+    const readerTargetSleepMs = Math.max(0, Math.floor((1000 / (readerOpsPerSec / readerConcurrency)) * readRepeat));
 
     async function writerLoop(lane) {
+      const pending = [];
+
+      const doOp = async (method, params) => {
+        let lastErr = null;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          let leaderTarget = CURRENT_LEADER_PORT ? { port: CURRENT_LEADER_PORT } : pick(nodes);
+          let res;
+          try {
+            res = await rpcCall(
+              leaderTarget,
+              { id: `${Date.now()}-${randId()}`, action: "op", args: { db: "soak", col: "items", method, params }, token },
+              5000
+            );
+          } catch (e) {
+            lastErr = e ?? lastErr;
+            const msg = String(e?.message ?? e).toLowerCase();
+            const transientSock =
+              msg.includes("econnrefused") ||
+              msg.includes("econnreset") ||
+              msg.includes("socket closed") ||
+              msg.includes("timeout") ||
+              msg.includes("quarantined");
+            if (transientSock) {
+              try { markPortDead(leaderTarget?.port ?? leaderTarget?.clientPort, 1500); } catch {}
+              await sleep(Math.min(500, 50 * (attempt + 1)));
+              continue;
+            }
+            throw e;
+          }
+
+          if (res.ok) return true;
+
+          const e = res.error;
+          lastErr = e ?? lastErr;
+          if (e?.code === "NOT_LEADER" && e?.details?.leader?.clientPort) {
+            CURRENT_LEADER_PORT = e.details.leader.clientPort;
+            await sleep(Math.min(250, 25 * (attempt + 1)));
+            continue;
+          }
+          const msg = String(e?.message ?? "");
+          const orig = String(e?.details?.originalMessage ?? "");
+          const causeCode = String(e?.cause?.code ?? "");
+          const transient = (msg.toLowerCase().includes("writer is closed")) ||
+            (msg.toLowerCase().includes("database is not open")) ||
+            (orig.toLowerCase().includes("database is not open")) ||
+            causeCode === "LEVEL_DATABASE_NOT_OPEN";
+          if (transient) {
+            await sleep(Math.min(500, 50 * (attempt + 1)));
+            continue;
+          }
+          throw e;
+        }
+        throw (lastErr ?? new Error("write exceeded retries"));
+      };
+
+      const flush = async () => {
+        if (pending.length === 0) return;
+        const batch = pending.splice(0, pending.length);
+        await doOp("insertMany", [batch]);
+        writes += batch.length;
+        for (const d of batch) {
+          if (seen.length < 100000) seen.push(d.id);
+        }
+      };
+
       while (Date.now() < heavyDeadline) {
         const t0 = performance.now();
         const opRoll = Math.random();
         const id = `k-${Date.now()}-${lane}-${randId()}`;
         try {
-          const doOp = async (method, params) => {
-            let lastErr = null;
-            for (let attempt = 0; attempt < 8; attempt++) {
-              let leaderTarget = CURRENT_LEADER_PORT ? { port: CURRENT_LEADER_PORT } : pick(nodes);
-              const res = await rpcCall(
-                leaderTarget,
-                { id: `${Date.now()}-${randId()}`, action: "op", args: { db: "soak", col: "items", method, params }, token },
-                5000
-              );
-              if (res.ok) return true;
-
-              const e = res.error;
-              lastErr = e ?? lastErr;
-              if (e?.code === "NOT_LEADER" && e?.details?.leader?.clientPort) {
-                CURRENT_LEADER_PORT = e.details.leader.clientPort;
-                await sleep(Math.min(250, 25 * (attempt + 1)));
-                continue;
-              }
-              const msg = String(e?.message ?? "");
-              const orig = String(e?.details?.originalMessage ?? "");
-              const causeCode = String(e?.cause?.code ?? "");
-              const transient = (msg.toLowerCase().includes("writer is closed")) ||
-                (msg.toLowerCase().includes("database is not open")) ||
-                (orig.toLowerCase().includes("database is not open")) ||
-                causeCode === "LEVEL_DATABASE_NOT_OPEN";
-              if (transient) {
-                await sleep(Math.min(500, 50 * (attempt + 1)));
-                continue;
-              }
-              throw e;
-            }
-            throw (lastErr ?? new Error("write exceeded retries"));
-          };
-
           if (opRoll < 0.70) {
-            await doOp("insertOne", [{ id, ts: Date.now(), v: Math.random(), lane }]);
-            writes++;
-            if (seen.length < 100000) seen.push(id);
+            // Batch inserts to reduce syscall pressure and exercise WAL batching.
+            pending.push({ id, ts: Date.now(), v: Math.random(), lane });
+            if (pending.length >= insertBatchSize) {
+              await flush();
+            }
           } else if (opRoll < 0.95) {
+            if (pending.length) await flush();
             const pickId = seen.length ? pick(seen) : id;
             await doOp("updateOne", [{ id: pickId }, { $set: { u: Date.now(), r: Math.random() } }, { upsert: true }]);
             updates++;
           } else {
+            if (pending.length) await flush();
             const pickId = seen.length ? pick(seen) : id;
             await doOp("deleteOne", [{ id: pickId }]);
             deletes++;
@@ -619,33 +752,33 @@ async function main() {
 
         if (writerTargetSleepMs) await sleep(writerTargetSleepMs);
       }
+
+      // Flush any remaining inserts on exit.
+      try { await flush(); } catch (e) { errors++; recordError(e, "write"); }
     }
 
-    async function readerLoop(node, lane) {
+    async function readerLoop(_node, lane) {
       while (Date.now() < heavyDeadline) {
         const pickId = seen.length ? pick(seen) : `missing-${lane}-${randId()}`;
-        const t0 = performance.now();
         try {
-          const res = await rpcCall(node, {
-            id: `${Date.now()}-${randId()}`,
-            action: "op",
-            args: { db: "soak", col: "items", method: "findOne", params: [{ id: pickId }] },
-            token
-          }, 5000);
-          if (res.ok) reads++;
-          else {
-            const code = res?.error?.code;
-            if (code === "STALE_READ" || code === "NOT_LEADER") expectedSkips++;
-            else {
-              errors++;
-              recordError(res?.error, "read");
+          // Repeat the same lookup to exercise LCR cache effectiveness.
+          for (let i = 0; i < readRepeat; i++) {
+            const t0 = performance.now();
+            try {
+              const res = await rpcExecRead("findOne", [{ id: pickId }]);
+              if (res.ok) reads++;
+              else if (res.expectedSkip) expectedSkips++;
+              else {
+                errors++;
+                recordError(res?.error, "read");
+              }
+            } finally {
+              observe("read", performance.now() - t0);
             }
           }
         } catch (e) {
           errors++;
           recordError(e, "read");
-        } finally {
-          observe("read", performance.now() - t0);
         }
         if (readerTargetSleepMs) await sleep(readerTargetSleepMs);
       }

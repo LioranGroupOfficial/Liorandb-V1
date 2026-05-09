@@ -409,25 +409,26 @@ export class Collection<T = any> {
     const mode = this.latency?.onViolation;
     const startedAt = Date.now();
 
-    const runOne = async () => {
-      try { this.security?.read?.(); } catch {}
-      if (this.scheduler) {
-        const result = await this.scheduler!.maintenance(task);
-        try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
-        return result;
-      }
-
-      // Best-effort read-after-write consistency for local (non-scheduler) mode.
-      const result = await this.writeQueue.then(task);
+    const runDirect = async () => {
+      const result = await task();
       try { this.metrics?.observeLatency?.(this.dbName, "read", Date.now() - startedAt); } catch {}
       return result;
     };
 
-    const admitted = this.admission?.read
-      ? () => this.admission!.read!(runOne)
-      : runOne;
+    const admittedDirect = this.admission?.read
+      ? () => this.admission!.read!(runDirect)
+      : runDirect;
 
-    return withLatencyBudget(`read:${this.dir}`, budget, mode, admitted);
+    const wrapped = async () => {
+      try { this.security?.read?.(); } catch {}
+
+      // Best-effort read-after-write consistency for local (non-scheduler) mode.
+      // Do not hold admission permits while waiting behind the write queue.
+      await this.writeQueue;
+      return admittedDirect();
+    };
+
+    return withLatencyBudget(`read:${this.dir}`, budget, mode, wrapped);
   }
 
   /* ===================== COMPACTION ===================== */

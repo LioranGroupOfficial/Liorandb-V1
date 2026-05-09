@@ -56,6 +56,7 @@ export class IPCServer {
   async start(): Promise<void> {
     if (this.server) return;
     const endpointFile = getIpcEndpointFile(this.rootPath);
+    try { fs.mkdirSync(this.rootPath, { recursive: true }); } catch {}
 
     this.server = net.createServer(socket => {
       socket.setNoDelay(true);
