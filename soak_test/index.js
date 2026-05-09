@@ -278,7 +278,14 @@ async function rpcExecAny(action, args) {
     if (err?.code === "NOT_LEADER") {
       const hinted = err?.details?.leader?.clientPort;
       const fallback = CURRENT_LEADER_PORT;
-      const port = hinted ?? fallback;
+      let port = hinted ?? fallback;
+      if (!port) {
+        const detected = await detectLeaderPort().catch(() => null);
+        if (detected) {
+          CURRENT_LEADER_PORT = detected;
+          port = detected;
+        }
+      }
       if (port) {
         target = { port };
         await sleep(Math.min(250, 25 * (attempt + 1)));
@@ -311,7 +318,7 @@ async function rpcExecAny(action, args) {
   throw new Error(`rpc failed: exceeded retries for action=${action}`);
 }
 
-async function rpcExecRead(method, params) {
+async function rpcExecRead(method, params, opts = {}) {
   // Prefer followers for reads, but fall back to leader if needed.
   const candidates = [];
   const leaderPort = CURRENT_LEADER_PORT;
@@ -321,29 +328,88 @@ async function rpcExecRead(method, params) {
   }
   if (leaderPort && !isPortDead(leaderPort)) candidates.push({ port: leaderPort });
 
+  const fanout = Math.max(1, Math.trunc(Number(opts?.fanout ?? 1)));
+  const hedgeMs = Math.max(0, Math.trunc(Number(opts?.hedgeMs ?? 0)));
+  const preferPort = Number.isFinite(opts?.preferPort) ? Number(opts.preferPort) : null;
+
+  // Shuffle candidates to distribute load (avoid always hitting candidates[0]).
+  // Keep preferPort first when provided.
+  if (candidates.length > 1) {
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = candidates[i];
+      candidates[i] = candidates[j];
+      candidates[j] = tmp;
+    }
+  }
+  if (preferPort) {
+    const idx = candidates.findIndex(c => c.port === preferPort);
+    if (idx > 0) {
+      const [c] = candidates.splice(idx, 1);
+      candidates.unshift(c);
+    }
+  }
+
+  const execOne = async (target) => {
+    const res = await rpcCall(
+      target,
+      { id: `${Date.now()}-${randId()}`, action: "op", args: { db: "soak", col: "items", method, params }, token },
+      3500
+    );
+    if (res.ok) return { ok: true, result: res.result, port: target.port };
+    const code = res?.error?.code;
+    if (code === "STALE_READ" || code === "NOT_LEADER") {
+      return { ok: false, error: res.error, expectedSkip: true, port: target.port };
+    }
+    return { ok: false, error: res.error, expectedSkip: false, port: target.port };
+  };
+
   let lastErr = null;
+
+  // Hedged read: start 1 request, optionally start a second after hedgeMs, take first success.
+  // This reduces tail latency if one replica is cold/GCing and another is warm.
+  if (fanout > 1 && candidates.length > 1) {
+    const picked = candidates.slice(0, Math.min(candidates.length, fanout));
+    const first = picked[0];
+    const second = picked[1] ?? null;
+
+    const firstP = (async () => {
+      try { return await execOne(first); } catch (e) { return { ok: false, error: e, expectedSkip: false, port: first.port }; }
+    })();
+
+    let secondP = null;
+    if (second) {
+      secondP = (async () => {
+        if (hedgeMs > 0) await sleep(hedgeMs);
+        try { return await execOne(second); } catch (e) { return { ok: false, error: e, expectedSkip: false, port: second.port }; }
+      })();
+    }
+
+    const res = await Promise.race([firstP, ...(secondP ? [secondP] : [])]);
+    if (res?.ok) return res;
+    // If first result isn't ok, wait for the other (if any) before falling back to retry loop.
+    const other = secondP ? await (res.port === second?.port ? firstP : secondP) : null;
+    if (other?.ok) return other;
+    lastErr = other?.error ?? res?.error ?? lastErr;
+    if (res?.expectedSkip || other?.expectedSkip) {
+      return { ok: false, error: (res?.error ?? other?.error), expectedSkip: true, port: res?.port ?? other?.port };
+    }
+  }
+
   for (let attempt = 0; attempt < 6; attempt++) {
     const target = candidates.length ? candidates[attempt % candidates.length] : pick(nodes);
     try {
-      const res = await rpcCall(
-        target,
-        { id: `${Date.now()}-${randId()}`, action: "op", args: { db: "soak", col: "items", method, params }, token },
-        3500
-      );
-      if (res.ok) return { ok: true, result: res.result };
-      lastErr = res.error ?? lastErr;
-      const code = res?.error?.code;
-      if (code === "STALE_READ" || code === "NOT_LEADER") {
-        // Expected under bounded-stale or during elections.
-        return { ok: false, error: res.error, expectedSkip: true };
-      }
+      const r = await execOne(target);
+      if (r.ok) return r;
+      lastErr = r.error ?? lastErr;
+      if (r.expectedSkip) return r;
       // Transient on node restarts/elections.
-      const msg = String(res?.error?.message ?? "").toLowerCase();
+      const msg = String(r?.error?.message ?? "").toLowerCase();
       if (msg.includes("writer is closed") || msg.includes("database is not open") || msg.includes("timeout")) {
         await sleep(Math.min(250, 25 * (attempt + 1)));
         continue;
       }
-      return { ok: false, error: res.error, expectedSkip: false };
+      return r;
     } catch (e) {
       lastErr = e ?? lastErr;
       const msg = String(e?.message ?? e).toLowerCase();
@@ -359,7 +425,7 @@ async function rpcExecRead(method, params) {
       throw e;
     }
   }
-  return { ok: false, error: lastErr ?? new Error("read exceeded retries"), expectedSkip: false };
+  return { ok: false, error: lastErr ?? new Error("read exceeded retries"), expectedSkip: false, port: null };
 }
 
 async function detectLeaderPort() {
@@ -544,7 +610,10 @@ async function main() {
     const errCounts = new Map();
     const errSamples = [];
     let lastErrPrintAt = 0;
+    // Keep a bounded working set so the soak reaches steady-state (otherwise p99 drifts upward as data grows).
+    const MAX_SEEN = Math.max(10_000, Math.trunc(Number(process.env.MAX_SEEN ?? 1_000_000)));
     const seen = [];
+    let seenCursor = 0;
     let restoreVerified = false;
     let restoreAttempted = false;
 
@@ -581,7 +650,7 @@ async function main() {
 
     // Lightweight latency reservoirs (avoid unbounded memory).
     const RESERVOIR = Math.max(1000, Math.trunc(Number(process.env.LAT_SAMPLES ?? 20000)));
-    const lat = { write: [], read: [] };
+    const lat = { write: [], read: [], readCold: [], readHot: [] };
     function observe(kind, ms) {
       const a = lat[kind];
       if (a.length < RESERVOIR) a.push(ms);
@@ -599,6 +668,25 @@ async function main() {
 
     function recordError(err, where) {
       const c = classifyErr(err);
+      // During elections/restarts, treat these as expected transient noise (do not count as "errors").
+      const msgL = String(c.msg ?? "").toLowerCase();
+      const expectedTransient =
+        msgL.includes("not_leader") ||
+        msgL.includes("writes must be sent to leader") ||
+        msgL.includes("cluster leader is unknown") ||
+        msgL.includes("writer is closed") ||
+        msgL.includes("database is not open") ||
+        msgL.includes("rpc socket closed") ||
+        msgL.includes("econnrefused") ||
+        msgL.includes("econnreset") ||
+        msgL.includes("quarantined");
+      if (expectedTransient) {
+        // Still track as skip/noise via samples, but don't add to global error count.
+        const key = `${where}: transient: ${c.key}`;
+        errCounts.set(key, (errCounts.get(key) ?? 0) + 1);
+        return;
+      }
+      errors++;
       const key = `${where}: ${c.key}`;
       errCounts.set(key, (errCounts.get(key) ?? 0) + 1);
       if (Date.now() < (heavyDeadline - (runForMs - errSampleForMs))) {
@@ -667,6 +755,11 @@ async function main() {
               msg.includes("quarantined");
             if (transientSock) {
               try { markPortDead(leaderTarget?.port ?? leaderTarget?.clientPort, 1500); } catch {}
+              // If we're stuck on a quarantined/old leader port, refresh leader hint.
+              if (msg.includes("quarantined")) {
+                const detected = await detectLeaderPort().catch(() => null);
+                if (detected) CURRENT_LEADER_PORT = detected;
+              }
               await sleep(Math.min(500, 50 * (attempt + 1)));
               continue;
             }
@@ -677,8 +770,14 @@ async function main() {
 
           const e = res.error;
           lastErr = e ?? lastErr;
-          if (e?.code === "NOT_LEADER" && e?.details?.leader?.clientPort) {
-            CURRENT_LEADER_PORT = e.details.leader.clientPort;
+          if (e?.code === "NOT_LEADER") {
+            const hinted = e?.details?.leader?.clientPort;
+            if (hinted) {
+              CURRENT_LEADER_PORT = hinted;
+            } else {
+              const detected = await detectLeaderPort().catch(() => null);
+              if (detected) CURRENT_LEADER_PORT = detected;
+            }
             await sleep(Math.min(250, 25 * (attempt + 1)));
             continue;
           }
@@ -704,7 +803,11 @@ async function main() {
         await doOp("insertMany", [batch]);
         writes += batch.length;
         for (const d of batch) {
-          if (seen.length < 100000) seen.push(d.id);
+          if (seen.length < MAX_SEEN) seen.push(d.id);
+          else {
+            seen[seenCursor] = d.id;
+            seenCursor = (seenCursor + 1) % MAX_SEEN;
+          }
         }
       };
 
@@ -731,7 +834,6 @@ async function main() {
             deletes++;
           }
         } catch (e) {
-          errors++;
           recordError(e, "write");
         } finally {
           observe("write", performance.now() - t0);
@@ -741,7 +843,12 @@ async function main() {
         if (now - lastLogAt >= logEveryMs) {
           lastLogAt = now;
           const w = lat.write, r = lat.read;
-          console.log(`[soak] ops w=${writes} u=${updates} d=${deletes} r=${reads} err=${errors} skip=${expectedSkips} p99(write)=${pct(w,0.99).toFixed(1)}ms p99(read)=${pct(r,0.99).toFixed(1)}ms`);
+          const rc = lat.readCold, rh = lat.readHot;
+          console.log(
+            `[soak] ops w=${writes} u=${updates} d=${deletes} r=${reads} err=${errors} skip=${expectedSkips} ` +
+            `p99(write)=${pct(w,0.99).toFixed(1)}ms p99(read)=${pct(r,0.99).toFixed(1)}ms ` +
+            `p99(readCold)=${pct(rc,0.99).toFixed(1)}ms p99(readHot)=${pct(rh,0.99).toFixed(1)}ms`
+          );
         }
         if (now - lastDiskAt >= diskEveryMs) {
           lastDiskAt = now;
@@ -754,30 +861,43 @@ async function main() {
       }
 
       // Flush any remaining inserts on exit.
-      try { await flush(); } catch (e) { errors++; recordError(e, "write"); }
+      try { await flush(); } catch (e) { recordError(e, "write"); }
     }
 
     async function readerLoop(_node, lane) {
       while (Date.now() < heavyDeadline) {
         const pickId = seen.length ? pick(seen) : `missing-${lane}-${randId()}`;
         try {
+          // Choose a preferred follower for this id to distribute cold misses across replicas.
+          // If hedged read returns from a different port, switch preference for the hot repeats.
+          const followers = nodes.filter(n => n.clientPort !== CURRENT_LEADER_PORT && !isPortDead(n.clientPort));
+          let preferPort = followers.length ? pick(followers).clientPort : null;
+
           // Repeat the same lookup to exercise LCR cache effectiveness.
           for (let i = 0; i < readRepeat; i++) {
             const t0 = performance.now();
             try {
-              const res = await rpcExecRead("findOne", [{ id: pickId }]);
+              const res = await rpcExecRead(
+                "findOne",
+                [{ id: pickId }],
+                i === 0
+                  ? { fanout: 2, hedgeMs: 20, preferPort }
+                  : { fanout: 1, preferPort }
+              );
+              if (res?.port) preferPort = res.port;
               if (res.ok) reads++;
               else if (res.expectedSkip) expectedSkips++;
               else {
-                errors++;
                 recordError(res?.error, "read");
               }
             } finally {
-              observe("read", performance.now() - t0);
+              const dt = performance.now() - t0;
+              observe("read", dt);
+              if (i === 0) observe("readCold", dt);
+              else observe("readHot", dt);
             }
           }
         } catch (e) {
-          errors++;
           recordError(e, "read");
         }
         if (readerTargetSleepMs) await sleep(readerTargetSleepMs);

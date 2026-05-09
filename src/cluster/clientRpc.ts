@@ -76,6 +76,8 @@ export class ClusterRPCServer {
   private handleSocket(socket: net.Socket) {
     socket.setNoDelay(true);
     socket.setEncoding("utf8");
+    // Always handle socket errors so they don't become uncaught exceptions in the worker.
+    socket.on("error", () => {});
     let buf = "";
     socket.on("data", (chunk: string) => {
       buf += chunk;
@@ -106,7 +108,11 @@ export class ClusterRPCServer {
         throw new LiorandbError("VALIDATION_FAILED", "Invalid RPC request");
       }
     } catch (err) {
-      socket.write(jsonLine({ id: "?", ok: false, error: asLiorandbError(err, { code: "VALIDATION_FAILED", message: "RPC parse failed" }).toJSON() } satisfies Res));
+      try {
+        socket.write(jsonLine({ id: "?", ok: false, error: asLiorandbError(err, { code: "VALIDATION_FAILED", message: "RPC parse failed" }).toJSON() } satisfies Res));
+      } catch {
+        // Client may have disconnected mid-write; ignore.
+      }
       return;
     }
 
@@ -129,10 +135,18 @@ export class ClusterRPCServer {
       }
 
       const result = await this.execAction(req.action, req.args);
-      socket.write(jsonLine({ id: req.id, ok: true, result } satisfies Res));
+      try {
+        socket.write(jsonLine({ id: req.id, ok: true, result } satisfies Res));
+      } catch {
+        // Ignore write errors to avoid crashing the worker on client disconnects.
+      }
     } catch (err) {
       const e = asLiorandbError(err, { code: "INTERNAL", message: "RPC failed", details: { action: req.action } });
-      socket.write(jsonLine({ id: req.id, ok: false, error: e.toJSON() } satisfies Res));
+      try {
+        socket.write(jsonLine({ id: req.id, ok: false, error: e.toJSON() } satisfies Res));
+      } catch {
+        // Client may have disconnected mid-write; ignore.
+      }
     }
   }
 

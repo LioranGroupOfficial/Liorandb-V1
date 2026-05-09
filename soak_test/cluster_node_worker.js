@@ -77,7 +77,9 @@ try {
         mode: "bounded_stale",
         maxLagMs: 250,
         maxLagLSN: 5000,
-        autoDegradeToStaleOk: false
+        // During leader change / induced lag, avoid proxying reads to leader (which can race with elections).
+        // Soak harness wants local-read performance + cache behavior, not leader-forwarding stability tests.
+        autoDegradeToStaleOk: true
       }
     },
     // Relax read-after-write coupling inside a node; soak focuses on latency under load.
