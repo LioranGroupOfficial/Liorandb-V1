@@ -55,12 +55,9 @@ export class LioranClient {
 
     if (parsed.scheme === "liorandb" && parsed.connectionString) {
       this.setConnectionString(parsed.connectionString);
-      this.user = {
-        userId: parsed.databaseName ?? "connection-string",
-        username: parsed.username ?? "connection-string",
-        role: "user",
-        authType: "connection_string",
-      };
+      // Populate `user` from the server since connection-string auth identities
+      // are derived server-side (owner, db name, etc).
+      await this.me();
       return;
     }
 

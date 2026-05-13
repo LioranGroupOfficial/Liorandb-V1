@@ -1,11 +1,14 @@
 export type LioranRole = "super_admin" | "admin" | "user";
-export type LioranAuthType = "jwt" | "connection_string";
+// Server uses `authType: "connection"` for x-liorandb-connection-string auth.
+// Keep `connection_string` for backward compatibility with older clients/docs.
+export type LioranAuthType = "jwt" | "connection" | "connection_string";
 
 export interface LioranUser {
   userId: string;
   username: string;
   role: LioranRole;
   authType: LioranAuthType;
+  databaseName?: string;
   externalUserId?: string | null;
 }
 
