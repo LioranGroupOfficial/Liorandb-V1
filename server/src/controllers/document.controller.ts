@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { manager } from "../config/database";
+import { getReadManager, getWriteManager } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 
@@ -10,7 +10,7 @@ function getBodyObject(req: Request) {
 export const insertDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const doc = await collection.insertOne(req.body);
     res.json({ ok: true, doc });
@@ -22,7 +22,7 @@ export const insertDocument = async (req: Request, res: Response) => {
 export const insertMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const docs = await collection.insertMany(body.docs || []);
@@ -35,7 +35,7 @@ export const insertMany = async (req: Request, res: Response) => {
 export const findDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getReadManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const query = body.query || {};
@@ -51,7 +51,7 @@ export const findDocuments = async (req: Request, res: Response) => {
 export const findOneDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getReadManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const query = body.query || {};
@@ -67,7 +67,7 @@ export const findOneDocument = async (req: Request, res: Response) => {
 export const updateOne = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const doc = await (collection as any).updateOne(body.filter, body.update, body.options);
@@ -80,7 +80,7 @@ export const updateOne = async (req: Request, res: Response) => {
 export const updateMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const docs = await collection.updateMany(body.filter, body.update);
@@ -93,7 +93,7 @@ export const updateMany = async (req: Request, res: Response) => {
 export const deleteOne = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const doc = await (collection as any).deleteOne(body.filter || {});
@@ -106,7 +106,7 @@ export const deleteOne = async (req: Request, res: Response) => {
 export const deleteMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getWriteManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const count = await collection.deleteMany(body.filter || {});
@@ -119,7 +119,7 @@ export const deleteMany = async (req: Request, res: Response) => {
 export const countDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getReadManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const count = await collection.countDocuments(body.filter || {});
@@ -132,7 +132,7 @@ export const countDocuments = async (req: Request, res: Response) => {
 export const aggregateDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getReadManager().db(req.params.db)).collection<any>(req.params.col);
 
     const pipeline = Array.isArray((req.body as any)?.pipeline) ? (req.body as any).pipeline : [];
     const results = await collection.aggregate(pipeline);
@@ -145,7 +145,7 @@ export const aggregateDocuments = async (req: Request, res: Response) => {
 export const explainQuery = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const collection = (await manager.db(req.params.db)).collection<any>(req.params.col);
+    const collection = (await getReadManager().db(req.params.db)).collection<any>(req.params.col);
 
     const body = getBodyObject(req);
     const query = body.query || {};

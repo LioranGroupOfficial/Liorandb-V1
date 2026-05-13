@@ -2,10 +2,14 @@
 import { getAuthCollection, manager } from "../config/database";
 import { AuthUser } from "../types/auth-user";
 
-const DEFAULT_ADMIN_USERNAME = "admin";
-const DEFAULT_ADMIN_PASSWORD = "admin";
+function getDefaultAdminCreds() {
+  const username = (process.env.LIORANDB_DEFAULT_ADMIN_USERNAME || "admin").trim() || "admin";
+  const password = process.env.LIORANDB_DEFAULT_ADMIN_PASSWORD || "admin";
+  return { username, password };
+}
 
 export async function ensureAdminUser() {
+  const { username: DEFAULT_ADMIN_USERNAME, password: DEFAULT_ADMIN_PASSWORD } = getDefaultAdminCreds();
   if (manager.isReadOnly()) {
     return { created: false, username: DEFAULT_ADMIN_USERNAME, skipped: true };
   }

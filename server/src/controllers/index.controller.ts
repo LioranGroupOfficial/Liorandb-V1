@@ -1,7 +1,7 @@
 ﻿import fs from "fs";
 import path from "path";
 import { Request, Response } from "express";
-import { manager } from "../config/database";
+import { getReadManager, getWriteManager } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 
@@ -40,7 +40,7 @@ export const createIndex = async (req: Request, res: Response) => {
     const field = sanitizeSegment(body.field, "field");
     const unique = !!body.unique;
 
-    const db = await manager.db(req.params.db);
+    const db = await getWriteManager().db(req.params.db);
     await db.createIndex(req.params.col, field, { unique });
 
     return res.json({ ok: true, collection: req.params.col, field, unique });
@@ -53,7 +53,7 @@ export const listIndexes = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
 
-    const db = await manager.db(req.params.db);
+    const db = await getReadManager().db(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -92,7 +92,7 @@ export const dropIndex = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "cannot drop _id index" });
     }
 
-    const db = await manager.db(req.params.db);
+    const db = await getWriteManager().db(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -129,7 +129,7 @@ export const rebuildIndex = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "cannot rebuild _id index" });
     }
 
-    const db = await manager.db(req.params.db);
+    const db = await getWriteManager().db(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -156,7 +156,7 @@ export const rebuildAllIndexes = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
 
-    const db = await manager.db(req.params.db);
+    const db = await getWriteManager().db(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);

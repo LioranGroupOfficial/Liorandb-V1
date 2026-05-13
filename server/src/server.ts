@@ -2,7 +2,7 @@
 
 import os from "os";
 import app from "./app";
-import { manager } from "./config/database";
+import { awaitClusterReady, closeManager, manager } from "./config/database";
 import { parseCLIArgs } from "./utils/cli";
 import { ensureAdminUser } from "./utils/startup";
 import { startSnapshotScheduler } from "./utils/snapshots";
@@ -12,6 +12,11 @@ import { readServerConfig, writeServerConfig } from "./utils/serverConfig";
 
 const cli = parseCLIArgs();
 const PORT = 4000;
+
+// Multi-node mode spins up internal networking; prevent transient connect errors from crashing the host process.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
 
 console.log("Runtime Config:");
 console.log(`DB Root Path : ${cli.rootPath || "Default"}`);
@@ -51,6 +56,7 @@ function printHostAddresses(port: number) {
 }
 
 async function start() {
+  await awaitClusterReady();
   const adminState = await ensureAdminUser();
 
   if ((adminState as any).skipped) {
@@ -61,8 +67,24 @@ async function start() {
     );
   }
 
-  if (!manager.isReadOnly() && manager.isPrimary()) {
-    startSnapshotScheduler(manager);
+  if (!manager.isReadOnly()) {
+    // In cluster mode the node starts as follower; start scheduler once a leader is elected.
+    const tryStart = () => {
+      if (manager.isPrimary()) {
+        startSnapshotScheduler(manager);
+        return true;
+      }
+      return false;
+    };
+
+    if (!tryStart()) {
+      const timer = setInterval(() => {
+        if (tryStart()) {
+          clearInterval(timer);
+        }
+      }, 500);
+      (timer as any).unref?.();
+    }
   }
 
   await logDiskIntegrityWarnings();
@@ -112,7 +134,7 @@ async function start() {
     }
 
     try {
-      await manager.closeAll();
+      await closeManager();
       console.log("All connections closed.");
     } catch (err) {
       console.error("Error during shutdown:", err);
@@ -131,7 +153,7 @@ async function start() {
 
 start().catch(async (error) => {
   console.error("Failed to start server:", error);
-  await manager.closeAll();
+  await closeManager();
   process.exit(1);
 });
 
@@ -145,7 +167,7 @@ async function shutdown(signal: string) {
     isShuttingDown = true;
     console.log(`\nReceived ${signal}. Shutting down...`);
     try {
-      await manager.closeAll();
+      await closeManager();
     } finally {
       process.exit(0);
     }

@@ -37,15 +37,13 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.1",
     "commander": "^14.0.2",
-    "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.1.11",
-    "pkg": "^5.8.1",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@liorandb/core": "^1.1.12",
+    "@liorandb/core": "^1.2.6",
     "@liorandb/driver": "^1.1.5",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",

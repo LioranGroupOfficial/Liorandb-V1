@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { manager } from "../config/database";
+import { getReadManager, getWriteManager } from "../config/database";
 import { listCollectionNames } from "../utils/coreStorage";
 import {
   buildDatabaseResponse,
@@ -106,7 +106,7 @@ export const databaseStats = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await manager.db(db);
+    const database = await getReadManager().db(db);
     const cols = await listCollectionNames(db);
 
     let totalDocs = 0;
@@ -251,7 +251,7 @@ export const compactDatabase = async (req: Request, res: Response) => {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
 
-    const database = await manager.db(db);
+    const database = await getWriteManager().db(db);
     await database.compactAll();
 
     return res.json({ ok: true, db });
@@ -271,7 +271,7 @@ export const explainDatabase = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "collection is required" });
     }
 
-    const database = await manager.db(db);
+    const database = await getReadManager().db(db);
     const explain = await database.explain(collection, body.query || {}, body.options || undefined);
 
     return res.json({ explain });
@@ -318,7 +318,7 @@ export const runTransaction = async (req: Request, res: Response) => {
       }
     }
 
-    const database = await manager.db(db);
+    const database = await getWriteManager().db(db);
 
     const result = await database.transaction(async (tx: any) => {
       for (const op of ops) {

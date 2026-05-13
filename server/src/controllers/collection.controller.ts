@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { manager } from "../config/database";
+import { getReadManager, getWriteManager } from "../config/database";
 import {
   createCollectionByName,
   deleteCollectionByName,
@@ -57,7 +57,7 @@ export const collectionStats = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await manager.db(db);
+    const database = await getReadManager().db(db);
     const collection = database.collection<any>(col);
 
     const count = await collection.countDocuments();
@@ -76,7 +76,7 @@ export const compactCollection = async (req: Request, res: Response) => {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
 
-    const database = await manager.db(db);
+    const database = await getWriteManager().db(db);
     await database.compactCollection(col);
 
     return res.json({ ok: true, db, collection: col });
