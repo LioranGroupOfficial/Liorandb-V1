@@ -166,3 +166,4 @@ log-s.txt
 log-pd.txt
 log-soak.txt
 bench
+.npm-cache

@@ -1,6 +1,6 @@
 # LioranDB Studio (Template)
 
-Next.js (App Router) template for the LioranDB Studio UI. Uses `@liorandb/driver` for all database + admin operations (CRUD, aggregates, indexes, maintenance, docs, users).
+Next.js (App Router) template for the LioranDB Studio UI. Uses a vendored driver in `src/driver` for all database + admin operations (CRUD, aggregates, indexes, maintenance, docs, users).
 
 ## Dev
 

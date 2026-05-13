@@ -1,4 +1,4 @@
-import { LioranClient } from '@liorandb/driver';
+import { LioranClient } from '@/driver';
 import { Collection, Database, Document, LioranUser } from '@/types';
 import { parseConnectionUri } from '@/lib/utils';
 
@@ -44,7 +44,7 @@ export class LioranDBService {
       await this.client.me();
     } else if (parsed.protocol === 'lioran' || parsed.protocol === 'liorandb') {
       if (parsed.protocol === 'liorandb' && isSecureConnectionString) {
-        // `@liorandb/driver` currently only accepts `liorandb://` in its URI parser,
+        // The vendored driver in `src/driver` currently only accepts `liorandb://` in its URI parser,
         // but supports a secure connection string via the connection-string header.
         // This branch sets the connection string explicitly and skips `connect()`.
       } else {
