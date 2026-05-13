@@ -45,8 +45,9 @@ app.use(
 app.use(
   createRateLimiter({
     windowMs: Number(process.env.LIORANDB_RATE_LIMIT_WINDOW_MS || 60_000),
-    max: Number(process.env.LIORANDB_RATE_LIMIT_MAX || 240),
-    softMax: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_MAX || 180),
+    // Default: 10k req/min per IP
+    max: Number(process.env.LIORANDB_RATE_LIMIT_MAX || 10_000),
+    softMax: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_MAX || 8_000),
     softDelayMs: Number(process.env.LIORANDB_RATE_LIMIT_SOFT_DELAY_MS || 150),
   })
 );
