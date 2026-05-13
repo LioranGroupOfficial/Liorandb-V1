@@ -871,7 +871,14 @@ export class LioranDB {
     name: string,
     schema?: ZodSchema<T>,
     schemaVersion?: number,
-    options?: { tieredStorage?: TieredStorageOptions }
+    options?: {
+      tieredStorage?: TieredStorageOptions;
+      /**
+       * When enabled, documents get `created` + `updated` timestamp fields (ms since epoch),
+       * and the collection auto-ensures indexes for fast date queries and sorting.
+       */
+      date?: boolean | "yes" | { enabled?: boolean | "yes"; createdField?: string; updatedField?: string };
+    }
   ): Collection<T> {
     const marker = this.runtimeOptions.sharding?.marker ?? "__shard__";
     const shardCount = this.runtimeOptions.sharding?.enabled === false
@@ -927,6 +934,7 @@ export class LioranDB {
           readonly: this.readonlyMode,
           batchChunkSize: this.runtimeOptions.batch?.chunkSize,
           tieredStorage: options?.tieredStorage,
+          date: options?.date,
           cacheEngine: (this.manager as any)?.cache,
           leveldb: this.runtimeOptions.storage?.leveldb,
           metrics: (this.manager as any)?.metrics,

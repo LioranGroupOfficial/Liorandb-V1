@@ -1,6 +1,17 @@
 import type { Collection, FindOptions } from "../core/collection.js";
 import { shardForId } from "./hash.js";
 
+function getByPath(obj: any, path: string): any {
+  if (!path) return undefined;
+  const parts = path.split(".");
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
 function isExactIdFilter(filter: any): { ok: true; id: any } | { ok: false } {
   if (!filter || typeof filter !== "object") return { ok: false };
   if (Object.prototype.hasOwnProperty.call(filter, "_id")) {
@@ -51,6 +62,14 @@ export class ShardedCollection<T = any> {
       return await (this.physical(sid) as any).findOne(query, options);
     }
 
+    const sort = options?.sort && typeof options.sort === "object" && !Array.isArray(options.sort)
+      ? Object.entries(options.sort).find(([, dir]) => dir === 1 || dir === -1)
+      : undefined;
+    if (sort) {
+      const all = await this.find(query, { ...(options ?? {}), limit: Number.POSITIVE_INFINITY });
+      return (all as any[])[0] ?? null;
+    }
+
     for (let sid = 0; sid < this.shardCount; sid++) {
       const found = await (this.physical(sid) as any).findOne(query, options);
       if (found) return found;
@@ -70,6 +89,30 @@ export class ShardedCollection<T = any> {
       const part = await (this.physical(sid) as any).find(query, options);
       if (Array.isArray(part)) all.push(...part);
       else if (part?.results && Array.isArray(part.results)) all.push(...part.results);
+    }
+
+    const sort = (options as any)?.sort && typeof (options as any).sort === "object" && !Array.isArray((options as any).sort)
+      ? Object.entries((options as any).sort).find(([, dir]) => dir === 1 || dir === -1)
+      : undefined;
+    if (sort) {
+      const [field, dir0] = sort as [string, 1 | -1];
+      const dir = dir0 === -1 ? -1 : 1;
+      all.sort((a, b) => {
+        const av = getByPath(a, field);
+        const bv = getByPath(b, field);
+        if (av === bv) {
+          const aid = String(a?._id ?? "");
+          const bid = String(b?._id ?? "");
+          return aid < bid ? -1 : aid > bid ? 1 : 0;
+        }
+        if (av === undefined) return 1;
+        if (bv === undefined) return -1;
+        if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+        const as = typeof av === "string" ? av : JSON.stringify(av);
+        const bs = typeof bv === "string" ? bv : JSON.stringify(bv);
+        if (as === bs) return 0;
+        return (as < bs ? -1 : 1) * dir;
+      });
     }
 
     // Best-effort limit/offset handling for cross-shard queries.
@@ -106,4 +149,3 @@ export class ShardedCollection<T = any> {
     return false;
   }
 }
-

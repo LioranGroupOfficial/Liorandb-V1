@@ -587,6 +587,32 @@ export class Index {
     }
   }
 
+  /**
+   * Iterate document ids in index order.
+   * - For non-unique indexes: ordered by (fieldValue, _id)
+   * - For unique indexes: ordered by (fieldValue)
+   */
+  async *iterateAllIds(options?: { reverse?: boolean }): AsyncGenerator<string> {
+    const reverse = options?.reverse ?? false;
+    const prefix = this.unique ? UNIQUE_PREFIX : ENTRY_PREFIX;
+
+    for await (const [key, value] of this.db.iterator({
+      gte: prefix,
+      lte: prefix + RANGE_END,
+      reverse
+    } as any)) {
+      if (this.unique) {
+        const id = this.decodeUniqueValueToId(value);
+        if (id) yield id;
+        continue;
+      }
+
+      const separatorAt = String(key).lastIndexOf(VALUE_SEPARATOR);
+      if (separatorAt < 0) continue;
+      yield String(key).slice(separatorAt + VALUE_SEPARATOR.length);
+    }
+  }
+
   async bulkInsert(docs: any[]) {
     try {
       if (docs.length === 0) return;

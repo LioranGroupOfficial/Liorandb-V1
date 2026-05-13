@@ -63,6 +63,11 @@ export interface FindOptions {
    */
   cursor?: string;
   projection?: string[];
+  /**
+   * Sort specification. Example: `{ created: -1 }` or `{ "user.age": 1 }`.
+   * Only the first key is used.
+   */
+  sort?: Record<string, 1 | -1>;
 }
 
 export type AggregationStage =

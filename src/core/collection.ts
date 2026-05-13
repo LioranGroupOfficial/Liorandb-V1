@@ -41,6 +41,15 @@ export interface CollectionOptions {
   batchChunkSize?: number;
   scheduler?: CollectionScheduler;
   resolveCollection?: (name: string) => Collection<any>;
+  /**
+   * Optional timestamps feature.
+   * When enabled, documents get numeric timestamp fields (ms since epoch).
+   *
+   * Default field names:
+   * - `created`
+   * - `updated`
+   */
+  date?: boolean | "yes" | { enabled?: boolean | "yes"; createdField?: string; updatedField?: string };
   tieredStorage?: TieredStorageOptions;
   cacheEngine?: any;
   leveldb?: {
@@ -87,6 +96,11 @@ export interface FindOptions {
   offset?: number;
   cursor?: string;
   projection?: string[];
+  /**
+   * Sort specification. Example: `{ created: -1 }` or `{ "user.age": 1 }`.
+   * Only the first key is used.
+   */
+  sort?: Record<string, 1 | -1>;
 }
 
 export type CollectionScheduler = {
@@ -152,6 +166,10 @@ export class Collection<T = any> {
   private latency?: CollectionOptions["latency"];
   private metrics?: any;
   private dbName?: string;
+  private dateEnabled: boolean = false;
+  private createdField: string = "created";
+  private updatedField: string = "updated";
+  private dateIndexesEnsured: boolean = false;
 
   constructor(
     dir: string,
@@ -175,6 +193,17 @@ export class Collection<T = any> {
     this.compute = options?.compute;
     this.tenancy = options?.tenancy;
     this.security = options?.security;
+    const dateOpt = options?.date;
+    const enabled = typeof dateOpt === "object" && dateOpt
+      ? ((dateOpt as any).enabled ?? true)
+      : dateOpt;
+    this.dateEnabled = enabled === true || enabled === "yes";
+    if (typeof dateOpt === "object" && dateOpt) {
+      const cf = (dateOpt as any).createdField;
+      const uf = (dateOpt as any).updatedField;
+      if (typeof cf === "string" && cf.length > 0) this.createdField = cf;
+      if (typeof uf === "string" && uf.length > 0) this.updatedField = uf;
+    }
     if (options?.tieredStorage) {
       const limits = this.tenancy?.getLimits?.();
       const merged: TieredStorageOptions = {
@@ -241,6 +270,34 @@ export class Collection<T = any> {
     } finally {
       this.metaLoadPromise = null;
     }
+
+    // Best-effort: ensure timestamp indexes exist early so date queries + sorting are fast.
+    await this.ensureDateIndexes();
+  }
+
+  private async ensureDateIndexes() {
+    if (!this.dateEnabled || this.readonlyMode || this.dateIndexesEnsured) return;
+    this.dateIndexesEnsured = true;
+
+    try {
+      await this.createIndex(this.createdField);
+      await this.createIndex(this.updatedField);
+    } catch {
+      // Non-fatal.
+    }
+  }
+
+  private applyTimestampsOnInsert(doc: any, nowMs: number) {
+    if (!this.dateEnabled || !doc || typeof doc !== "object") return doc;
+    const out = { ...doc };
+    if (out[this.createdField] === undefined) out[this.createdField] = nowMs;
+    if (out[this.updatedField] === undefined) out[this.updatedField] = nowMs;
+    return out;
+  }
+
+  private applyTimestampOnUpdate(doc: any, nowMs: number) {
+    if (!this.dateEnabled || !doc || typeof doc !== "object") return doc;
+    return { ...doc, [this.updatedField]: nowMs };
   }
 
   private async persistMeta() {
@@ -538,6 +595,8 @@ export class Collection<T = any> {
   private async _insertOne(doc: any) {
     this.assertWritable();
     await this.ensureMetaLoaded();
+    const nowMs = Date.now();
+    doc = this.applyTimestampsOnInsert(doc, nowMs);
 
     const limits = this.tenancy?.getLimits?.();
     if (limits?.maxDocBytes) {
@@ -611,11 +670,12 @@ export class Collection<T = any> {
   private async _insertMany(docs: any[]) {
     this.assertWritable();
     await this.ensureMetaLoaded();
+    const nowMs = Date.now();
 
     const limits = this.tenancy?.getLimits?.();
     if (limits?.maxDocBytes) {
       for (const d of docs) {
-        assertDocSizeWithinLimits(d, limits.maxDocBytes, { op: "insertMany" });
+        assertDocSizeWithinLimits(this.applyTimestampsOnInsert(d, nowMs), limits.maxDocBytes, { op: "insertMany" });
       }
     }
 
@@ -624,7 +684,8 @@ export class Collection<T = any> {
     const seenIds = new Set<string>();
 
     for (const d of docs) {
-      const _id = d._id ?? uuid();
+      const withTs = this.applyTimestampsOnInsert(d, nowMs);
+      const _id = withTs._id ?? uuid();
       const id = String(_id);
       if (id.startsWith(META_KEY_PREFIX)) {
         throw new LiorandbError(
@@ -648,7 +709,7 @@ export class Collection<T = any> {
       }
 
       seenIds.add(id);
-      const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(d)).doc : d;
+      const externalized = this.blobStore ? (await this.blobStore.externalizeDocAsync(withTs)).doc : withTs;
       const final = this.validate({
         _id,
         ...externalized,
@@ -825,10 +886,10 @@ export class Collection<T = any> {
   }
 
   private normalizeFindOptions(options?: FindOptions) {
-    const cursor = typeof options?.cursor === "string" && options.cursor.length > 0
+    let cursor = typeof options?.cursor === "string" && options.cursor.length > 0
       ? options.cursor
       : undefined;
-    const offset = cursor ? 0 : Math.max(0, Math.trunc(options?.offset ?? 0));
+    const rawOffset = Math.max(0, Math.trunc(options?.offset ?? 0));
     const rawLimit = options?.limit;
     const limit = rawLimit === undefined
       ? Number.POSITIVE_INFINITY
@@ -838,8 +899,19 @@ export class Collection<T = any> {
           (field): field is string => typeof field === "string" && field.length > 0
         )
       : undefined;
+    const sort = options?.sort && typeof options.sort === "object" && !Array.isArray(options.sort)
+      ? Object.fromEntries(
+          Object.entries(options.sort)
+            .filter(([, dir]) => dir === 1 || dir === -1)
+        )
+      : undefined;
 
-    return { offset, limit, projection, cursor };
+    // Cursor semantics currently only apply to `_id`-ordered scans. Disable when sorting by other fields.
+    if (sort && Object.keys(sort).length > 0) cursor = undefined;
+
+    const offset = cursor ? 0 : rawOffset;
+
+    return { offset, limit, projection, cursor, sort };
   }
 
   private projectDocument(doc: T, projection?: string[]): T {
@@ -999,8 +1071,12 @@ export class Collection<T = any> {
   ): Promise<QueryExecutionResult<R>> {
     const startedAt = Date.now();
     const out: R[] = [];
-    const { offset, limit, projection, cursor } = this.normalizeFindOptions(options);
+    const { offset, limit, projection, cursor, sort } = this.normalizeFindOptions(options);
     const finalLimit = limitOverride === undefined ? limit : Math.min(limit, limitOverride);
+    const sortEntry = sort && Object.keys(sort).length > 0 ? (Object.entries(sort)[0] as [string, 1 | -1]) : null;
+    const sortField = sortEntry?.[0];
+    const sortDir = sortEntry?.[1] ?? 1;
+    const needsSort = !!sortField;
     let indexUsed: string | undefined = undefined;
     let usedFullScan = true;
     let skipped = 0;
@@ -1119,6 +1195,39 @@ export class Collection<T = any> {
     const isTrivialQuery =
       !query ||
       (isPlainObject && Object.keys(query).length === 0);
+
+    // Fast-path for `find({})` with sort-by-index: stream ids in index order (no nlogn sort).
+    if (isTrivialQuery && needsSort) {
+      const idx: any = this.indexes.get(String(sortField));
+      if (idx && typeof idx.iterateAllIds === "function") {
+        for await (const id of idx.iterateAllIds({ reverse: sortDir === -1 })) {
+          scannedDocuments++;
+          const doc = await this._readAndMigrate(String(id));
+          if (!doc) continue;
+
+          if (skipped < offset) {
+            skipped++;
+            continue;
+          }
+
+          out.push(this.projectDocument(doc, projection) as unknown as R);
+          if (out.length >= finalLimit) break;
+        }
+
+        return finalize({
+          results: out,
+          explain: {
+            indexUsed: String(sortField),
+            indexType: "btree",
+            scannedDocuments,
+            returnedDocuments: out.length,
+            executionTimeMs: Date.now() - startedAt,
+            usedFullScan: false,
+            candidateDocuments: scannedDocuments
+          }
+        });
+      }
+    }
 
     // Fast-path for `find({})`: avoid building an id list + per-doc `db.get()`.
     // Instead, stream through LevelDB iterator (key,value) once.
@@ -1330,7 +1439,8 @@ export class Collection<T = any> {
       typeof computeExec === "function" &&
       isPlainObject &&
       typeof query !== "function" &&
-      !this.blobStore; // keep blob hydration on the main thread (disk IO)
+      !this.blobStore &&
+      !needsSort; // sorting needs all matches on the main thread
 
     const computeBatchSize = 128;
     let computeBatch: any[] = [];
@@ -1358,6 +1468,8 @@ export class Collection<T = any> {
       }
     };
 
+    const sortBuffer: any[] | null = needsSort ? [] : null;
+
     for (const id of ids) {
       scannedDocuments++;
 
@@ -1375,6 +1487,11 @@ export class Collection<T = any> {
         }
 
         if (matchDocument(doc, query)) {
+          if (sortBuffer) {
+            sortBuffer.push(this.projectDocument(doc, projection));
+            continue;
+          }
+
           if (skipped < offset) {
             skipped++;
             continue;
@@ -1391,6 +1508,37 @@ export class Collection<T = any> {
 
     if (useComputeWorker && out.length < finalLimit) {
       await flushComputeBatch();
+    }
+
+    if (sortBuffer) {
+      const dir = sortDir === -1 ? -1 : 1;
+      const fieldPath = String(sortField);
+
+      const cmp = (a: any, b: any) => {
+        const av = getByPath(a, fieldPath);
+        const bv = getByPath(b, fieldPath);
+
+        if (av === bv) {
+          const aid = String((a as any)?._id ?? "");
+          const bid = String((b as any)?._id ?? "");
+          return aid < bid ? -1 : aid > bid ? 1 : 0;
+        }
+
+        if (av === undefined) return 1;
+        if (bv === undefined) return -1;
+
+        if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+        if (typeof av === "bigint" && typeof bv === "bigint") return (av < bv ? -1 : 1) * dir;
+
+        const as = typeof av === "string" ? av : JSON.stringify(av);
+        const bs = typeof bv === "string" ? bv : JSON.stringify(bv);
+        if (as === bs) return 0;
+        return (as < bs ? -1 : 1) * dir;
+      };
+
+      (sortBuffer as any[]).sort(cmp);
+      const sliced = (sortBuffer as any[]).slice(offset, Number.isFinite(finalLimit) ? offset + finalLimit : undefined);
+      out.push(...(sliced as unknown as R[]));
     }
 
     const result = {
@@ -1428,7 +1576,8 @@ export class Collection<T = any> {
         limit: options?.limit,
         offset: options?.offset,
         cursor: options?.cursor,
-        projection: options?.projection
+        projection: options?.projection,
+        sort: (options as any)?.sort
       }
     });
 
@@ -1460,7 +1609,8 @@ export class Collection<T = any> {
         limit: 1,
         offset: options?.offset,
         cursor: options?.cursor,
-        projection: options?.projection
+        projection: options?.projection,
+        sort: (options as any)?.sort
       }
     });
 
@@ -1599,6 +1749,7 @@ export class Collection<T = any> {
 
     const ids = await this._getCandidateIds(filter);
     const limits = this.tenancy?.getLimits?.();
+    const nowMs = Date.now();
 
     for (const id of ids) {
       const existing = await this._readAndMigrate(id);
@@ -1606,7 +1757,7 @@ export class Collection<T = any> {
 
       if (matchDocument(existing, filter)) {
         const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
-        const applied = applyUpdate(existing, update);
+        const applied = this.applyTimestampOnUpdate(applyUpdate(existing, update), nowMs);
         if (limits?.maxDocBytes) {
           assertDocSizeWithinLimits(applied, limits.maxDocBytes, { op: "updateOne" });
         }
@@ -1645,7 +1796,7 @@ export class Collection<T = any> {
     }
 
     if (options?.upsert) {
-      return this._insertOne(applyUpdate({}, update));
+      return this._insertOne(this.applyTimestampOnUpdate(applyUpdate({}, update), nowMs));
     }
 
     return null;
@@ -1657,6 +1808,7 @@ export class Collection<T = any> {
     const ids = await this._getCandidateIds(filter);
     const out = [];
     const limits = this.tenancy?.getLimits?.();
+    const nowMs = Date.now();
 
     for (const id of ids) {
       const existing = await this._readAndMigrate(id);
@@ -1664,7 +1816,7 @@ export class Collection<T = any> {
 
       if (matchDocument(existing, filter)) {
         const oldBlobIds = this.blobStore ? this.blobStore.collectBlobIds(existing) : [];
-        const applied = applyUpdate(existing, update);
+        const applied = this.applyTimestampOnUpdate(applyUpdate(existing, update), nowMs);
         if (limits?.maxDocBytes) {
           assertDocSizeWithinLimits(applied, limits.maxDocBytes, { op: "updateMany" });
         }
