@@ -356,6 +356,24 @@ export class LioranManager {
     this.lifecycle.register(() => this.backgroundScheduler?.close());
   }
 
+  private async _stopPrimaryServices(): Promise<void> {
+    // In cluster mode, leadership can change; ensure only the current leader runs primary-only services.
+    try {
+      await this.backgroundScheduler?.close();
+    } catch {}
+    this.backgroundScheduler = undefined;
+
+    try {
+      await this.computePool?.shutdown();
+    } catch {}
+    this.computePool = undefined;
+
+    try {
+      await this.ipcServer?.close();
+    } catch {}
+    this.ipcServer = undefined;
+  }
+
   /* ---------------- MODE HELPERS ---------------- */
 
   isPrimary() {
@@ -426,6 +444,9 @@ export class LioranManager {
   }
 
   async _becomeClusterFollower(leaderHost: string, walStreamPort: number) {
+    if (this.mode === ProcessMode.PRIMARY) {
+      await this._stopPrimaryServices();
+    }
     this.mode = ProcessMode.REPLICA;
 
     this.options.replication = {

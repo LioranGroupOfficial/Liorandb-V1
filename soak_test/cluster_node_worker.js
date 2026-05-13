@@ -28,6 +28,17 @@ const backupDir = path.join(rootPath, "__backups");
 fs.mkdirSync(rootPath, { recursive: true });
 fs.mkdirSync(backupDir, { recursive: true });
 
+function parseBackupMaxAgeMs() {
+  const raw = process.env.SOAK_BACKUP_MAX_AGE_MS;
+  if (raw === undefined) return 5000; // default: delete quickly to keep soak runs bounded
+  const v = String(raw).trim().toLowerCase();
+  if (!v) return 5000;
+  if (v === "off" || v === "none" || v === "disable" || v === "disabled") return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 5000;
+  return Math.trunc(n);
+}
+
 let manager;
 try {
   manager = new LioranManager({
@@ -98,7 +109,13 @@ try {
         outDir: backupDir,
         snapshotEveryMs: Math.max(60_000, Math.trunc(Number(process.env.SOAK_SNAPSHOT_MS ?? 5 * 60_000))),
         incrementalEveryMs: Math.max(5_000, Math.trunc(Number(process.env.SOAK_PITR_MS ?? 30_000))),
-        retention: { snapshots: 5, incrementals: 50 },
+        retention: {
+          snapshots: 5,
+          incrementals: 50,
+          // For soak runs, keep disk bounded by deleting backup artifacts quickly (default 5s).
+          // Set `SOAK_BACKUP_MAX_AGE_MS=off` to disable age-based deletion.
+          ...(parseBackupMaxAgeMs() === undefined ? {} : { maxAgeMs: Math.max(0, parseBackupMaxAgeMs()) })
+        },
         verifyRestoreEveryMs: Math.max(60_000, Math.trunc(Number(process.env.SOAK_VERIFY_MS ?? 10 * 60_000))),
         verifyPitrDelayMs: 2000
       }

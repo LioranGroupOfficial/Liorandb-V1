@@ -23,6 +23,11 @@ export type BackgroundSchedulerOptions = {
     retention?: {
       snapshots?: number;
       incrementals?: number;
+      /**
+       * If set, deletes backup artifacts older than this age (in ms), regardless of count-based retention.
+       * Useful for soak/chaos runs where disk usage must stay bounded.
+       */
+      maxAgeMs?: number;
     };
     verifyRestoreEveryMs?: number;
     /**
@@ -258,7 +263,25 @@ export class BackgroundScheduler {
   private async pruneRetention(dir: string) {
     const keepSnapshots = Math.max(1, Math.trunc(this.opts.backup?.retention?.snapshots ?? 24));
     const keepIncrementals = Math.max(1, Math.trunc(this.opts.backup?.retention?.incrementals ?? 240));
+    const maxAgeMsRaw = this.opts.backup?.retention?.maxAgeMs;
+    const maxAgeMs = maxAgeMsRaw === undefined ? undefined : Math.max(0, Math.trunc(maxAgeMsRaw));
 
+    const snapshots0 = this.listSorted(dir, "snapshot-");
+    const incs0 = this.listSorted(dir, "pitr-");
+
+    // Age-based retention: delete anything older than cutoff, even if it would otherwise be kept.
+    if (maxAgeMs !== undefined) {
+      const cutoff = Date.now() - maxAgeMs;
+      const ageDelete = [...snapshots0, ...incs0].filter(p => {
+        const t = this.parseTimestampMs(path.basename(p));
+        return t > 0 && t <= cutoff;
+      });
+      for (const p of ageDelete) {
+        try { await fs.promises.rm(p, { force: true }); } catch {}
+      }
+    }
+
+    // Re-list after age deletions to apply count-based retention on what's left.
     const snapshots = this.listSorted(dir, "snapshot-");
     const incs = this.listSorted(dir, "pitr-");
 

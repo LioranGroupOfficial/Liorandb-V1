@@ -1,6 +1,6 @@
 /*
 Cluster soak/chaos harness:
-- spins up 3 local nodes
+- spins up N local nodes (default: 100; override with NODE_COUNT)
 - exercises leader failover + write redirection
 - forces replica lag and validates lag-based read routing (bounded_stale => forward-to-leader)
 - validates scheduled snapshot + PITR + restore verification jobs run without crashing
@@ -62,7 +62,7 @@ const token = process.env.RPC_TOKEN ?? `t-${randId()}-${randId()}`;
 const host = "127.0.0.1";
 let CURRENT_LEADER_PORT = null;
 const basePort = Number(process.env.BASE_PORT ?? (20000 + Math.floor(Math.random() * 20000)));
-const NODE_COUNT = Number(process.env.NODE_COUNT ?? 4);
+const NODE_COUNT = Number(process.env.NODE_COUNT ?? 10);
 const nodes = Array.from({ length: NODE_COUNT }, (_, i) => {
   const idx = i + 1;
   return {
