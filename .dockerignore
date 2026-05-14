@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/build
+**/.git
+**/.DS_Store
+
+# Local persistent Docker volume data
+docker/lioran-data

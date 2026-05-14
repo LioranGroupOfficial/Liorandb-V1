@@ -1,5 +1,5 @@
 param(
-  [string]$Tag = "ldep/liorandb:v1.2.1",
+  [string]$Tag = "ldep/liorandb:v1.2.2",
   [string]$TagLatest = "ldep/liorandb:latest"
 )
 

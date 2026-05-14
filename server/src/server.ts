@@ -2,7 +2,7 @@
 
 import os from "os";
 import app from "./app";
-import { awaitClusterReady, closeManager, manager } from "./config/database";
+import { awaitClusterReady, closeManager, clusterNodeCount, manager } from "./config/database";
 import { parseCLIArgs } from "./utils/cli";
 import { ensureAdminUser } from "./utils/startup";
 import { startSnapshotScheduler } from "./utils/snapshots";
@@ -22,6 +22,7 @@ console.log("Runtime Config:");
 console.log(`DB Root Path : ${cli.rootPath || "Default"}`);
 console.log(`Encryption   : ${cli.encryptionKey ? "Enabled" : "Disabled"}`);
 console.log(`IPC Mode     : ${cli.ipc || "auto"}`);
+console.log(`Cluster Nodes: ${clusterNodeCount}${process.env.LIORANDB_SINGLE_NODE ? " (single-node)" : ""}`);
 if (cli.writeQueue) {
   console.log(
     `Write Queue  : max=${cli.writeQueue.maxSize ?? "default"} mode=${cli.writeQueue.mode ?? "default"} timeoutMs=${

@@ -3,7 +3,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: liorandb-local:dev
     container_name: liorandb-test
     ports:
       - "4000:4000"

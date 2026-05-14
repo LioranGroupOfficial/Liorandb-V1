@@ -11,7 +11,7 @@ WORKDIR /app/server
 
 COPY server/package.json server/package-lock.json ./
 # patch-package runs during `npm ci` (postinstall), so the patch files must be present first.
-COPY server/patches ./patches
+# COPY server/patches ./patches
 RUN npm ci
 
 COPY server/ ./

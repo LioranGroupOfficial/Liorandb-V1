@@ -8,6 +8,16 @@ import { loadEnvFile } from "../utils/envFile";
 loadEnvFile();
 
 const cli = parseCLIArgs();
+const singleNodeMode = toBool(process.env.LIORANDB_SINGLE_NODE, false);
+
+function toBool(raw: unknown, defaultValue = false) {
+  if (raw === undefined || raw === null) return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "") return defaultValue;
+  if (v === "1" || v === "true" || v === "yes" || v === "y" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "n" || v === "off") return false;
+  return defaultValue;
+}
 
 function isServerEntry() {
   const entry = String(process.argv[1] || "");
@@ -54,11 +64,14 @@ function makeNodeOptions(
     rootPath,
     encryptionKey:
       cli.encryptionKey || process.env.LIORANDB_ENCRYPTION_KEY || "default-encryption-key",
-    ipc: cli.ipc || (process.env.LIORANDB_IPC_MODE as any),
     writeQueue: cli.writeQueue,
     batch: cli.batch,
     cache: maxRAMMB ? { enabled: true, maxRAMMB } : undefined,
   };
+
+  if (!singleNodeMode) {
+    base.ipc = cli.ipc || (process.env.LIORANDB_IPC_MODE as any);
+  }
 
   if (cluster) {
     base.cluster = {
@@ -101,7 +114,7 @@ function makeNodeOptions(
 
 function makeClusterManagers(baseRootPath: string) {
   const nodeCountFromEnv = readEnvInt("LIORANDB_CLUSTER_NODES");
-  const nodeCount = Math.max(1, Math.trunc(nodeCountFromEnv ?? (isServerEntry() ? 10 : 1)));
+  const nodeCount = singleNodeMode ? 1 : Math.max(1, Math.trunc(nodeCountFromEnv ?? (isServerEntry() ? 10 : 1)));
 
   if (nodeCount === 1) {
     return {
@@ -159,6 +172,38 @@ function makeClusterManagers(baseRootPath: string) {
   return { managers, nodeCount };
 }
 
+async function disableIPCForSingleNode(m: LioranManager) {
+  if (!singleNodeMode) return;
+
+  const anyM: any = m as any;
+
+  // The core manager starts IPC server asynchronously in primary mode.
+  // In single-node server mode we want zero IPC usage and no IPC listener.
+  for (let i = 0; i < 40; i++) {
+    const ipcServer = anyM.ipcServer;
+    if (ipcServer?.close) {
+      try {
+        await ipcServer.close();
+      } catch {
+        // ignore
+      }
+      anyM.ipcServer = undefined;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  const ipcClient = anyM.ipcClient;
+  if (ipcClient?.close) {
+    try {
+      await ipcClient.close();
+    } catch {
+      // ignore
+    }
+    anyM.ipcClient = undefined;
+  }
+}
+
 async function waitForClusterLeader(m: LioranManager, timeoutMs = 10_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -187,6 +232,12 @@ export const clusterNodeCount = cluster.nodeCount;
 
 export let manager = allManagers[0];
 let readIndex = 0;
+
+if (singleNodeMode) {
+  for (const m of allManagers) {
+    void disableIPCForSingleNode(m);
+  }
+}
 
 if (clusterNodeCount > 1) {
   // Each node registers shutdown hooks; avoid noisy MaxListeners warnings in multi-node mode.
@@ -238,6 +289,11 @@ export async function recreateManager() {
   for (const m of next.managers) (allManagers as any).push(m);
   manager = (allManagers as any)[0];
   readIndex = 0;
+  if (singleNodeMode) {
+    for (const m of allManagers) {
+      void disableIPCForSingleNode(m);
+    }
+  }
   return manager;
 }
 

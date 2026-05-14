@@ -92,6 +92,18 @@ Server default URL:
 http://localhost:4000
 ```
 
+## Single-node mode
+
+By default, the server starts an internal 10-node cluster (configurable via `LIORANDB_CLUSTER_NODES`).
+
+To run a single embedded node (no internal cluster ports/peers, and no IPC listener), set:
+
+```bash
+LIORANDB_SINGLE_NODE=1
+```
+
+Note: the server only auto-loads a file named `.env` from the server directory. If you use a different filename, set `LIORANDB_ENV_FILE` to point to it.
+
 ## Dashboard
 
 Built-in admin UI (served by the same server):

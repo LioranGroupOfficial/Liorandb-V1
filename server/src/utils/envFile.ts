@@ -14,7 +14,9 @@ function parseEnvLine(line: string): { key: string; value: string } | null {
   const eq = trimmed.indexOf("=");
   if (eq <= 0) return null;
 
-  const key = trimmed.slice(0, eq).trim();
+  let key = trimmed.slice(0, eq).trim();
+  // Handle UTF-8 BOM at start of file (common on Windows).
+  if (key.charCodeAt(0) === 0xfeff) key = key.slice(1);
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return null;
 
   let value = trimmed.slice(eq + 1).trim();
