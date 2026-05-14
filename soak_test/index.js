@@ -8,6 +8,14 @@ Cluster soak/chaos harness:
 Run:
   npm run build
   node soak_test/index.js
+
+Args:
+  --nodes <n> | -n <n>   Number of nodes to spawn (overrides NODE_COUNT env)
+
+Examples:
+  node soak_test/index.js --nodes 1
+  node soak_test/index.js -n 10
+  npm start -- --nodes 5
 */
 
 import fs from "fs";
@@ -54,6 +62,35 @@ function classifyErr(err) {
   }
 }
 
+function parseArgs(argv) {
+  const out = { nodes: undefined, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") {
+      out.help = true;
+      continue;
+    }
+    const m = /^--(nodes|node-count)=(\d+)$/.exec(a);
+    if (m) {
+      out.nodes = Number(m[2]);
+      continue;
+    }
+    if (a === "--nodes" || a === "--node-count" || a === "-n") {
+      const v = argv[i + 1];
+      if (v == null) throw new Error(`Missing value after ${a}`);
+      out.nodes = Number(v);
+      i++;
+      continue;
+    }
+    if (/^\d+$/.test(a) && out.nodes === undefined) {
+      // Allow a single positional number: `node index.js 5`
+      out.nodes = Number(a);
+      continue;
+    }
+  }
+  return out;
+}
+
 const RUN_MS = Number(process.env.RUN_MS ?? 60 * 60_000);
 const BASE = path.join(__dirname, "__cluster_soak__", `run-${Date.now()}-${randId()}`);
 ensureDir(BASE);
@@ -62,7 +99,28 @@ const token = process.env.RPC_TOKEN ?? `t-${randId()}-${randId()}`;
 const host = "127.0.0.1";
 let CURRENT_LEADER_PORT = null;
 const basePort = Number(process.env.BASE_PORT ?? (20000 + Math.floor(Math.random() * 20000)));
-const NODE_COUNT = Number(process.env.NODE_COUNT ?? 10);
+const args = parseArgs(process.argv.slice(2));
+if (args.help) {
+  console.log(
+    [
+      "Usage: node index.js [--nodes <n>]",
+      "",
+      "Options:",
+      "  --nodes, -n <n>      Number of nodes to spawn (overrides NODE_COUNT)",
+      "  --help, -h           Show help",
+      "",
+      "Examples:",
+      "  node index.js --nodes 1",
+      "  node index.js -n 10",
+      "  npm start -- --nodes 5"
+    ].join("\n")
+  );
+  process.exit(0);
+}
+const NODE_COUNT = Number(args.nodes ?? process.env.NODE_COUNT ?? 10);
+if (!Number.isFinite(NODE_COUNT) || NODE_COUNT <= 0) {
+  throw new Error(`Invalid node count: ${NODE_COUNT}`);
+}
 const nodes = Array.from({ length: NODE_COUNT }, (_, i) => {
   const idx = i + 1;
   return {
@@ -638,13 +696,16 @@ async function main() {
     await rpcExecAny("op", { db: "soak", col: "items", method: "createIndex", params: [{ field: "id", unique: true }] });
     await rpcExecAny("op", { db: "soak", col: "items", method: "createIndex", params: [{ field: "ts" }] });
 
-    // Read nodes: all non-leader nodes (3 followers when NODE_COUNT=4).
-    const readNodes = nodes.filter(n => n.clientPort !== leaderPort);
+    // Read nodes: prefer followers; for a 1-node cluster fall back to leader-as-reader.
+    const followerReadNodes = nodes.filter(n => n.clientPort !== leaderPort);
+    const readNodes = followerReadNodes.length
+      ? followerReadNodes
+      : [nodes.find(n => n.clientPort === leaderPort)].filter(Boolean);
     if (readNodes.length === 0) throw new Error("no read nodes available");
 
     // Optionally induce lag on one follower.
-    const lagNode = readNodes[0];
-    if (process.env.INDUCE_LAG !== "0") {
+    const lagNode = followerReadNodes[0];
+    if (lagNode && process.env.INDUCE_LAG !== "0") {
       await workerCmd(children.get(lagNode.id), { type: "set_replication_delay", ms: 250 }).catch(() => {});
     }
 
