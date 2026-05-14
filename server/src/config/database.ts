@@ -169,6 +169,16 @@ async function waitForClusterLeader(m: LioranManager, timeoutMs = 10_000) {
   return null;
 }
 
+async function waitForClusterPrimary(timeoutMs = 20_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const primary = allManagers.find((m) => typeof (m as any).isPrimary === "function" && m.isPrimary());
+    if (primary) return primary;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
 const baseRootPath = cli.rootPath || process.env.LIORANDB_ROOT_PATH || getBaseDBFolder();
 const cluster = makeClusterManagers(baseRootPath);
 
@@ -188,7 +198,18 @@ if (clusterNodeCount > 1) {
 
 export async function awaitClusterReady() {
   if (allManagers.length <= 1) return;
-  const leader = await waitForClusterLeader(manager);
+
+  // Warm up all nodes so they bind their internal cluster ports before we attempt any writes.
+  // Without this, node-0 may elect itself and then fail writes due to missing majority acks.
+  await Promise.allSettled(allManagers.map((m) => m.db("_auth")));
+
+  const primary = await waitForClusterPrimary();
+  if (primary) {
+    manager = primary;
+    return;
+  }
+
+  const leader = await waitForClusterLeader(manager, 30_000);
   if (!leader) {
     throw new Error(
       "Cluster leader not discovered (timeout). Check port availability and LIORANDB_CLUSTER_* settings."
@@ -202,7 +223,7 @@ export function getWriteManager() {
 
 export function getReadManager() {
   if (allManagers.length <= 1) return manager;
-  const readers = allManagers.slice(1);
+  const readers = allManagers.filter((m) => m !== manager);
   return readers[readIndex++ % readers.length];
 }
 

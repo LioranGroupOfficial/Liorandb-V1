@@ -167,3 +167,5 @@ log-pd.txt
 log-soak.txt
 bench
 .npm-cache
+lioran-data
+patches
