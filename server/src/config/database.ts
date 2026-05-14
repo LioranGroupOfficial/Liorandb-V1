@@ -69,7 +69,11 @@ function makeNodeOptions(
     cache: maxRAMMB ? { enabled: true, maxRAMMB } : undefined,
   };
 
-  if (!singleNodeMode) {
+  if (singleNodeMode) {
+    // Ensure we never fall back to CLIENT mode (which requires an external IPC primary).
+    // We immediately close/disable the IPC listener in `disableIPCForSingleNode()`.
+    base.ipc = "primary";
+  } else {
     base.ipc = cli.ipc || (process.env.LIORANDB_IPC_MODE as any);
   }
 

@@ -4,6 +4,21 @@ import { manager } from "../config/database";
 
 const DB_META = "__db_meta.json";
 
+function toBool(raw: unknown, defaultValue = false) {
+  if (raw === undefined || raw === null) return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "") return defaultValue;
+  if (v === "1" || v === "true" || v === "yes" || v === "y" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "n" || v === "off") return false;
+  return defaultValue;
+}
+
+function shouldSkipDb(name: string) {
+  if (name.startsWith(".")) return true;
+  if (!toBool(process.env.LIORANDB_SINGLE_NODE, false)) return false;
+  return name === "__cluster_nodes";
+}
+
 export async function logDiskIntegrityWarnings() {
   try {
     const root = manager.rootPath;
@@ -13,7 +28,7 @@ export async function logDiskIntegrityWarnings() {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const name = entry.name;
-      if (name.startsWith(".")) continue;
+      if (shouldSkipDb(name)) continue;
 
       const dbPath = path.join(root, name);
       const metaPath = path.join(dbPath, DB_META);

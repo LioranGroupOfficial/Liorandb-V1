@@ -56,6 +56,15 @@ function printHostAddresses(port: number) {
   }
 }
 
+function toBool(raw: unknown, defaultValue = false) {
+  if (raw === undefined || raw === null) return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "") return defaultValue;
+  if (v === "1" || v === "true" || v === "yes" || v === "y" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "n" || v === "off") return false;
+  return defaultValue;
+}
+
 async function start() {
   await awaitClusterReady();
   const adminState = await ensureAdminUser();
@@ -90,16 +99,32 @@ async function start() {
 
   await logDiskIntegrityWarnings();
 
-  const httpServer = app.listen(PORT, "0.0.0.0", () => {
+  const singleNodeMode = toBool(process.env.LIORANDB_SINGLE_NODE, false);
+  const httpEnabled = singleNodeMode ? toBool(process.env.LIORANDB_HTTP_ENABLED, false) : true;
+
+  const host = singleNodeMode ? "127.0.0.1" : "0.0.0.0";
+
+  const httpServer = httpEnabled
+    ? app.listen(PORT, host, () => {
+        console.log("======================================");
+        console.log("LioranDB Host is LIVE");
+        console.log(`Listening on port: ${PORT}`);
+        console.log(
+          `DB Access Mode: ${manager.isPrimary() ? "primary" : manager.isReadOnly() ? "readonly" : "client"}`
+        );
+        printHostAddresses(PORT);
+        console.log("======================================");
+      })
+    : null;
+
+  if (!httpEnabled) {
     console.log("======================================");
-    console.log("LioranDB Host is LIVE");
-    console.log(`Listening on port: ${PORT}`);
+    console.log("LioranDB Host is LIVE (HTTP disabled)");
     console.log(
       `DB Access Mode: ${manager.isPrimary() ? "primary" : manager.isReadOnly() ? "readonly" : "client"}`
     );
-    printHostAddresses(PORT);
     console.log("======================================");
-  });
+  }
 
   const baseUrl = process.env.LIORANDB_BASE_URL || `http://localhost:${PORT}`;
 
@@ -126,12 +151,14 @@ async function start() {
 
     console.log(`\nShutdown requested (${reason}). Shutting down gracefully...`);
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((err) => (err ? reject(err) : resolve()));
-      });
-    } catch (err) {
-      console.error("Error while closing HTTP server:", err);
+    if (httpServer) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      } catch (err) {
+        console.error("Error while closing HTTP server:", err);
+      }
     }
 
     try {

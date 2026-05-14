@@ -102,6 +102,12 @@ To run a single embedded node (no internal cluster ports/peers, and no IPC liste
 LIORANDB_SINGLE_NODE=1
 ```
 
+In single-node mode, the HTTP server is disabled by default. Enable it if you still want the API/dashboard:
+
+```bash
+LIORANDB_HTTP_ENABLED=1
+```
+
 Note: the server only auto-loads a file named `.env` from the server directory. If you use a different filename, set `LIORANDB_ENV_FILE` to point to it.
 
 ## Dashboard

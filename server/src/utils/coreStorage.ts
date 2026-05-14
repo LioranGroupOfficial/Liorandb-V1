@@ -4,6 +4,27 @@ import { manager } from "../config/database";
 
 export const AUTH_DB_NAME = "_auth";
 const WAL_DIR_NAME = "__wal";
+const INTERNAL_DB_NAMES = new Set(["__cluster_nodes"]);
+
+function toBool(raw: unknown, defaultValue = false) {
+  if (raw === undefined || raw === null) return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "") return defaultValue;
+  if (v === "1" || v === "true" || v === "yes" || v === "y" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "n" || v === "off") return false;
+  return defaultValue;
+}
+
+function isSingleNodeMode() {
+  return toBool(process.env.LIORANDB_SINGLE_NODE, false);
+}
+
+function assertAllowedDatabaseName(name: string) {
+  if (!isSingleNodeMode()) return;
+  if (INTERNAL_DB_NAMES.has(name)) {
+    throw new Error(`database "${name}" is not available in single-node mode`);
+  }
+}
 
 function assertSafeName(name: string, kind: "database" | "collection") {
   if (!name || typeof name !== "string") {
@@ -37,23 +58,27 @@ async function closeOpenDatabase(name: string) {
 
 export function getDatabasePath(name: string) {
   assertSafeName(name, "database");
+  assertAllowedDatabaseName(name);
   return path.join(manager.rootPath, name);
 }
 
 export async function listDatabaseNames() {
   return listSubdirectories(manager.rootPath)
     .filter((name) => name !== AUTH_DB_NAME && !name.startsWith("."))
+    .filter((name) => (isSingleNodeMode() ? !INTERNAL_DB_NAMES.has(name) : true))
     .sort((a, b) => a.localeCompare(b));
 }
 
 export async function createDatabaseByName(name: string) {
   assertSafeName(name, "database");
+  assertAllowedDatabaseName(name);
   await manager.db(name);
   return name;
 }
 
 export async function deleteDatabaseByName(name: string) {
   assertSafeName(name, "database");
+  assertAllowedDatabaseName(name);
 
   const dbPath = getDatabasePath(name);
   if (!fs.existsSync(dbPath)) {
@@ -68,6 +93,8 @@ export async function deleteDatabaseByName(name: string) {
 export async function renameDatabaseByName(currentName: string, nextName: string) {
   assertSafeName(currentName, "database");
   assertSafeName(nextName, "database");
+  assertAllowedDatabaseName(currentName);
+  assertAllowedDatabaseName(nextName);
 
   const currentPath = getDatabasePath(currentName);
   const nextPath = getDatabasePath(nextName);
@@ -86,12 +113,14 @@ export async function renameDatabaseByName(currentName: string, nextName: string
 }
 
 export async function listCollectionNames(dbName: string) {
+  assertAllowedDatabaseName(dbName);
   const db = await manager.db(dbName);
   return listSubdirectories(db.basePath).sort((a, b) => a.localeCompare(b));
 }
 
 export async function createCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
+  assertAllowedDatabaseName(dbName);
   const db = await manager.db(dbName);
   db.collection(collectionName);
   return collectionName;
@@ -99,6 +128,7 @@ export async function createCollectionByName(dbName: string, collectionName: str
 
 export async function deleteCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
+  assertAllowedDatabaseName(dbName);
   const db = await manager.db(dbName);
   const collectionPath = path.join(db.basePath, collectionName);
 
@@ -123,6 +153,7 @@ export async function renameCollectionByName(
 ) {
   assertSafeName(currentName, "collection");
   assertSafeName(nextName, "collection");
+  assertAllowedDatabaseName(dbName);
 
   const db = await manager.db(dbName);
   const currentPath = path.join(db.basePath, currentName);
