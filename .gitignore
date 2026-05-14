@@ -169,3 +169,4 @@ bench
 .npm-cache
 lioran-data
 patches
+soak_test
