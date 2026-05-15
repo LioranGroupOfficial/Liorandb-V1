@@ -1,8 +1,9 @@
 services:
   liorandb:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
+    image: ldep/liorandb:latest
     container_name: liorandb-test
     ports:
       - "4000:4000"

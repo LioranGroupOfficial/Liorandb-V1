@@ -100,7 +100,9 @@ async function start() {
   await logDiskIntegrityWarnings();
 
   const singleNodeMode = toBool(process.env.LIORANDB_SINGLE_NODE, false);
-  const httpEnabled = singleNodeMode ? toBool(process.env.LIORANDB_HTTP_ENABLED, false) : true;
+  // In single-node mode we still want the HTTP API/dashboard by default.
+  // Allow explicitly disabling via LIORANDB_HTTP_ENABLED=0/false/off.
+  const httpEnabled = singleNodeMode ? toBool(process.env.LIORANDB_HTTP_ENABLED, true) : true;
 
   const host = singleNodeMode ? "127.0.0.1" : "0.0.0.0";
 
