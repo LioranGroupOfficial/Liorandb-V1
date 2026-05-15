@@ -93,6 +93,10 @@ export interface CollectionOptions {
 
 export interface FindOptions {
   limit?: number;
+  /**
+   * Alias for `offset` (Mongo-style).
+   */
+  skip?: number;
   offset?: number;
   cursor?: string;
   projection?: string[];
@@ -889,7 +893,7 @@ export class Collection<T = any> {
     let cursor = typeof options?.cursor === "string" && options.cursor.length > 0
       ? options.cursor
       : undefined;
-    const rawOffset = Math.max(0, Math.trunc(options?.offset ?? 0));
+    const rawOffset = Math.max(0, Math.trunc(options?.offset ?? options?.skip ?? 0));
     const rawLimit = options?.limit;
     const limit = rawLimit === undefined
       ? Number.POSITIVE_INFINITY
@@ -1569,15 +1573,16 @@ export class Collection<T = any> {
       return execution.results;
     }
 
+    const normalized = this.normalizeFindOptions(options);
     const key = cache.makeKey({
       c: this.dir,
       q: query ?? {},
       o: {
         limit: options?.limit,
-        offset: options?.offset,
-        cursor: options?.cursor,
-        projection: options?.projection,
-        sort: (options as any)?.sort
+        offset: normalized.offset,
+        cursor: normalized.cursor,
+        projection: normalized.projection,
+        sort: normalized.sort
       }
     });
 
@@ -1602,15 +1607,16 @@ export class Collection<T = any> {
       return execution.results[0] ?? null;
     }
 
+    const normalized = this.normalizeFindOptions(options);
     const key = cache.makeKey({
       c: this.dir,
       q: query ?? {},
       o: {
         limit: 1,
-        offset: options?.offset,
-        cursor: options?.cursor,
-        projection: options?.projection,
-        sort: (options as any)?.sort
+        offset: normalized.offset,
+        cursor: normalized.cursor,
+        projection: normalized.projection,
+        sort: normalized.sort
       }
     });
 

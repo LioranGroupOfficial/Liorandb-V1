@@ -55,6 +55,10 @@ export type Query<T = any> =
 
 export interface FindOptions {
   limit?: number;
+  /**
+   * Alias for `offset` (Mongo-style).
+   */
+  skip?: number;
   offset?: number;
   /**
    * Cursor for pagination. Semantics depend on query shape:

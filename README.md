@@ -194,7 +194,7 @@ await users.insertMany([{ name: "Ben", age: 30 }]);
 
 const docs = await users.find(
   { age: { $gte: 18 } },
-  { projection: ["name"], limit: 20, offset: 0 }
+  { projection: ["name"], limit: 20, skip: 0 } // `skip` is an alias for `offset`
 );
 
 const one = await users.findOne(

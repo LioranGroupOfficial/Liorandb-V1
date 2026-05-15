@@ -20,7 +20,7 @@ const docs = await users.find(
   {
     projection: ["name", "email"],
     limit: 10,
-    offset: 20
+    skip: 20 // `skip` is an alias for `offset`
   }
 );
 ```

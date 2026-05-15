@@ -116,7 +116,7 @@ export class ShardedCollection<T = any> {
     }
 
     // Best-effort limit/offset handling for cross-shard queries.
-    const offset = Math.max(0, Math.trunc((options as any)?.offset ?? 0));
+    const offset = Math.max(0, Math.trunc((options as any)?.offset ?? (options as any)?.skip ?? 0));
     const limit = (options as any)?.limit !== undefined ? Math.max(0, Math.trunc((options as any).limit)) : undefined;
     const sliced = limit === undefined ? all.slice(offset) : all.slice(offset, offset + limit);
     return sliced;

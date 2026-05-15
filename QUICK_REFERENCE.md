@@ -222,7 +222,7 @@ const compression = tuner.getOptimalCompression(sampleData);
 
 ### Low-Latency Reads
 - Enable covering indexes
-- Use cursor pagination (not offset)
+- Prefer cursor pagination over large `skip`/`offset`
 - Increase cache TTL for hot data
 
 ### Memory Management
