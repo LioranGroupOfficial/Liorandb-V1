@@ -23,6 +23,7 @@ import {
   UpdateQuery,
 } from "./types";
 import { HttpClient } from "./http";
+import { extractFindPayload } from "./utils/normalizeFindOptions";
 
 export interface DatabaseCredentialsInput {
   username: string;
@@ -168,9 +169,10 @@ export class DB {
     query: Filter = {},
     options?: LioranFindOptions
   ): Promise<LioranExplainResponse["explain"]> {
+    const payload = extractFindPayload(query, options);
     return (await this.http.post<LioranExplainResponse>(
       `/databases/${encodeURIComponent(this.name)}/explain`,
-      { collection, query, options }
+      { collection, ...payload }
     )).explain;
   }
 

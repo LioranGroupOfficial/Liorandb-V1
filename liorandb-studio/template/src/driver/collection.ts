@@ -23,6 +23,7 @@ import {
   UpdateQuery,
 } from "./types";
 import { HttpClient } from "./http";
+import { extractFindPayload } from "./utils/normalizeFindOptions";
 
 export class Collection<T extends DocumentData = DocumentData> {
   constructor(
@@ -53,11 +54,12 @@ export class Collection<T extends DocumentData = DocumentData> {
     filter: Filter = {},
     options?: LioranFindOptions
   ): Promise<Array<T & { _id?: string }>> {
+    const payload = extractFindPayload(filter, options);
     return (await this.http.post<LioranFindResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/find`,
-      { query: filter, options }
+      payload
     )).results;
   }
 
@@ -65,11 +67,12 @@ export class Collection<T extends DocumentData = DocumentData> {
     filter: Filter = {},
     options?: LioranFindOptions
   ): Promise<(T & { _id?: string }) | null> {
+    const payload = extractFindPayload(filter, options);
     return (await this.http.post<LioranFindOneResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/findOne`,
-      { query: filter, options }
+      payload
     )).doc;
   }
 
@@ -183,11 +186,12 @@ export class Collection<T extends DocumentData = DocumentData> {
     query: Filter = {},
     options?: LioranFindOptions
   ): Promise<LioranExplainResponse["explain"]> {
+    const payload = extractFindPayload(query, options);
     return (await this.http.post<LioranExplainResponse>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/explain`,
-      { query, options }
+      payload
     )).explain;
   }
 

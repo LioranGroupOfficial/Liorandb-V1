@@ -152,6 +152,8 @@ export interface LioranFindOptions {
   offset?: number;
   projection?: string[];
   sort?: Record<string, 1 | -1>;
+  sortBy?: string;
+  sortDir?: "asc" | "desc" | 1 | -1 | "1" | "-1";
 }
 
 export interface LioranFindResponse<T extends DocumentData> {

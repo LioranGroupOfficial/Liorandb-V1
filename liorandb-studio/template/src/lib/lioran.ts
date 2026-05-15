@@ -195,9 +195,23 @@ export class LioranDBService {
     if (!this.client) throw new Error('Client not connected');
 
     const collection = this.client.db(dbName).collection<Document>(collectionName);
+
+    const hasEmbeddedOptions =
+      Object.prototype.hasOwnProperty.call(filter, "__options") &&
+      (filter as any).__options &&
+      typeof (filter as any).__options === "object";
+
+    const filterForCount = Object.prototype.hasOwnProperty.call(filter, "__options")
+      ? (({ __options: _unused, ...rest }) => rest)(filter as any)
+      : filter;
+
+    if (hasEmbeddedOptions && (filter as any).__options.limit === undefined) {
+      (filter as any).__options = { ...(filter as any).__options, limit };
+    }
+
     const [documents, count] = await Promise.all([
-      collection.find(filter, { limit }),
-      collection.count(filter),
+      collection.find(filter, hasEmbeddedOptions ? undefined : { limit }),
+      collection.count(filterForCount),
     ]);
 
     return {
