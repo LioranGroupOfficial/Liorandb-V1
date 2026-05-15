@@ -42,12 +42,40 @@ new LioranManager(options)
   Base folder where database directories are stored (one folder per DB name).
 - `encryptionKey?: string | Buffer`  
   Enables encryption-at-rest for documents and WAL records.
-- `ipc?: "primary" | "client" | "readonly"`  
+- `ipc?: "primary" | "client" | "readonly" | "replica"`  
   Process mode for multi-process usage (see [`IPC`](./ipc)).
+- `cluster?: { enabled?: boolean; ... }`  
+  Optional multi-node cluster (advanced; see [`Cluster`](./cluster)).
+- `cache?: { maxRAMMB?: number; ... }`  
+  Global cache configuration (advanced).
+- `cores?: number`  
+  Overrides how many CPU cores to use for internal worker pools (advanced).
 - `writeQueue?: { ... }`  
   Controls how the internal dedicated writer behaves under backpressure (advanced).
 - `batch?: { chunkSize?: number }`  
   Default chunk size used by batch inserts (advanced).
+- `durability?: ...`  
+  Durability tradeoffs (advanced).
+- `storage?: ...`  
+  Storage mode tuning (advanced).
+- `latency?: ...`  
+  Latency-oriented tuning knobs (advanced).
+- `background?: ...`  
+  Background scheduler options (advanced).
+- `sharding?: ...`  
+  Partitioning/sharding options (advanced).
+- `replication?: { ... }`  
+  Replication options (advanced; see [`Replication`](./replication)).
+- `slo?: { ... }`  
+  Admission control / backpressure SLOs (advanced).
+- `compute?: { enabled?: boolean }`  
+  Enables compute/offload hooks (advanced).
+- `consistency?: { reads?: ... }`  
+  Read-consistency modes (advanced; see [`Consistency`](./consistency)).
+- `tenancy?: ...`  
+  Per-tenant limits + policies (advanced; see [`Tenancy`](./tenancy)).
+- `security?: { enabled?: boolean; authorize?: ...; audit?: ... }`  
+  Authorization hooks + auditing (advanced; see [`Security`](./security)).
 
 ## "What does it create on disk?" (manager root)
 
@@ -372,6 +400,15 @@ await manager.close();
 { primary: true, client: false, readonly: false }
 ```
 
+## Replica mode (`ipc: "replica"`)
+
+`ipc: "replica"` is a specialized mode for read scaling where the process should not become the primary lock owner.
+
+- Use this when you want the process to behave as a *non-writer* in a replication topology.
+- Writes are rejected (similar to `readonly`), but replica behavior can still participate in replication flows when enabled.
+
+If you only want “never write, never WAL”, prefer `ipc: "readonly"` (see [`IPC`](./ipc)).
+
 ## Write queue (backpressure)
 
 For write-heavy workloads you can tune the dedicated writer queue:
@@ -471,6 +508,14 @@ await manager.close();
 
 </TabItem>
 </Tabs>
+
+## Next: advanced topics
+
+- [`Cluster`](./cluster): multi-node topology (advanced)
+- [`Replication`](./replication): leader/replica configuration (advanced)
+- [`Consistency`](./consistency): read consistency modes (advanced)
+- [`Tenancy`](./tenancy): per-tenant limits (advanced)
+- [`Security`](./security): authz + auditing hooks (advanced)
 
 ## Example: project-local root + encryption
 

@@ -1,0 +1,53 @@
+---
+title: Security
+sidebar_position: 13
+---
+
+Security hooks are configured through `LioranManagerOptions.security` (advanced).
+
+This is *embedded* authorization/auditing for the engine (not the HTTP server). It is useful when:
+
+- you run multi-tenant workloads inside one process, or
+- you want a custom authorization layer around collections and documents.
+
+## Enable + authorize hook
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  security: {
+    enabled: true,
+    authorize: async (ctx) => {
+      // Decide whether to allow the action.
+      // Returning/throwing semantics depend on your hook implementation.
+      return ctx;
+    },
+  },
+});
+```
+
+## Auditing
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  security: {
+    enabled: true,
+    audit: {
+      enabled: true,
+      dir: "./.liorandb/audit",
+      flushDelayMs: 500,
+    },
+  },
+});
+```
+
+## Principals
+
+When security is enabled, operations may be associated with a *principal* (the caller identity).
+How you set or propagate principals depends on your app’s structure.
+

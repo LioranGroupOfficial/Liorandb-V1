@@ -1,0 +1,33 @@
+---
+title: Cluster
+sidebar_position: 9
+---
+
+`@liorandb/core` can run in a multi-node cluster topology (advanced).
+
+This page documents the **shape** of the `cluster` option on `LioranManagerOptions`, and the core ideas you need to wire it up.
+
+## Enable
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  cluster: {
+    enabled: true,
+    // other cluster fields depend on your topology
+  },
+});
+```
+
+## When to use cluster vs IPC
+
+- Use **IPC** (`ipc: "primary" | "client" | "readonly"`) when multiple processes share the *same* root path on the same machine.
+- Use **cluster** when you want multiple *nodes* (potentially different machines) coordinating.
+
+## Notes
+
+- Cluster config is intentionally “advanced”: keep single-node mode until you need it.
+- If you enable replication, make sure you also review [`Replication`](./replication) and [`Consistency`](./consistency).
+

@@ -1,0 +1,38 @@
+---
+title: Replication
+sidebar_position: 10
+---
+
+Replication is configured through `LioranManagerOptions.replication` (advanced).
+
+At a high level, you run:
+
+- a **leader** node (the primary writer), and
+- one or more **replica** nodes that continuously ingest WAL batches from the leader.
+
+## Configure
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  replication: {
+    // Leader’s root path for bootstrapping/coordination (topology-specific)
+    leaderRootPath: "./.liorandb-leader",
+    pollMs: 250,
+    batchLimit: 5000,
+    walStream: { host: "127.0.0.1", port: 8100 },
+  },
+});
+```
+
+## Pair with IPC modes
+
+- Use `ipc: "primary"` on the leader process that owns the writer lock.
+- Use `ipc: "readonly"` or `ipc: "replica"` on nodes that should not write locally.
+
+## Read behavior
+
+Replication mainly changes where *data comes from*. Read *consistency* is controlled separately via [`Consistency`](./consistency).
+

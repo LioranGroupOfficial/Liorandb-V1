@@ -1,0 +1,37 @@
+---
+title: Consistency
+sidebar_position: 11
+---
+
+Consistency is configured through `LioranManagerOptions.consistency` (advanced).
+
+This is mainly useful when you have a leader + replicas and need to choose between:
+
+- always reading locally (fastest), and
+- forcing reads to be “fresh enough” (safer), and
+- forcing reads to be leader-only (strongest).
+
+## Configure bounded staleness
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  consistency: {
+    reads: {
+      mode: "bounded_stale",
+      maxLagMs: 250,
+      // optional: if bounded is violated, fall back to stale_ok instead of throwing
+      autoDegradeToStaleOk: true,
+    },
+  },
+});
+```
+
+## Modes
+
+- `stale_ok`: always serve reads locally.
+- `bounded_stale`: serve from replicas only if the lag is within configured bounds.
+- `leader_only`: replicas reject reads; clients must talk to leader.
+

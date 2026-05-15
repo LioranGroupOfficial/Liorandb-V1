@@ -29,7 +29,8 @@ The lock is stored at:
 
 - **One primary** process per root path.
 - Any additional processes should use `ipc: "client"` (or rely on auto-detect).
-- Use `ipc: "readonly"` for safe read replicas that never write.
+- Use `ipc: "readonly"` for safe read replicas that never write (no WAL, no writes).
+- Use `ipc: "replica"` when you run a replication topology and want a non-writer process mode that can still participate in replication flows (advanced).
 
 ## Example: log which mode you are in
 

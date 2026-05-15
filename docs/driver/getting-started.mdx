@@ -67,5 +67,21 @@ console.log(await items.findOne({ sku: "A" }));
 
 - `lioran://username:password@host:port` → logs in and stores a JWT token
 - `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses the connection string mode
+- `liorandbs://dbUsername:dbPassword@host[:port]/databaseName` → same as `liorandb://`, but uses HTTPS
 - `http(s)://host:port` → does **not** auto-login (call `login()` or `setToken()` / `setConnectionString()`)
+
+## Core-style API (optional): `LioranManager`
+
+If you prefer the embedded/core “manager → db → collection” shape, the driver also exports a remote-compatible `LioranManager` facade:
+
+```ts
+import { LioranManager } from "@liorandb/driver";
+
+const manager = new LioranManager("lioran://admin:admin@localhost:4000");
+await manager.connect();
+
+const db = manager.db("default");
+const items = db.collection("items");
+console.log(await items.findOne({ sku: "A" }));
+```
 

@@ -179,3 +179,6 @@ pd_extrac
 
 installer_output
 installer.iss
+bench
+docker
+log-soak.txt

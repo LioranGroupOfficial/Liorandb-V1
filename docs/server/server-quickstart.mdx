@@ -20,6 +20,10 @@ Start the server:
 ldb-serve
 ```
 
+Alternative entrypoint:
+
+- `ldb` (a convenience wrapper shipped by `@liorandb/db`)
+
 Defaults:
 
 - HTTP: `http://localhost:4000`
@@ -62,6 +66,7 @@ Common environment variables:
 - `PORT` (default `4000`)
 - `NODE_ENV`
 - `LOG_LEVEL`
+- `LIORANDB_IPC_MODE` (`primary|client|readonly`) (equivalent to `--ipc`)
 
 Write queue:
 

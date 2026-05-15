@@ -1,0 +1,44 @@
+---
+title: Tenancy
+sidebar_position: 12
+---
+
+Tenancy is configured through `LioranManagerOptions.tenancy` (advanced).
+
+Tenancy lets you enforce per-tenant limits (doc size, blob size, index counts, background work), and optionally customize those limits per tenant id.
+
+## Configure default limits
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  tenancy: {
+    enabled: true,
+    defaultLimits: {
+      maxDocBytes: 512 * 1024,
+      maxBlobBytes: 16 * 1024 * 1024,
+      maxIndexesPerCollection: 12,
+      maxTextIndexesPerCollection: 2,
+    },
+  },
+});
+```
+
+## Per-tenant overrides
+
+```ts
+import { LioranManager } from "@liorandb/core";
+
+const manager = new LioranManager({
+  rootPath: "./.liorandb",
+  tenancy: {
+    limitsForTenant: (tenantId) => {
+      if (tenantId === "enterprise") return { maxDocBytes: 2 * 1024 * 1024 };
+      return null;
+    },
+  },
+});
+```
+

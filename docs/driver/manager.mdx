@@ -1,0 +1,47 @@
+---
+title: LioranManager (driver)
+sidebar_position: 2
+---
+
+`@liorandb/driver` exports a `LioranManager` class that intentionally mirrors the common `@liorandb/core` entrypoint shape, but talks to a **remote server** over HTTP.
+
+This is useful when you want the familiar:
+
+`manager → db → collection`
+
+workflow, but your data lives behind a running `@liorandb/db` server.
+
+## Constructor
+
+```ts
+import { LioranManager } from "@liorandb/driver";
+
+const manager = new LioranManager("lioran://admin:admin@localhost:4000");
+```
+
+You can pass either:
+
+- a URI string, or
+- `{ uri: string }`
+
+## Connect
+
+`LioranManager` extends `LioranClient`, so connection/auth behavior is the same:
+
+```ts
+await manager.connect();
+```
+
+## Close
+
+For the driver, `close()` / `closeAll()` are kept for API compatibility and are no-ops (the driver does not hold file handles like the embedded engine).
+
+## Core-like aliases
+
+The driver also exports:
+
+- `LioranDB` as an alias for the remote `DB` wrapper
+- `LioranCollection` as an alias for the remote `Collection` wrapper
+
+These aliases help shared code compile when you swap between embedded and remote implementations.
+
