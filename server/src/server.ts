@@ -104,7 +104,11 @@ async function start() {
   // Allow explicitly disabling via LIORANDB_HTTP_ENABLED=0/false/off.
   const httpEnabled = singleNodeMode ? toBool(process.env.LIORANDB_HTTP_ENABLED, true) : true;
 
-  const host = singleNodeMode ? "127.0.0.1" : "0.0.0.0";
+  // Default behavior:
+  // - single-node: bind to 127.0.0.1 (safer for local dev)
+  // - cluster: bind to 0.0.0.0 (intended for container/network access)
+  // Override for Docker/production with LIORANDB_HTTP_HOST=0.0.0.0.
+  const host = (process.env.LIORANDB_HTTP_HOST || "").trim() || (singleNodeMode ? "127.0.0.1" : "0.0.0.0");
 
   const httpServer = httpEnabled
     ? app.listen(PORT, host, () => {

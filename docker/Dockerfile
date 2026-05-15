@@ -57,6 +57,9 @@ ENV LIORANDB_DEFAULT_ADMIN_USERNAME=admin \
 # Force single embedded node (ignores LIORANDB_CLUSTER_* settings)
 ENV LIORANDB_SINGLE_NODE=1
 
+# In Docker, bind HTTP to all interfaces so `-p 4000:4000` works from the host.
+ENV LIORANDB_HTTP_HOST=0.0.0.0
+
 # Cache budget per node (MB)
 ENV LIORANDB_MAX_RAM_MB=512
 
