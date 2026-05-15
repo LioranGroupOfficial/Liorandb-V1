@@ -6,6 +6,8 @@ import {
   renameCollection,
   collectionStats,
   compactCollection,
+  getCollectionOptions,
+  patchCollectionOptions,
 } from "../controllers/collection.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
@@ -21,5 +23,7 @@ router.delete("/:col", deleteCollection);
 router.patch("/:col/rename", renameCollection);
 router.get("/:col/stats", collectionStats);
 router.post("/:col/compact", compactCollection);
+router.get("/:col/options", getCollectionOptions);
+router.patch("/:col/options", patchCollectionOptions);
 
 export default router;

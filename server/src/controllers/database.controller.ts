@@ -15,6 +15,7 @@ import {
 } from "../utils/databaseAccess";
 import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth";
 import { sendApiError } from "../utils/apiError";
+import { openConfiguredCollection } from "../utils/collectionConfig";
 
 export const listDatabases = async (req: Request, res: Response) => {
   try {
@@ -112,7 +113,7 @@ export const databaseStats = async (req: Request, res: Response) => {
     let totalDocs = 0;
 
     for (const colName of cols) {
-      const col = database.collection<any>(colName);
+      const col = openConfiguredCollection<any>(database, colName);
       totalDocs += await col.countDocuments();
     }
 
@@ -319,6 +320,12 @@ export const runTransaction = async (req: Request, res: Response) => {
     }
 
     const database = await getWriteManager().db(db);
+
+    // Ensure collections are opened with configured options (e.g. date timestamps)
+    // before the transaction context accesses them.
+    for (const op of ops) {
+      openConfiguredCollection<any>(database, op.col);
+    }
 
     const result = await database.transaction(async (tx: any) => {
       for (const op of ops) {

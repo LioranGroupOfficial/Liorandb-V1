@@ -8,6 +8,12 @@ import {
 } from "../utils/coreStorage";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
+import {
+  readCollectionDateOption,
+  reconfigureCollectionDateOption,
+  type CollectionDateOption,
+  openConfiguredCollection,
+} from "../utils/collectionConfig";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
@@ -58,7 +64,7 @@ export const collectionStats = async (req: Request, res: Response) => {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
     const database = await getReadManager().db(db);
-    const collection = database.collection<any>(col);
+    const collection = openConfiguredCollection<any>(database, col);
 
     const count = await collection.countDocuments();
 
@@ -80,6 +86,54 @@ export const compactCollection = async (req: Request, res: Response) => {
     await database.compactCollection(col);
 
     return res.json({ ok: true, db, collection: col });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
+export const getCollectionOptions = async (req: Request, res: Response) => {
+  try {
+    const { db, col } = req.params;
+    await requireDatabaseAccess(req, db);
+    const database = await getReadManager().db(db);
+
+    return res.json({
+      ok: true,
+      collection: col,
+      options: {
+        date: readCollectionDateOption(database as any, col),
+      },
+    });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
+export const patchCollectionOptions = async (req: Request, res: Response) => {
+  try {
+    const { db, col } = req.params;
+    await requireDatabaseAccess(req, db);
+    const database = await getWriteManager().db(db);
+
+    const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
+    const nextDate: CollectionDateOption | undefined = body.date;
+
+    if (nextDate !== undefined) {
+      const d = nextDate as any;
+      if (!(d === true || d === false || d === "yes" || (typeof d === "object" && d))) {
+        return res.status(400).json({ error: "invalid date option" });
+      }
+    }
+
+    await reconfigureCollectionDateOption(database as any, col, nextDate);
+
+    return res.json({
+      ok: true,
+      collection: col,
+      options: {
+        date: readCollectionDateOption(database as any, col),
+      },
+    });
   } catch (error) {
     return sendApiError(res, error, 400);
   }

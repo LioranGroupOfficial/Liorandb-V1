@@ -842,17 +842,63 @@ Body:
 { "field": "email", "unique": true }
 ```
 
+Notes:
+
+- You can also create a text index by sending `{ "type": "text" }` with optional `textOptions`.
+
+### `POST /db/:db/collections/:col/indexes/text`
+
+Create a text index.
+
+Body:
+
+```json
+{ "field": "bio", "options": { "normalize": true, "stopwords": ["a", "the"] } }
+```
+
 ### `DELETE /db/:db/collections/:col/indexes/:field`
 
 Drop an index by field name.
+
+### `DELETE /db/:db/collections/:col/indexes/text/:field`
+
+Drop a text index by field name.
 
 ### `POST /db/:db/collections/:col/indexes/:field/rebuild`
 
 Rebuild a single index.
 
+### `POST /db/:db/collections/:col/indexes/text/:field/rebuild`
+
+Rebuild a single text index.
+
 ### `POST /db/:db/collections/:col/indexes/rebuild`
 
 Rebuild all indexes registered in DB metadata for this collection.
+
+### Text search in `find` / `findOne`
+
+Text search is expressed with a top-level `$text` clause in the query:
+
+```json
+{ "$text": { "search": "hello world", "fields": ["bio"] } }
+```
+
+This requires a text index on the requested field(s).
+
+### `GET /db/:db/collections/:col/options`
+
+Get persisted collection options (server-side).
+
+### `PATCH /db/:db/collections/:col/options`
+
+Set persisted collection options (server-side).
+
+Body:
+
+```json
+{ "date": true }
+```
 
 ### `POST /db/:db/collections/:col/compact`
 
