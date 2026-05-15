@@ -8,6 +8,97 @@ function getBodyObject(req: Request) {
   return req.body && typeof req.body === "object" ? (req.body as any) : {};
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseSortDir(value: unknown): 1 | -1 | undefined {
+  if (value === 1 || value === "1" || value === "asc" || value === "ASC") return 1;
+  if (value === -1 || value === "-1" || value === "desc" || value === "DESC") return -1;
+  return undefined;
+}
+
+function normalizeFindPayload(body: any): { query: any; options?: any } {
+  const rawQuery = isPlainObject(body?.query) ? body.query : {};
+
+  const options: any = isPlainObject(body?.options) ? { ...body.options } : {};
+
+  const mergeMissing = (key: string, value: any) => {
+    if (options[key] === undefined && value !== undefined) options[key] = value;
+  };
+
+  // Allow passing options at the top-level body (backward/alternate client payloads).
+  mergeMissing("limit", body?.limit);
+  mergeMissing("offset", body?.offset);
+  mergeMissing("skip", body?.skip);
+  mergeMissing("cursor", body?.cursor);
+  mergeMissing("projection", body?.projection);
+  mergeMissing("sort", body?.sort);
+
+  // Convenience sort format: { sortBy: "field", sortDir: "asc" | "desc" | 1 | -1 }
+  if (options.sort === undefined) {
+    const sortBy = body?.sortBy;
+    const sortDir = parseSortDir(body?.sortDir ?? body?.sortOrder ?? body?.order ?? body?.dir);
+    if (typeof sortBy === "string" && sortBy.length > 0 && sortDir !== undefined) {
+      options.sort = { [sortBy]: sortDir };
+    }
+  }
+
+  // Allow embedding options inside query via reserved keys.
+  // Preferred: { query: { ...filter, __options: { offset, limit, sort, ... } } }
+  // Back-compat: { query: { ...filter, offset, limit, sort, ... } } when body.options is absent.
+  let query = rawQuery;
+  const embedded = isPlainObject(rawQuery.__options) ? rawQuery.__options : undefined;
+  if (embedded) {
+    mergeMissing("limit", embedded.limit);
+    mergeMissing("offset", embedded.offset);
+    mergeMissing("skip", embedded.skip);
+    mergeMissing("cursor", embedded.cursor);
+    mergeMissing("projection", embedded.projection);
+    mergeMissing("sort", embedded.sort);
+
+    const embeddedSortBy = embedded.sortBy;
+    const embeddedSortDir = parseSortDir(embedded.sortDir ?? embedded.sortOrder ?? embedded.order ?? embedded.dir);
+    if (options.sort === undefined && typeof embeddedSortBy === "string" && embeddedSortBy.length > 0 && embeddedSortDir !== undefined) {
+      options.sort = { [embeddedSortBy]: embeddedSortDir };
+    }
+
+    query = { ...rawQuery };
+    delete (query as any).__options;
+  } else if (!isPlainObject(body?.options)) {
+    // Only apply this "query carries options" mode when there wasn't an explicit body.options object.
+    const q: any = { ...rawQuery };
+    const extracted: any = {};
+
+    for (const key of ["limit", "offset", "skip", "cursor", "projection", "sort", "sortBy", "sortDir", "sortOrder", "order", "dir"]) {
+      if (q[key] !== undefined) {
+        extracted[key] = q[key];
+        delete q[key];
+      }
+    }
+
+    mergeMissing("limit", extracted.limit);
+    mergeMissing("offset", extracted.offset);
+    mergeMissing("skip", extracted.skip);
+    mergeMissing("cursor", extracted.cursor);
+    mergeMissing("projection", extracted.projection);
+    mergeMissing("sort", extracted.sort);
+
+    if (options.sort === undefined) {
+      const sortBy = extracted.sortBy;
+      const sortDir = parseSortDir(extracted.sortDir ?? extracted.sortOrder ?? extracted.order ?? extracted.dir);
+      if (typeof sortBy === "string" && sortBy.length > 0 && sortDir !== undefined) {
+        options.sort = { [sortBy]: sortDir };
+      }
+    }
+
+    query = q;
+  }
+
+  const hasOptions = Object.keys(options).length > 0;
+  return { query, options: hasOptions ? options : undefined };
+}
+
 export const insertDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
@@ -42,8 +133,7 @@ export const findDocuments = async (req: Request, res: Response) => {
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
-    const query = body.query || {};
-    const options = body.options || undefined;
+    const { query, options } = normalizeFindPayload(body);
 
     const results = await collection.find(query, options);
     res.json({ results });
@@ -59,8 +149,7 @@ export const findOneDocument = async (req: Request, res: Response) => {
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
-    const query = body.query || {};
-    const options = body.options || undefined;
+    const { query, options } = normalizeFindPayload(body);
 
     const doc = await collection.findOne(query, options);
     res.json({ doc });
@@ -160,8 +249,7 @@ export const explainQuery = async (req: Request, res: Response) => {
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
-    const query = body.query || {};
-    const options = body.options || undefined;
+    const { query, options } = normalizeFindPayload(body);
 
     const result = await (collection as any).explain(query, options);
     res.json({ explain: result });
