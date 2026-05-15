@@ -152,6 +152,16 @@ export interface LioranFindOptions {
   offset?: number;
   projection?: string[];
   sort?: Record<string, 1 | -1>;
+  /**
+   * Convenience alternative to `sort` for single-field sorts.
+   * If `sort` is provided, it takes precedence.
+   */
+  sortBy?: string;
+  /**
+   * Direction for `sortBy`. Defaults to ascending.
+   * Accepts: "asc" | "desc" | 1 | -1 (and stringified numbers).
+   */
+  sortDir?: "asc" | "desc" | 1 | -1 | "1" | "-1";
 }
 
 export interface LioranFindResponse<T extends DocumentData> {

@@ -25,6 +25,7 @@ import {
   UpdateQuery,
 } from "./types";
 import { HttpClient } from "./http";
+import { normalizeFindOptions } from "./utils/normalizeFindOptions";
 
 export interface DatabaseCredentialsInput {
   username: string;
@@ -221,7 +222,7 @@ export class DB {
   ): Promise<LioranExplainResponse["explain"]> {
     return (await this.http.post<LioranExplainResponse>(
       `/databases/${encodeURIComponent(this.name)}/explain`,
-      { collection, query, options }
+      { collection, query, options: normalizeFindOptions(options) }
     )).explain;
   }
 

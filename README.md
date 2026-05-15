@@ -561,6 +561,17 @@ const adults = await users.find({ age: { $gt: 18 } });
 - `offset?: number`
 - `projection?: string[]`
 - `sort?: Record<string, 1 | -1>`
+- `sortBy?: string` (convenience for single-field sort)
+- `sortDir?: "asc" | "desc" | 1 | -1` (defaults to ascending)
+
+You can also embed options into the query using a reserved key:
+
+```ts
+const page = await users.find({
+  active: true,
+  __options: { offset: 10, limit: 10, sortBy: "createdAt", sortDir: "desc" },
+});
+```
 
 ### `findOne(filter, options?)`
 
