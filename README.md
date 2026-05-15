@@ -645,6 +645,49 @@ Response:
 }
 ```
 
+## Indexes & Options
+
+### `listIndexes()`
+
+Calls `GET /db/:db/collections/:col/indexes`.
+
+```ts
+const indexes = await users.listIndexes();
+```
+
+### `createIndex(field, { unique? })`
+
+Calls `POST /db/:db/collections/:col/indexes`.
+
+```ts
+await users.createIndex("email", { unique: true });
+```
+
+### `createTextIndex(field, options?)`
+
+Calls `POST /db/:db/collections/:col/indexes/text`.
+
+```ts
+await users.createTextIndex("bio", { normalize: true, stopwords: ["a", "the"] });
+```
+
+### `dropIndex(field)` / `dropTextIndex(field)`
+
+Calls `DELETE /db/:db/collections/:col/indexes/:field` and `DELETE /db/:db/collections/:col/indexes/text/:field`.
+
+### `rebuildIndex(field)` / `rebuildTextIndex(field)` / `rebuildIndexes()`
+
+Calls `POST /db/:db/collections/:col/indexes/:field/rebuild`, `POST /db/:db/collections/:col/indexes/text/:field/rebuild`, and `POST /db/:db/collections/:col/indexes/rebuild`.
+
+### `getOptions()` / `setDateOption(date)`
+
+Calls `GET /db/:db/collections/:col/options` and `PATCH /db/:db/collections/:col/options`.
+
+```ts
+await users.setDateOption(true);
+const opts = await users.getOptions();
+```
+
 ## Error Handling
 
 The driver throws regular `Error` values for client-side validation issues and `HttpError` for failed HTTP requests.

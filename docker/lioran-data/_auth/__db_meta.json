@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "indexes": {
+    "users": [
+      {
+        "field": "_id",
+        "options": {
+          "unique": true
+        },
+        "type": "btree"
+      }
+    ],
+    "databases": [
+      {
+        "field": "_id",
+        "options": {
+          "unique": true
+        },
+        "type": "btree"
+      }
+    ]
+  },
+  "schemaVersion": "v1"
+}

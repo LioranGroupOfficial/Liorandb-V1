@@ -16,6 +16,8 @@ import {
   LioranFindOptions,
   LioranListIndexesResponse,
   LioranRebuildAllIndexesResponse,
+  LioranCollectionOptionsResponse,
+  LioranCollectionDateOption,
   LioranRenameResponse,
   LioranTransactionResponse,
   Filter,
@@ -131,6 +133,19 @@ export class DB {
     );
   }
 
+  async createTextIndex(
+    collection: string,
+    field: string,
+    options?: Record<string, any>
+  ): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        collection
+      )}/indexes/text`,
+      { field, options: options ?? {} }
+    );
+  }
+
   async listIndexes(collection: string): Promise<LioranListIndexesResponse["indexes"]> {
     return (await this.http.get<LioranListIndexesResponse>(
       `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
@@ -147,11 +162,27 @@ export class DB {
     );
   }
 
+  async dropTextIndex(collection: string, field: string): Promise<LioranDropIndexResponse> {
+    return this.http.delete<LioranDropIndexResponse>(
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        collection
+      )}/indexes/text/${encodeURIComponent(field)}`
+    );
+  }
+
   async rebuildIndex(collection: string, field: string): Promise<LioranCreateIndexResponse> {
     return this.http.post<LioranCreateIndexResponse>(
       `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
         collection
       )}/indexes/${encodeURIComponent(field)}/rebuild`
+    );
+  }
+
+  async rebuildTextIndex(collection: string, field: string): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        collection
+      )}/indexes/text/${encodeURIComponent(field)}/rebuild`
     );
   }
 
@@ -161,6 +192,26 @@ export class DB {
         collection
       )}/indexes/rebuild`
     );
+  }
+
+  async getCollectionOptions(collection: string): Promise<LioranCollectionOptionsResponse["options"]> {
+    return (await this.http.get<LioranCollectionOptionsResponse>(
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        collection
+      )}/options`
+    )).options;
+  }
+
+  async setCollectionDateOption(
+    collection: string,
+    date: LioranCollectionDateOption
+  ): Promise<LioranCollectionOptionsResponse["options"]> {
+    return (await this.http.patch<LioranCollectionOptionsResponse>(
+      `/db/${encodeURIComponent(this.name)}/collections/${encodeURIComponent(
+        collection
+      )}/options`,
+      { date }
+    )).options;
   }
 
   async explain(

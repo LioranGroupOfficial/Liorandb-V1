@@ -218,8 +218,10 @@ export type UpdateQuery = {
 
 export interface LioranIndexEntry {
   field: string;
+  type: "btree" | "text";
   unique: boolean;
   persisted: boolean;
+  textOptions?: Record<string, any>;
 }
 
 export interface LioranListIndexesResponse {
@@ -232,19 +234,34 @@ export interface LioranCreateIndexResponse {
   ok: true;
   collection: string;
   field: string;
-  unique: boolean;
+  type: "btree" | "text";
+  unique?: boolean;
+  options?: Record<string, any>;
 }
 
 export interface LioranDropIndexResponse {
   ok: true;
   collection: string;
   field: string;
+  type?: "btree" | "text";
 }
 
 export interface LioranRebuildAllIndexesResponse {
   ok: true;
   collection: string;
   rebuilt: number;
+}
+
+export type LioranCollectionDateOption = boolean | "yes" | Record<string, any> | undefined;
+
+export interface LioranCollectionOptions {
+  date?: LioranCollectionDateOption;
+}
+
+export interface LioranCollectionOptionsResponse {
+  ok: true;
+  collection: string;
+  options: LioranCollectionOptions;
 }
 
 export interface LioranCompactCollectionResponse {

@@ -16,6 +16,8 @@ import {
   LioranInsertManyResponse,
   LioranInsertOneResponse,
   LioranListIndexesResponse,
+  LioranCollectionOptionsResponse,
+  LioranCollectionDateOption,
   LioranRebuildAllIndexesResponse,
   LioranUpdateManyResponse,
   LioranUpdateOneOptions,
@@ -146,12 +148,27 @@ export class Collection<T extends DocumentData = DocumentData> {
     )).indexes;
   }
 
-  async createIndex(field: string, options?: { unique?: boolean }): Promise<LioranCreateIndexResponse> {
+  async createIndex(
+    field: string,
+    options?: { unique?: boolean }
+  ): Promise<LioranCreateIndexResponse> {
     return this.http.post<LioranCreateIndexResponse>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/indexes`,
       { field, unique: !!options?.unique }
+    );
+  }
+
+  async createTextIndex(
+    field: string,
+    options?: Record<string, any>
+  ): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/text`,
+      { field, options: options ?? {} }
     );
   }
 
@@ -163,11 +180,27 @@ export class Collection<T extends DocumentData = DocumentData> {
     );
   }
 
+  async dropTextIndex(field: string): Promise<LioranDropIndexResponse> {
+    return this.http.delete<LioranDropIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/text/${encodeURIComponent(field)}`
+    );
+  }
+
   async rebuildIndex(field: string): Promise<LioranCreateIndexResponse> {
     return this.http.post<LioranCreateIndexResponse>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/indexes/${encodeURIComponent(field)}/rebuild`
+    );
+  }
+
+  async rebuildTextIndex(field: string): Promise<LioranCreateIndexResponse> {
+    return this.http.post<LioranCreateIndexResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/indexes/text/${encodeURIComponent(field)}/rebuild`
     );
   }
 
@@ -177,6 +210,23 @@ export class Collection<T extends DocumentData = DocumentData> {
         this.colName
       )}/indexes/rebuild`
     );
+  }
+
+  async getOptions(): Promise<LioranCollectionOptionsResponse["options"]> {
+    return (await this.http.get<LioranCollectionOptionsResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/options`
+    )).options;
+  }
+
+  async setDateOption(date: LioranCollectionDateOption): Promise<LioranCollectionOptionsResponse["options"]> {
+    return (await this.http.patch<LioranCollectionOptionsResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/options`,
+      { date }
+    )).options;
   }
 
   async explain(
