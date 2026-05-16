@@ -18,6 +18,10 @@ You can re-encrypt a database with a new key:
 await db.rotateEncryptionKey("new-secret");
 ```
 
+On the HTTP host, this is exposed as:
+
+- `POST /databases/:db/encryption/rotate`
+
 This rewrites:
 
 - collection documents
@@ -66,7 +70,7 @@ The HTTP host includes basic production protections:
 - rate limiting (global + auth-specific)
 - concurrency limiting
 - JSON body size limits
-- security headers (CSP for `/dashboard/`)
+- security headers (CSP for `/` dashboard)
 
 See `server/README.md` for environment variables.
 

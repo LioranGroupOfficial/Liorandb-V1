@@ -9,6 +9,7 @@ import {
   stopServer,
   pauseServer,
   resumeServer,
+  restoreSnapshot,
 } from "../controllers/maintenance.controller";
 
 const router = Router();
@@ -17,6 +18,7 @@ const router = Router();
 router.post("/stop", stopServer);
 router.post("/pause", pauseServer);
 router.post("/resume", resumeServer);
+router.post("/restore", restoreSnapshot);
 
 router.use(authMiddleware, userCorsMiddleware);
 

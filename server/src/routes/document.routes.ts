@@ -11,6 +11,7 @@ import {
   countDocuments,
   aggregateDocuments,
   explainQuery,
+  insertManyStream,
 } from "../controllers/document.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
@@ -22,6 +23,7 @@ router.use(authMiddleware, userCorsMiddleware);
 
 router.post("/", insertDocument);
 router.post("/bulk", insertMany);
+router.post("/bulk/stream", insertManyStream);
 router.post("/find", findDocuments);
 router.post("/findOne", findOneDocument);
 router.post("/aggregate", aggregateDocuments);

@@ -6,11 +6,11 @@ Base URL: `http://<host>:4000`
 
 Public routes:
 
-- `GET /`
+- `GET /` (dashboard static site)
 - `GET /health`
+- `GET /api`
 - `GET /docs`
 - `GET /docs/:id`
-- `GET /dashboard/`
 - `POST /auth/login`
 - `POST /auth/super-admin/login`
 
@@ -61,7 +61,7 @@ Response:
 }
 ```
 
-### `GET /`
+### `GET /api`
 
 Response:
 
@@ -72,6 +72,10 @@ Response:
   "status": "online"
 }
 ```
+
+Notes:
+
+- `GET /` serves the dashboard SPA (static files under `server/public/dashboard`), not JSON.
 
 ## Auth Endpoints
 
@@ -935,15 +939,65 @@ Body:
 
 ### `POST /maintenance/compact/all`
 
-Admin-only: compact all databases on disk.\n## Docs
+Admin-only: compact all databases on disk.
+
+## Docs
 
 ### `GET /docs`
 
-List built-in markdown docs (used by `/dashboard/`).
+List built-in markdown docs (used by the dashboard at `/`).
 
 ### `GET /docs/:id`
 
 Fetch a single doc by id (returns JSON with `content`).
+
+## Maintenance (Secret-based)
+
+These endpoints do **not** require JWT auth. They require the raw server secret (contents of `secret.key`).
+
+### `POST /maintenance/stop`
+
+Gracefully stop the server.
+
+Body:
+
+```json
+{ "secret": "<contents-of-secret.key>" }
+```
+
+### `POST /maintenance/pause`
+
+Close all managers/DB handles and put the host into maintenance mode.
+
+Body:
+
+```json
+{ "secret": "<contents-of-secret.key>" }
+```
+
+### `POST /maintenance/resume`
+
+Recreate managers/DB handles after a pause.
+
+Body:
+
+```json
+{ "secret": "<contents-of-secret.key>" }
+```
+
+### `POST /maintenance/restore`
+
+Restore from a snapshot tarball.
+
+Body:
+
+```json
+{ "secret": "<contents-of-secret.key>", "snapshotPath": "./snapshots/liorandb-snapshot-....tar.gz" }
+```
+
+Notes:
+
+- Restore may exit/restart the process depending on core behavior.
 
 ## Maintenance (Admin)
 
@@ -958,6 +1012,121 @@ List snapshot files.
 ### `POST /maintenance/snapshots`
 
 Trigger a snapshot immediately.
+
+## Core / Engine (Admin)
+
+### `GET /core/status`
+
+Return core manager/IPC/cluster status (advanced debugging).
+
+### `GET /core/ipc`
+
+Return current manager IPC mode (`primary`/`client`/`readonly` booleans).
+
+### `GET /core/managers`
+
+Return per-node manager IPC mode flags (cluster/multi-node deployments).
+
+### `GET /core/databases`
+
+List all database folders on disk (engine view).
+
+### `GET /core/databases/:db/status`
+
+Engine-level DB status (includes raw `meta` and `schemaVersion`).
+
+### `GET /core/databases/:db/schemaVersion`
+
+Engine-level DB schemaVersion.
+
+### `PUT /core/databases/:db/schemaVersion`
+
+Set engine-level DB schemaVersion (admin-only; advanced).
+
+## Streaming Inserts
+
+### `POST /db/:db/collections/:col/bulk/stream`
+
+NDJSON streaming insert. Each line is a JSON document.
+
+Notes:
+
+- Send `Content-Type: application/x-ndjson` (recommended).
+- If core supports `insertManyStream()`, the server uses it. Otherwise it buffers up to `LIORANDB_STREAM_FALLBACK_MAX_DOCS` and falls back to `insertMany()`.
+
+## Migrations (HTTP)
+
+### `GET /databases/:db/schemaVersion`
+
+Return DB-level schema version string (core metadata).
+
+### `PUT /databases/:db/schemaVersion`
+
+Set DB-level schema version string.
+
+Body:
+
+```json
+{ "schemaVersion": "v2" }
+```
+
+### `POST /databases/:db/migrations/apply`
+
+Register and apply declarative migrations (server will translate actions into core migration steps).
+
+Body:
+
+```json
+{
+  "targetVersion": "v2",
+  "migrations": [
+    {
+      "from": "v1",
+      "to": "v2",
+      "actions": [
+        { "type": "createIndex", "collection": "users", "field": "email", "options": { "unique": true } }
+      ]
+    }
+  ]
+}
+```
+
+### `GET /db/:db/collections/:col/migrations`
+
+Get HTTP-layer collection document migration config (stored in DB meta).
+
+### `PUT /db/:db/collections/:col/migrations`
+
+Set HTTP-layer collection document migration config.
+
+Body:
+
+```json
+{
+  "config": {
+    "enabled": true,
+    "currentVersion": 2,
+    "writeBackOnRead": false,
+    "migrations": [
+      { "from": 1, "to": 2, "steps": [ { "type": "renameField", "from": "tier", "to": "plan" } ] }
+    ]
+  }
+}
+```
+
+### `POST /db/:db/collections/:col/migrations/test`
+
+Test migration of a single document without reading/writing the DB.
+
+### `POST /databases/:db/encryption/rotate`
+
+Rotate encryption key for a database (re-encrypts documents and WAL).
+
+Body:
+
+```json
+{ "newKey": "new-key" }
+```
 
 ## Example Flow
 

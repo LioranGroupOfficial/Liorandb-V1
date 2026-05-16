@@ -1,61 +1,51 @@
-# Getting Started
+# Getting Started (Server)
 
-## Create a Manager
+This folder documents the **HTTP host** under `server/` (not the embedded core API).
 
-```ts
-import { LioranManager } from "@liorandb/core";
+## 1) Start the server
 
-const manager = new LioranManager({
-  rootPath: "./data",
-  encryptionKey: "my-secret"
-});
+```bash
+cd server
+npm run dev
 ```
 
-`LioranManager` owns the database root path, encryption key configuration, and process mode.
+Default base URL: `http://localhost:4000`
 
-## Open a Database
+## 2) Get the server secret (`secret.key`)
 
-```ts
-const db = await manager.db("app");
-```
+On startup the server reads or generates the repo-root `secret.key`.
 
-Each database lives in its own folder under the manager root path.
+That secret is used for:
 
-## Open a Collection
+- `POST /auth/super-admin/login` (super-admin JWT)
+- secret-based maintenance endpoints like `POST /maintenance/stop`
 
-```ts
-const users = db.collection<{ name: string; age: number }>("users");
-```
+## 3) Login
 
-Collections store JSON-like documents and expose the main CRUD API.
+- Super-admin: `POST /auth/super-admin/login`
+- Managed user: `POST /auth/login`
 
-## Basic CRUD
+## 4) Create a database (managed)
 
-```ts
-await users.insertOne({ name: "Ava", age: 25 });
+`POST /databases` creates a managed database record and a DB folder on disk.
 
-const all = await users.find();
-const one = await users.findOne({ name: "Ava" });
+## 5) Configure per-database credentials (optional)
 
-await users.updateOne(
-  { name: "Ava" },
-  { $set: { age: 26 } }
-);
+`PUT /databases/:db/credentials` sets a single username/password for that DB and enables connection-string access.
 
-await users.deleteOne({ name: "Ava" });
-```
+## 6) Use collections and documents
 
-## Indexing
+Collections:
 
-```ts
-await db.createIndex("users", "email", { unique: true });
-await db.createIndex("users", "age");
-```
+- `GET /db/:db/collections`
+- `POST /db/:db/collections`
 
-Indexes improve equality lookups and range-routing for supported query patterns.
+Documents (examples):
 
-## Close Everything
+- `POST /db/:db/collections/:col/find`
+- `PATCH /db/:db/collections/:col/updateOne`
 
-```ts
-await manager.closeAll();
-```
+## Next
+
+- See `server/API.md` for the full route reference.
+- See `api-reference.md` for a grouped overview.

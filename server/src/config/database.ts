@@ -241,6 +241,7 @@ const cluster = makeClusterManagers(baseRootPath);
 
 export const allManagers = cluster.managers;
 export const clusterNodeCount = cluster.nodeCount;
+export { baseRootPath };
 
 export let manager = allManagers[0];
 let readIndex = 0;

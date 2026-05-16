@@ -10,6 +10,14 @@ await users.insertMany([
 ]);
 ```
 
+## Streaming insert (NDJSON)
+
+For large ingests over HTTP, use:
+
+- `POST /db/:db/collections/:col/bulk/stream`
+
+See `streaming.md`.
+
 Documents get an `_id` automatically if one is not provided.
 
 ## Find
@@ -132,3 +140,23 @@ Database-level explain is also available:
 ```ts
 const plan = await db.explain("users", { email: "ava@example.com" });
 ```
+
+## Collection options (server-side persistence)
+
+The host persists per-collection options in DB meta:
+
+- `GET /db/:db/collections/:col/options`
+- `PATCH /db/:db/collections/:col/options`
+
+Currently supported option:
+
+- `date`: enable `createdAt`/`updatedAt` timestamp behavior for documents (host-level config).
+
+## Document migrations (host-level)
+
+The host can apply declarative per-document migrations on reads:
+
+- `GET /db/:db/collections/:col/migrations`
+- `PUT /db/:db/collections/:col/migrations`
+
+See `migrations.md`.

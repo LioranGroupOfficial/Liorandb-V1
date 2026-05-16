@@ -126,6 +126,22 @@ Returns:
 liorandb://<dbUsername>:<dbPassword>@<host>/<databaseName>
 ```
 
+## Schema Version + Migrations
+
+The host exposes the core DB schema version and a declarative migration API:
+
+- `GET /databases/:db/schemaVersion`
+- `PUT /databases/:db/schemaVersion`
+- `POST /databases/:db/migrations/apply`
+
+See `migrations.md` for details.
+
+## Encryption rotation (per database)
+
+`POST /databases/:db/encryption/rotate`
+
+This calls the core `db.rotateEncryptionKey()` for the target database.
+
 ## Authorization Rules
 
 ### Super-admin

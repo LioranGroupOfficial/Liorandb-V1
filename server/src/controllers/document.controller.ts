@@ -3,6 +3,7 @@ import { getReadManager, getWriteManager } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 import { openConfiguredCollection } from "../utils/collectionConfig";
+import { getCollectionDocMigrations, migrateDocIfNeeded } from "../utils/docMigrations";
 
 function getBodyObject(req: Request) {
   return req.body && typeof req.body === "object" ? (req.body as any) : {};
@@ -136,6 +137,33 @@ export const findDocuments = async (req: Request, res: Response) => {
     const { query, options } = normalizeFindPayload(body);
 
     const results = await collection.find(query, options);
+
+    const mig = getCollectionDocMigrations(db as any, req.params.col);
+    if (mig && mig.enabled !== false && Array.isArray(results) && results.length) {
+      const migratedDocs: any[] = [];
+
+      for (const doc of results) {
+        const migrated = migrateDocIfNeeded(doc, mig);
+        migratedDocs.push(migrated.doc);
+
+        if (mig.writeBackOnRead && migrated.changed && migrated.doc && (migrated.doc as any)._id) {
+          try {
+            const wdb = await getWriteManager().db(req.params.db);
+            const wcol = openConfiguredCollection<any>(wdb, req.params.col);
+            await (wcol as any).updateOne(
+              { _id: (migrated.doc as any)._id },
+              { $set: migrated.doc },
+              { upsert: false }
+            );
+          } catch {
+            // best-effort; ignore write-back failures
+          }
+        }
+      }
+
+      return res.json({ results: migratedDocs });
+    }
+
     res.json({ results });
   } catch (error) {
     return sendApiError(res, error, 400);
@@ -152,7 +180,74 @@ export const findOneDocument = async (req: Request, res: Response) => {
     const { query, options } = normalizeFindPayload(body);
 
     const doc = await collection.findOne(query, options);
+
+    const mig = getCollectionDocMigrations(db as any, req.params.col);
+    if (mig && mig.enabled !== false && doc) {
+      const migrated = migrateDocIfNeeded(doc, mig);
+      if (mig.writeBackOnRead && migrated.changed && migrated.doc && (migrated.doc as any)._id) {
+        try {
+          const wdb = await getWriteManager().db(req.params.db);
+          const wcol = openConfiguredCollection<any>(wdb, req.params.col);
+          await (wcol as any).updateOne(
+            { _id: (migrated.doc as any)._id },
+            { $set: migrated.doc },
+            { upsert: false }
+          );
+        } catch {
+          // ignore
+        }
+      }
+      return res.json({ doc: migrated.doc });
+    }
+
     res.json({ doc });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
+async function *parseNdjson(stream: NodeJS.ReadableStream) {
+  let buffer = "";
+  for await (const chunk of stream) {
+    buffer += chunk.toString("utf8");
+    while (true) {
+      const idx = buffer.indexOf("\n");
+      if (idx === -1) break;
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line) continue;
+      yield JSON.parse(line);
+    }
+  }
+  const tail = buffer.trim();
+  if (tail) yield JSON.parse(tail);
+}
+
+export const insertManyStream = async (req: Request, res: Response) => {
+  try {
+    await requireDatabaseAccess(req, req.params.db);
+    const db = await getWriteManager().db(req.params.db);
+    const collection = openConfiguredCollection<any>(db, req.params.col);
+
+    const fn = (collection as any).insertManyStream;
+    if (typeof fn === "function") {
+      const docs = parseNdjson(req);
+      const result = await fn.call(collection, docs, undefined);
+      return res.json({ ok: true, result });
+    }
+
+    // Fallback: buffer up to a safe limit and call insertMany.
+    const limit = Number(process.env.LIORANDB_STREAM_FALLBACK_MAX_DOCS || 10_000);
+    const docs: any[] = [];
+    for await (const doc of parseNdjson(req)) {
+      docs.push(doc);
+      if (docs.length > limit) {
+        return res.status(413).json({ error: `too many docs for fallback mode (max ${limit})` });
+      }
+    }
+
+    const inserted = await collection.insertMany(docs);
+    return res.json({ ok: true, docs: inserted });
   } catch (error) {
     return sendApiError(res, error, 400);
   }

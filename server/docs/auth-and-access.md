@@ -16,6 +16,13 @@ The server reads the repository root `secret.key` file on startup.
 
 That secret is the JWT signing key for the whole server.
 
+It is also used for secret-based maintenance endpoints:
+
+- `POST /maintenance/stop`
+- `POST /maintenance/pause`
+- `POST /maintenance/resume`
+- `POST /maintenance/restore`
+
 ## Roles
 
 ### `super_admin`

@@ -281,6 +281,41 @@ export const explainDatabase = async (req: Request, res: Response) => {
   }
 };
 
+export const rotateDatabaseEncryptionKey = async (req: Request, res: Response) => {
+  try {
+    const { db } = req.params;
+    const { auth, record } = await requireDatabaseAccess(req, db);
+
+    if (!auth || auth.authType !== "jwt") {
+      return res.status(401).json({ error: "jwt auth required" });
+    }
+
+    if (!record) {
+      return res.status(404).json({ error: "managed database not found" });
+    }
+
+    if (!isAdminRole(auth.role) && auth.userId !== record.ownerUserId) {
+      return res.status(403).json({ error: "database owner or admin required" });
+    }
+
+    const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
+    const newKey = body.newKey;
+    if (!(typeof newKey === "string" && newKey.trim()) && !(Buffer.isBuffer(newKey) && newKey.length > 0)) {
+      return res.status(400).json({ error: "newKey (string) required" });
+    }
+
+    const database = await getWriteManager().db(db);
+    if (typeof (database as any).rotateEncryptionKey !== "function") {
+      return res.status(400).json({ error: "db does not support rotateEncryptionKey()" });
+    }
+
+    await (database as any).rotateEncryptionKey(newKey);
+    return res.json({ ok: true, db });
+  } catch (error) {
+    return sendApiError(res, error, 400);
+  }
+};
+
 type TxOp = { col: string; op: string; args: any[] };
 
 const ALLOWED_TX_OPS = new Set([

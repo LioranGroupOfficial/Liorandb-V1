@@ -12,6 +12,7 @@ import { sendApiError } from "../utils/apiError";
 import { JWT_SECRET } from "../utils/token";
 import { requestShutdown } from "../utils/shutdown";
 import { getPaused, setPaused } from "../utils/pause";
+import path from "path";
 
 function requireAdmin(req: Request, res: Response) {
   const auth = getRequestAuth(req);
@@ -150,4 +151,31 @@ export const resumeServer = async (req: Request, res: Response) => {
   } catch (error) {
     return sendApiError(res, error, 500);
   }
+};
+
+export const restoreSnapshot = async (req: Request, res: Response) => {
+  const secret = requireSecret(req, res);
+  if (!secret) return;
+
+  const { snapshotPath } = (req.body || {}) as { snapshotPath?: string };
+  if (!snapshotPath || typeof snapshotPath !== "string") {
+    return res.status(400).json({ ok: false, error: "snapshotPath required" });
+  }
+
+  const fullPath = path.resolve(snapshotPath);
+
+  // Respond before restore, because core restore may exit the process.
+  res.json({ ok: true, restoring: true, snapshotPath: fullPath });
+
+  const timer = setTimeout(() => {
+    (async () => {
+      try {
+        await manager.restore(fullPath);
+      } catch (err) {
+        console.error("Restore failed:", err);
+      }
+    })();
+  }, 50);
+
+  (timer as any).unref?.();
 };

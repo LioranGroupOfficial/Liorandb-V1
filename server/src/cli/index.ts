@@ -180,6 +180,7 @@ Maintenance:
   listSnapshots()
   createSnapshotNow()
   compactAllDatabases()
+  restoreSnapshot("<snapshotPath>","<secret>")      // secret.key required
 
 Database:   ( current: ${currentDB} )
   show dbs
@@ -217,9 +218,27 @@ CRUD:
     aggregate([...pipeline])
 
 System:
+  coreStatus()
+  dbSchemaVersion()
+  setDbSchemaVersion("v2")
+  applyDbMigrations({ targetVersion, migrations })
+  rotateEncryptionKey("new-key")
   clear
   exit
 `);
+}
+
+async function rawApi(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: any) {
+  const http = (client as any).http;
+  if (!http) {
+    throw new Error("driver http client not available");
+  }
+
+  if (method === "GET") return await http.get(path);
+  if (method === "POST") return await http.post(path, body);
+  if (method === "PUT") return await http.put(path, body);
+  if (method === "PATCH") return await http.patch(path, body);
+  if (method === "DELETE") return await http.delete(path);
 }
 
 async function runAuthCommand(cmd: string) {
@@ -388,6 +407,64 @@ async function runAuthCommand(cmd: string) {
 
   if (name === "compactAllDatabases") {
     logValue(await client.compactAllDatabases());
+    return true;
+  }
+
+  if (name === "restoreSnapshot") {
+    const args = parseAnyTuple(rawArgs);
+    const snapshotPath = args[0];
+    const secret = args[1];
+    if (typeof snapshotPath !== "string" || typeof secret !== "string") {
+      console.error('restoreSnapshot expects (snapshotPath, secret): restoreSnapshot("./snapshots/x.tar.gz","<secret.key>")');
+      return true;
+    }
+
+    logValue(await rawApi("POST", "/maintenance/restore", { snapshotPath, secret }));
+    return true;
+  }
+
+  if (name === "coreStatus") {
+    logValue(await rawApi("GET", "/core/status"));
+    return true;
+  }
+
+  if (name === "dbSchemaVersion") {
+    logValue(await rawApi("GET", `/databases/${encodeURIComponent(currentDB)}/schemaVersion`));
+    return true;
+  }
+
+  if (name === "setDbSchemaVersion") {
+    const args = parseAnyTuple(rawArgs);
+    const schemaVersion = args[0];
+    if (typeof schemaVersion !== "string" || !schemaVersion.trim()) {
+      console.error('setDbSchemaVersion expects a string: setDbSchemaVersion("v2")');
+      return true;
+    }
+
+    logValue(await rawApi("PUT", `/databases/${encodeURIComponent(currentDB)}/schemaVersion`, { schemaVersion }));
+    return true;
+  }
+
+  if (name === "applyDbMigrations") {
+    const payload = parseSingleArg(rawArgs);
+    if (!payload || typeof payload !== "object") {
+      console.error('applyDbMigrations expects an object: applyDbMigrations({ targetVersion, migrations: [...] })');
+      return true;
+    }
+
+    logValue(await rawApi("POST", `/databases/${encodeURIComponent(currentDB)}/migrations/apply`, payload));
+    return true;
+  }
+
+  if (name === "rotateEncryptionKey") {
+    const args = parseAnyTuple(rawArgs);
+    const newKey = args[0];
+    if (typeof newKey !== "string" || !newKey.trim()) {
+      console.error('rotateEncryptionKey expects a string: rotateEncryptionKey("new-key")');
+      return true;
+    }
+
+    logValue(await rawApi("POST", `/databases/${encodeURIComponent(currentDB)}/encryption/rotate`, { newKey }));
     return true;
   }
 

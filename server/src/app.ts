@@ -8,6 +8,7 @@ import documentRoutes from "./routes/document.routes";
 import indexRoutes from "./routes/index.routes";
 import maintenanceRoutes from "./routes/maintenance.routes";
 import docsRoutes from "./routes/docs.routes";
+import coreRoutes from "./routes/core.routes";
 
 import { requestLogger } from "./middleware/requestLogger.middleware";
 import { securityHeaders } from "./middleware/securityHeaders.middleware";
@@ -85,7 +86,7 @@ app.use(
 
 // ✅ SPA fallback for Next.js export / React routing
 app.get("/{*splat}", (req, res, next) => {
-  const apiPrefixes = ["/auth", "/db", "/databases", "/docs", "/maintenance"];
+  const apiPrefixes = ["/auth", "/db", "/databases", "/docs", "/maintenance", "/core"];
 
   if (apiPrefixes.some((p) => req.path.startsWith(p))) {
     return next();
@@ -111,6 +112,7 @@ app.get("/api", (_req, res) => {
 app.use("/auth", authRoutes);
 app.use("/docs", docsRoutes);
 app.use("/maintenance", maintenanceRoutes);
+app.use("/core", coreRoutes);
 app.use("/databases", databaseRoutes);
 app.use("/db/:db/collections", collectionRoutes);
 app.use("/db/:db/collections/:col/indexes", indexRoutes);

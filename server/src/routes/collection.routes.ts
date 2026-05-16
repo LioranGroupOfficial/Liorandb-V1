@@ -9,6 +9,7 @@ import {
   getCollectionOptions,
   patchCollectionOptions,
 } from "../controllers/collection.controller";
+import { getCollectionMigrations, putCollectionMigrations, testCollectionMigration } from "../controllers/migrations.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
 import { userCorsMiddleware } from "../middleware/userCors.middleware";
@@ -25,5 +26,8 @@ router.get("/:col/stats", collectionStats);
 router.post("/:col/compact", compactCollection);
 router.get("/:col/options", getCollectionOptions);
 router.patch("/:col/options", patchCollectionOptions);
+router.get("/:col/migrations", getCollectionMigrations);
+router.put("/:col/migrations", putCollectionMigrations);
+router.post("/:col/migrations/test", testCollectionMigration);
 
 export default router;

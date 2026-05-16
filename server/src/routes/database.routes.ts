@@ -13,7 +13,9 @@ import {
   compactDatabase,
   explainDatabase,
   runTransaction,
+  rotateDatabaseEncryptionKey,
 } from "../controllers/database.controller";
+import { applyDbMigrations, getDbSchemaVersion, setDbSchemaVersion } from "../controllers/migrations.controller";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { userCorsMiddleware } from "../middleware/userCors.middleware";
 
@@ -35,5 +37,9 @@ router.get("/:db/connection-string", generateDatabaseConnectionString);
 router.post("/:db/compact", compactDatabase);
 router.post("/:db/explain", explainDatabase);
 router.post("/:db/transaction", runTransaction);
+router.get("/:db/schemaVersion", getDbSchemaVersion);
+router.put("/:db/schemaVersion", setDbSchemaVersion);
+router.post("/:db/migrations/apply", applyDbMigrations);
+router.post("/:db/encryption/rotate", rotateDatabaseEncryptionKey);
 
 export default router;
