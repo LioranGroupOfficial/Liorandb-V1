@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { getBaseDBFolder } from "@liorandb/core";
+import { parseCLIArgs } from "./cli";
 
 export type ServerRestartCommand = {
   command: string;
@@ -23,7 +24,9 @@ export type ServerConfigFileV1 = {
 const SERVER_CONFIG_FILE_NAME = "server.json";
 
 export function getServerConfigPath() {
-  return path.join(getBaseDBFolder(), SERVER_CONFIG_FILE_NAME);
+  const cli = parseCLIArgs();
+  const rootPath = cli.rootPath || process.env.LIORANDB_ROOT_PATH || getBaseDBFolder();
+  return path.join(rootPath, SERVER_CONFIG_FILE_NAME);
 }
 
 export function readServerConfig(): ServerConfigFileV1 | null {

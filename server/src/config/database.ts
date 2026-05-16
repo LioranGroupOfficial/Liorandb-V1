@@ -74,7 +74,12 @@ function makeNodeOptions(
     // We immediately close/disable the IPC listener in `disableIPCForSingleNode()`.
     base.ipc = "primary";
   } else {
-    base.ipc = cli.ipc || (process.env.LIORANDB_IPC_MODE as any);
+    // For the `ldb-serve`/server entrypoint, default to an embedded primary (no external IPC dependency).
+    // Other entrypoints may prefer `auto`/client behavior.
+    base.ipc =
+      cli.ipc ||
+      (process.env.LIORANDB_IPC_MODE as any) ||
+      (isServerEntry() ? "primary" : "auto");
   }
 
   if (cluster) {
@@ -118,7 +123,10 @@ function makeNodeOptions(
 
 function makeClusterManagers(baseRootPath: string) {
   const nodeCountFromEnv = readEnvInt("LIORANDB_CLUSTER_NODES");
-  const nodeCount = singleNodeMode ? 1 : Math.max(1, Math.trunc(nodeCountFromEnv ?? (isServerEntry() ? 10 : 1)));
+  // Default to single-node unless the user explicitly opts into a multi-node cluster.
+  // Multi-node mode requires multiple internal ports and majority replication acks; it's not a safe default
+  // for local dev where ports may be unavailable.
+  const nodeCount = singleNodeMode ? 1 : Math.max(1, Math.trunc(nodeCountFromEnv ?? 1));
 
   if (nodeCount === 1) {
     return {
