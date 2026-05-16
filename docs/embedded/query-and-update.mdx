@@ -8,6 +8,43 @@ import TabItem from '@theme/TabItem';
 
 LioranDB's embedded query engine uses plain JavaScript objects.
 
+## Text search (`$text`)
+
+Text search is available when you create one or more text indexes (see [`Indexes & explain`](./indexes)).
+
+Use `$text` at the top level of your filter:
+
+```ts
+// minimal form (search all text-indexed fields)
+{ $text: "hello world" }
+```
+
+or:
+
+```ts
+{
+  $text: {
+    $search: "hello world",
+    // optional: restrict to these text-indexed fields
+    $fields: ["title", "body"],
+  }
+}
+```
+
+Notes:
+
+- `$text` is used as a **candidate pre-filter** and then the rest of the query runs normally.
+- When `$fields` is provided, all listed fields must have a text index.
+
+## Dates and timestamps
+
+LioranDB documents are persisted as JSON. In Node.js, if you insert a `Date`, `JSON.stringify()` converts it to an ISO string.
+
+Recommendations:
+
+- Prefer storing timestamps as `number` (epoch milliseconds) using `Date.now()` for easy `$gte/$lte` range queries.
+- If you store ISO strings, range queries compare strings (lexicographic), so always use full ISO-8601 format.
+
 ## Query basics
 
 - A query is usually an object: `{ field: value }`

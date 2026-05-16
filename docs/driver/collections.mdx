@@ -344,6 +344,40 @@ console.log(await users.explain({ role: "admin" }, { limit: 5 }));
 </TabItem>
 </Tabs>
 
+### Text indexes: `createTextIndex(field, options?)` / `dropTextIndex(field)`
+
+Text indexes are used by the `$text` query operator (see below).
+
+```ts
+await users.createTextIndex("title", { normalize: true, stopwords: ["a", "the"] });
+await users.dropTextIndex("title");
+```
+
+### `rebuildTextIndex(field)`
+
+```ts
+await users.rebuildTextIndex("title");
+```
+
+## Text search (`$text`)
+
+Use `$text` at the top level of your filter. This requires at least one text index.
+
+```ts
+await users.find({ $text: { $search: "hello world" } });
+await users.find({ $text: { $search: "hello world", $fields: ["title", "body"] } });
+```
+
+## Dates and timestamps
+
+The driver talks to the server over JSON. If you pass a JavaScript `Date` into a document, it will serialize as an ISO string.
+
+Recommended pattern:
+
+```ts
+await users.insertOne({ createdAt: Date.now() }); // epoch ms number
+```
+
 ## Maintenance
 
 ### `stats()` / `compact()`

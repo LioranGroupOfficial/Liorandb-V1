@@ -21,7 +21,7 @@ Indexes are created per collection field and are persisted on disk. They speed u
 <TabItem value="ts">
 
 ```ts
-createIndex(collection: string, field: string, options?: { unique?: boolean }): Promise<void>
+createIndex(collection: string, field: string, options?: { unique?: boolean; include?: string[] }): Promise<void>
 ```
 
 </TabItem>
@@ -37,6 +37,7 @@ createIndex(collection, field, options)
 - Builds the index from existing documents.
 - After creation, writes keep the index updated.
 - `unique: true` enforces uniqueness for that field.
+- `include: string[]` creates a **covering index**. Included fields (plus `_id`) are stored in the index so projected queries can avoid primary document reads.
 
 ### Example: create a unique index
 
@@ -101,6 +102,33 @@ Error: Unique constraint violation on index "email"
 - Query execution tries to pick **one best index** from your query.
 - If no index can be selected, a full scan is used.
 - Even with an index, documents are still re-checked against your full query to ensure correctness.
+
+## Text indexes (full-text search)
+
+Text indexes are optional and are used by the `$text` query operator.
+
+### `db.createTextIndex(collection, field, options?)`
+
+```ts
+createTextIndex(collection: string, field: string, options?: { normalize?: boolean; stopwords?: string[] }): Promise<void>
+```
+
+- `normalize` (default: `true`): split on non-alphanumeric and lowercase (recommended).
+- `stopwords`: optional words to ignore.
+
+### Querying: `$text`
+
+`$text` pre-filters candidates (AND semantics) and then the query continues as usual.
+
+```ts
+// search all text-indexed fields
+await users.find({ $text: { $search: "hello world" } });
+
+// search only specific fields
+await users.find({ $text: { $search: "hello world", $fields: ["title", "body"] } });
+```
+
+If you use `$text` without any text index configured, the query throws `UNSUPPORTED_QUERY`.
 
 ## `db.explain(collection, query?, options?)`
 

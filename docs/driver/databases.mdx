@@ -313,6 +313,19 @@ console.log(await db.createIndex("users", "email", { unique: true }));
 </TabItem>
 </Tabs>
 
+### `createTextIndex(collection, field, options?)`
+
+```ts
+await db.createTextIndex("posts", "title", { normalize: true });
+```
+
+Text search is performed via the `$text` query operator on collection methods like `find()` / `findOne()`:
+
+```ts
+const posts = db.collection("posts");
+console.log(await posts.find({ $text: { $search: "hello world" } }, { limit: 10 }));
+```
+
 ### `listIndexes(collection)`
 
 <Tabs groupId="language" defaultValue="ts" values={[
