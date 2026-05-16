@@ -25,19 +25,21 @@ Then start the host and authenticate through `/auth/login` or `/auth/register`.
 ## Quick Start
 
 ```ts
-import { LioranClient } from "@liorandb/driver";
+import { LioranManager } from "@liorandb/driver";
 
-const client = new LioranClient("http://localhost:4000");
+const manager = new LioranManager("http://localhost:4000");
 
-await client.login("admin", "password123");
+await manager.login("admin", "password123");
 
-const db = client.db("app");
+const db = await manager.db("app");
 const users = db.collection<{ name: string; age: number }>("users");
 
 await users.insertOne({ name: "John", age: 20 });
 
 const results = await users.find({ age: { $gt: 18 } });
 console.log(results);
+
+await manager.close();
 ```
 
 ## Connection Formats
@@ -113,7 +115,7 @@ const client = new LioranClient(
 
 await client.connect();
 
-const db = client.db("app");
+const db = await client.db("app");
 ```
 
 ### Reuse an existing JWT
@@ -261,7 +263,7 @@ Response:
 
 ### `info()`
 
-Calls `GET /`.
+Calls `GET /api`.
 
 ```ts
 const info = await client.info();
@@ -294,6 +296,23 @@ Calls admin-only maintenance endpoints under `/maintenance/*`.
 await client.maintenanceStatus();
 await client.listSnapshots();
 await client.createSnapshotNow();
+```
+
+### Secret-based maintenance (`stopServer` / `pauseServer` / `resumeServer` / `restoreServerSnapshot`)
+
+These endpoints do not require JWT auth; they require the raw server secret (contents of `secret.key`).
+
+```ts
+await client.pauseServer(process.env.LIORAN_SECRET!);
+await client.resumeServer(process.env.LIORAN_SECRET!);
+```
+
+### Core / engine debugging (admin-only)
+
+```ts
+await client.coreStatus();
+await client.coreDatabases();
+await client.coreDatabaseStatus("app");
 ```
 
 ### `setToken(token)`
@@ -347,7 +366,7 @@ client.logout();
 ### `db(name)`
 
 ```ts
-const db = client.db("app");
+const db = await client.db("app");
 ```
 
 ### `listDatabases()`
@@ -430,7 +449,7 @@ Response:
 ## DB API
 
 ```ts
-const db = client.db("app");
+const db = await client.db("app");
 ```
 
 ### `collection(name)`
@@ -522,10 +541,42 @@ Calls `GET /databases/:db/connection-string`.
 const { connectionString } = await db.getConnectionString();
 ```
 
+### `getSchemaVersion()` / `setSchemaVersion(v)`
+
+Calls `GET /databases/:db/schemaVersion` and `PUT /databases/:db/schemaVersion`.
+
+```ts
+const v = await db.getSchemaVersion();
+await db.setSchemaVersion("v2");
+```
+
+### `applyMigrations(targetVersion, migrations)`
+
+Calls `POST /databases/:db/migrations/apply`.
+
+```ts
+await db.applyMigrations("v2", [
+  { from: "v1", to: "v2", actions: [{ type: "createIndex", collection: "users", field: "email", options: { unique: true } }] },
+]);
+```
+
+### `rotateEncryptionKey(newKey)`
+
+Calls `POST /databases/:db/encryption/rotate` (JWT required; db owner or admin).
+
 ## Collection API
 
 ```ts
 const users = db.collection<User>("users");
+```
+
+### Core-like schema helpers (optional)
+
+The HTTP driver can mimic the embedded-core ergonomics by validating writes and migrating reads client-side:
+
+```ts
+const users = db.collection("users", UserSchema, 2);
+users.addMigration({ from: 1, to: 2, migrate: (doc) => ({ ...doc, plan: doc.tier ?? "free" }) });
 ```
 
 ### `insertOne(doc)`
@@ -654,6 +705,29 @@ Response:
   name: "users",
   documents: 42
 }
+```
+
+### `insertManyStream(docs, options?)`
+
+Calls `POST /db/:db/collections/:col/bulk/stream` (NDJSON).
+
+```ts
+function* gen(n: number) {
+  for (let i = 0; i < n; i++) yield { n: i };
+}
+
+const inserted = await users.insertManyStream(gen(100_000), { chunkSize: 1000 });
+console.log(inserted);
+```
+
+### Document migrations (server-side)
+
+Calls `GET|PUT|POST /db/:db/collections/:col/migrations*`.
+
+```ts
+await users.getDocMigrations();
+await users.setDocMigrations({ enabled: true, currentVersion: 2, writeBackOnRead: false, migrations: [] });
+await users.testDocMigration({ _id: "x", __v: 1, tier: "free" });
 ```
 
 ## Indexes & Options

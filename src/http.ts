@@ -53,16 +53,43 @@ export class HttpClient {
     return this.request<T>("DELETE", path);
   }
 
+  async postNdjson<T>(path: string, docs: Iterable<unknown> | AsyncIterable<unknown>): Promise<T> {
+    const stream = tryNdjsonReadable(docs);
+    if (stream) {
+      return this.request<T>(
+        "POST",
+        path,
+        stream,
+        { "Content-Type": "application/x-ndjson" },
+        true
+      );
+    }
+
+    let buffered = "";
+    for await (const doc of docs as any) buffered += `${JSON.stringify(doc)}\n`;
+    return this.request<T>(
+      "POST",
+      path,
+      buffered,
+      { "Content-Type": "application/x-ndjson" },
+      true
+    );
+  }
+
   private async request<T>(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    extraHeaders?: Record<string, string>,
+    rawBody?: boolean
   ): Promise<T> {
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
 
-    if (body !== undefined) {
+    if (extraHeaders) Object.assign(headers, extraHeaders);
+
+    if (body !== undefined && headers["Content-Type"] === undefined) {
       headers["Content-Type"] = "application/json";
     }
 
@@ -72,11 +99,25 @@ export class HttpClient {
       headers["x-liorandb-connection-string"] = this.connectionString;
     }
 
-    const response = await fetch(`${this.baseURL}${path}`, {
+    const requestBody =
+      body === undefined
+        ? undefined
+        : rawBody
+          ? (body as any)
+          : JSON.stringify(body);
+
+    const init: any = {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      body: requestBody,
+    };
+
+    // Node's fetch requires `duplex: "half"` when sending a stream body.
+    if (rawBody && requestBody && typeof (requestBody as any).pipe === "function") {
+      init.duplex = "half";
+    }
+
+    const response = await fetch(`${this.baseURL}${path}`, init);
 
     const raw = await response.text();
     const data = raw ? tryParseJson(raw) : null;
@@ -107,5 +148,22 @@ function tryParseJson(value: string): unknown {
     return JSON.parse(value);
   } catch {
     return value;
+  }
+}
+
+function tryNdjsonReadable(docs: Iterable<unknown> | AsyncIterable<unknown>): any | null {
+  // Prefer true streaming in Node.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Readable } = require("stream") as typeof import("stream");
+    return Readable.from(
+      (async function* () {
+        for await (const doc of docs as any) {
+          yield `${JSON.stringify(doc)}\n`;
+        }
+      })()
+    );
+  } catch {
+    return null;
   }
 }

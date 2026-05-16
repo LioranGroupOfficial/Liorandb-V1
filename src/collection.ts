@@ -14,6 +14,7 @@ import {
   LioranFindOneResponse,
   LioranFindOptions,
   LioranInsertManyResponse,
+  LioranInsertManyStreamResponse,
   LioranInsertOneResponse,
   LioranListIndexesResponse,
   LioranCollectionOptionsResponse,
@@ -22,24 +23,44 @@ import {
   LioranUpdateManyResponse,
   LioranUpdateOneOptions,
   LioranUpdateOneResponse,
+  LioranGetCollectionMigrationsResponse,
+  LioranPutCollectionMigrationsResponse,
+  LioranTestCollectionMigrationResponse,
+  LioranCollectionDocMigrationsConfig,
   UpdateQuery,
 } from "./types";
 import { HttpClient } from "./http";
 import { extractFindPayload } from "./utils/normalizeFindOptions";
 
+type Schema<T> = { parse: (value: unknown) => T };
+type DocMigration<T> = { from: number; to: number; migrate: (doc: any) => T };
+
 export class Collection<T extends DocumentData = DocumentData> {
+  private schema: Schema<T> | null = null;
+  private schemaVersion: number | null = null;
+  private migrations: DocMigration<T>[] = [];
+
   constructor(
     private dbName: string,
     private colName: string,
     private http: HttpClient
   ) {}
 
+  setSchema(schema: Schema<T>, version: number): void {
+    this.schema = schema;
+    this.schemaVersion = version;
+  }
+
+  addMigration(migration: DocMigration<T>): void {
+    this.migrations.push(migration);
+  }
+
   async insertOne(doc: T): Promise<T & { _id: string }> {
     return (await this.http.post<LioranInsertOneResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}`,
-      doc
+      this.prepareWrite(doc)
     )).doc;
   }
 
@@ -48,8 +69,26 @@ export class Collection<T extends DocumentData = DocumentData> {
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/bulk`,
-      { docs }
+      { docs: docs.map((d) => this.prepareWrite(d)) }
     )).docs;
+  }
+
+  async insertManyStream(
+    docs: Iterable<any> | AsyncIterable<any>,
+    _options?: { chunkSize?: number }
+  ): Promise<number> {
+    const res = await this.http.postNdjson<LioranInsertManyStreamResponse<T>>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/bulk/stream`,
+      (async function* () {
+        for await (const doc of docs as any) yield doc;
+      })()
+    );
+
+    if ("result" in res && typeof (res as any).result === "number") return (res as any).result;
+    if ("docs" in res && Array.isArray((res as any).docs)) return (res as any).docs.length;
+    return 0;
   }
 
   async find(
@@ -57,12 +96,13 @@ export class Collection<T extends DocumentData = DocumentData> {
     options?: LioranFindOptions
   ): Promise<Array<T & { _id?: string }>> {
     const payload = extractFindPayload(filter, options);
-    return (await this.http.post<LioranFindResponse<T>>(
+    const results = (await this.http.post<LioranFindResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/find`,
       payload
     )).results;
+    return results.map((d) => this.migrateRead(d));
   }
 
   async findOne(
@@ -70,12 +110,13 @@ export class Collection<T extends DocumentData = DocumentData> {
     options?: LioranFindOptions
   ): Promise<(T & { _id?: string }) | null> {
     const payload = extractFindPayload(filter, options);
-    return (await this.http.post<LioranFindOneResponse<T>>(
+    const doc = (await this.http.post<LioranFindOneResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/findOne`,
       payload
     )).doc;
+    return doc ? this.migrateRead(doc) : null;
   }
 
   async updateOne(
@@ -83,12 +124,13 @@ export class Collection<T extends DocumentData = DocumentData> {
     update: UpdateQuery,
     options?: LioranUpdateOneOptions
   ): Promise<(T & { _id?: string }) | null> {
-    return (await this.http.patch<LioranUpdateOneResponse<T>>(
+    const doc = (await this.http.patch<LioranUpdateOneResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/updateOne`,
       { filter, update, options }
     )).doc;
+    return doc ? this.migrateRead(doc) : null;
   }
 
   async updateMany(
@@ -126,12 +168,13 @@ export class Collection<T extends DocumentData = DocumentData> {
   }
 
   async deleteOne(filter: Filter): Promise<(T & { _id?: string }) | null> {
-    return (await this.http.post<LioranDeleteOneResponse<T>>(
+    const doc = (await this.http.post<LioranDeleteOneResponse<T>>(
       `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
         this.colName
       )}/deleteOne`,
       { filter }
     )).doc;
+    return doc ? this.migrateRead(doc) : null;
   }
 
   async aggregate<R = unknown>(pipeline: unknown[] = []): Promise<R[]> {
@@ -259,5 +302,65 @@ export class Collection<T extends DocumentData = DocumentData> {
         this.colName
       )}/compact`
     );
+  }
+
+  async getDocMigrations(): Promise<LioranGetCollectionMigrationsResponse> {
+    return this.http.get<LioranGetCollectionMigrationsResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/migrations`
+    );
+  }
+
+  async setDocMigrations(
+    config: LioranCollectionDocMigrationsConfig | null
+  ): Promise<LioranPutCollectionMigrationsResponse> {
+    return this.http.put<LioranPutCollectionMigrationsResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/migrations`,
+      { config }
+    );
+  }
+
+  async testDocMigration(doc: any): Promise<LioranTestCollectionMigrationResponse> {
+    return this.http.post<LioranTestCollectionMigrationResponse>(
+      `/db/${encodeURIComponent(this.dbName)}/collections/${encodeURIComponent(
+        this.colName
+      )}/migrations/test`,
+      { doc }
+    );
+  }
+
+  private prepareWrite(doc: T): any {
+    const parsed = this.schema ? this.schema.parse(doc) : (doc as any);
+    if (this.schemaVersion != null) {
+      const existing = (parsed as any)?.__v;
+      if (existing === undefined) return { ...(parsed as any), __v: this.schemaVersion };
+    }
+    return parsed;
+  }
+
+  private migrateRead(doc: any): any {
+    const current = this.schemaVersion ?? null;
+    if (!current || this.migrations.length === 0) {
+      return this.schema ? this.schema.parse(doc) : doc;
+    }
+
+    let out: any = doc;
+    let v: number = Number((out as any)?.__v ?? current);
+    if (!Number.isFinite(v)) v = current;
+
+    // Apply migrations until we reach the configured version or no matching step exists.
+    while (v < current) {
+      const step = this.migrations.find((m) => m.from === v && m.to > v && m.to <= current);
+      if (!step) break;
+      out = step.migrate(out);
+      v = step.to;
+      out = { ...out, __v: v };
+    }
+
+    // Ensure the returned object matches the latest schema.
+    return this.schema ? this.schema.parse(out) : out;
   }
 }

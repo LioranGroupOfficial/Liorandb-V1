@@ -343,3 +343,164 @@ export interface LioranMaintenanceCreateSnapshotResponse {
     reason: string;
   };
 }
+
+export interface LioranMaintenanceStopResponse {
+  ok: true;
+  shuttingDown: true;
+}
+
+export interface LioranMaintenancePauseResponse {
+  ok: true;
+  paused: boolean;
+  already?: boolean;
+}
+
+export interface LioranMaintenanceResumeResponse {
+  ok: true;
+  paused: boolean;
+  already?: boolean;
+}
+
+export interface LioranMaintenanceRestoreResponse {
+  ok: true;
+  restoring: true;
+  snapshotPath: string;
+}
+
+export interface LioranCoreStatusResponse {
+  ok: true;
+  paused: boolean;
+  paths: {
+    baseFolder: string | null;
+    rootPath: string | null;
+  };
+  ipc: {
+    primary: boolean | null;
+    client: boolean | null;
+    readonly: boolean | null;
+  };
+  cluster: {
+    nodeCount: number | null;
+    managers: number | null;
+    enabled: boolean;
+    leader: { host: string; clientPort: number } | null;
+  };
+  advanced: {
+    replicationEnabled: boolean;
+    consistency: unknown | null;
+    tenancy: unknown | null;
+    security: unknown | null;
+  };
+}
+
+export interface LioranCoreIpcResponse {
+  ok: true;
+  mode: {
+    primary: boolean | null;
+    client: boolean | null;
+    readonly: boolean | null;
+  };
+}
+
+export interface LioranCoreManagersResponse {
+  ok: true;
+  managers: Array<{
+    index: number;
+    primary: boolean | null;
+    client: boolean | null;
+    readonly: boolean | null;
+  }>;
+}
+
+export interface LioranCoreDatabasesResponse {
+  ok: true;
+  databases: string[];
+}
+
+export interface LioranCoreDatabaseStatusResponse {
+  ok: true;
+  db: string;
+  schemaVersion: string | null;
+  meta: unknown | null;
+}
+
+export interface LioranDbSchemaVersionResponse {
+  ok: true;
+  db: string;
+  schemaVersion: string | null;
+}
+
+export type LioranDbMigrationAction =
+  | {
+      type: "createIndex";
+      collection: string;
+      field: string;
+      options?: { unique?: boolean };
+    }
+  | {
+      type: "createTextIndex";
+      collection: string;
+      field: string;
+      options?: Record<string, any>;
+    }
+  | { type: "compactCollection"; collection: string }
+  | { type: "compactAll" }
+  | { type: "renameCollection"; from: string; to: string };
+
+export interface LioranDbMigrationStep {
+  from: string;
+  to: string;
+  actions: LioranDbMigrationAction[];
+}
+
+export interface LioranApplyDbMigrationsResponse {
+  ok: true;
+  db: string;
+  schemaVersion: string | null;
+}
+
+export interface LioranRotateEncryptionKeyResponse {
+  ok: true;
+  db: string;
+}
+
+export type LioranInsertManyStreamResponse<T extends DocumentData = DocumentData> =
+  | { ok: true; result: number }
+  | { ok: true; docs: Array<T & { _id: string }> };
+
+export interface LioranCollectionDocMigrationStep {
+  from: number;
+  to: number;
+  steps: Array<Record<string, any>>;
+}
+
+export interface LioranCollectionDocMigrationsConfig {
+  enabled: boolean;
+  currentVersion: number;
+  writeBackOnRead: boolean;
+  migrations: LioranCollectionDocMigrationStep[];
+}
+
+export interface LioranGetCollectionMigrationsResponse {
+  ok: true;
+  db: string;
+  collection: string;
+  config: LioranCollectionDocMigrationsConfig | null;
+}
+
+export interface LioranPutCollectionMigrationsResponse {
+  ok: true;
+  db: string;
+  collection: string;
+  config: LioranCollectionDocMigrationsConfig | null;
+}
+
+export interface LioranTestCollectionMigrationResponse {
+  ok: true;
+  db: string;
+  collection: string;
+  doc: any;
+  migrated?: boolean;
+  fromVersion?: number;
+  toVersion?: number;
+}

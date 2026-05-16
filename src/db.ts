@@ -20,6 +20,10 @@ import {
   LioranCollectionDateOption,
   LioranRenameResponse,
   LioranTransactionResponse,
+  LioranApplyDbMigrationsResponse,
+  LioranDbMigrationStep,
+  LioranDbSchemaVersionResponse,
+  LioranRotateEncryptionKeyResponse,
   Filter,
   LioranUpdateOneOptions,
   UpdateQuery,
@@ -60,13 +64,32 @@ export type TransactionContext = {
 };
 
 export class DB {
+  private collectionCache = new Map<string, Collection<any>>();
+
   constructor(
     private name: string,
     private http: HttpClient
   ) {}
 
-  collection<T extends DocumentData = DocumentData>(name: string): Collection<T> {
-    return new Collection<T>(this.name, name, this.http);
+  collection<T extends DocumentData = DocumentData>(
+    name: string,
+    schema?: { parse: (value: unknown) => T },
+    schemaVersion?: number
+  ): Collection<T> {
+    const existing = this.collectionCache.get(name);
+    if (existing) {
+      if (schema && typeof (existing as any).setSchema === "function") {
+        (existing as any).setSchema(schema, schemaVersion ?? 1);
+      }
+      return existing as Collection<T>;
+    }
+
+    const created = new Collection<T>(this.name, name, this.http);
+    if (schema && typeof created.setSchema === "function") {
+      created.setSchema(schema as any, schemaVersion ?? 1);
+    }
+    this.collectionCache.set(name, created as any);
+    return created;
   }
 
   async listCollections(): Promise<string[]> {
@@ -110,6 +133,44 @@ export class DB {
   async compactAll(): Promise<LioranCompactDatabaseResponse> {
     return this.http.post<LioranCompactDatabaseResponse>(
       `/databases/${encodeURIComponent(this.name)}/compact`
+    );
+  }
+
+  async getSchemaVersion(): Promise<string | null> {
+    const res = await this.http.get<LioranDbSchemaVersionResponse>(
+      `/databases/${encodeURIComponent(this.name)}/schemaVersion`
+    );
+    return res.schemaVersion;
+  }
+
+  async setSchemaVersion(schemaVersion: string): Promise<string | null> {
+    const res = await this.http.put<LioranDbSchemaVersionResponse>(
+      `/databases/${encodeURIComponent(this.name)}/schemaVersion`,
+      { schemaVersion }
+    );
+    return res.schemaVersion;
+  }
+
+  migrate(): never {
+    throw new Error(
+      "Remote driver does not support function-based db.migrate(). Use db.applyMigrations(targetVersion, migrations) instead."
+    );
+  }
+
+  async applyMigrations(
+    targetVersion: string,
+    migrations: LioranDbMigrationStep[]
+  ): Promise<LioranApplyDbMigrationsResponse> {
+    return this.http.post<LioranApplyDbMigrationsResponse>(
+      `/databases/${encodeURIComponent(this.name)}/migrations/apply`,
+      { targetVersion, migrations }
+    );
+  }
+
+  async rotateEncryptionKey(newKey: string): Promise<LioranRotateEncryptionKeyResponse> {
+    return this.http.post<LioranRotateEncryptionKeyResponse>(
+      `/databases/${encodeURIComponent(this.name)}/encryption/rotate`,
+      { newKey }
     );
   }
 

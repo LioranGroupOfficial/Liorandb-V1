@@ -15,13 +15,23 @@ import {
   LioranIssueUserTokenResponse,
   LioranMaintenanceCreateSnapshotResponse,
   LioranMaintenanceCompactAllResponse,
+  LioranMaintenancePauseResponse,
   LioranMaintenanceSnapshotsResponse,
+  LioranMaintenanceResumeResponse,
+  LioranMaintenanceRestoreResponse,
+  LioranMaintenanceStopResponse,
   LioranMaintenanceStatusResponse,
   LioranManagedDatabase,
   LioranManagedUser,
   LioranMeResponse,
   LioranUser,
   LioranUsersResponse,
+  LioranCoreStatusResponse,
+  LioranCoreIpcResponse,
+  LioranCoreManagersResponse,
+  LioranCoreDatabasesResponse,
+  LioranCoreDatabaseStatusResponse,
+  LioranDbSchemaVersionResponse,
 } from "./types";
 import { DB } from "./db";
 import { HttpClient } from "./http";
@@ -126,6 +136,7 @@ export class LioranClient {
       externalUserId: input.externalUserId,
     });
 
+    if (res.token) this.setAuthState(res);
     return res;
   }
 
@@ -170,7 +181,7 @@ export class LioranClient {
   }
 
   async info(): Promise<LioranHostInfoResponse> {
-    return this.http.get<LioranHostInfoResponse>("/");
+    return this.http.get<LioranHostInfoResponse>("/api");
   }
 
   async listDocs(): Promise<LioranDocsListResponse> {
@@ -204,6 +215,80 @@ export class LioranClient {
     this.assertAuthenticated();
     return this.http.post<LioranMaintenanceCompactAllResponse>(
       "/maintenance/compact/all"
+    );
+  }
+
+  async stopServer(secret: string): Promise<LioranMaintenanceStopResponse> {
+    return this.http.post<LioranMaintenanceStopResponse>("/maintenance/stop", {
+      secret,
+    });
+  }
+
+  async pauseServer(secret: string): Promise<LioranMaintenancePauseResponse> {
+    return this.http.post<LioranMaintenancePauseResponse>("/maintenance/pause", {
+      secret,
+    });
+  }
+
+  async resumeServer(secret: string): Promise<LioranMaintenanceResumeResponse> {
+    return this.http.post<LioranMaintenanceResumeResponse>(
+      "/maintenance/resume",
+      { secret }
+    );
+  }
+
+  async restoreServerSnapshot(
+    secret: string,
+    snapshotPath: string
+  ): Promise<LioranMaintenanceRestoreResponse> {
+    return this.http.post<LioranMaintenanceRestoreResponse>(
+      "/maintenance/restore",
+      { secret, snapshotPath }
+    );
+  }
+
+  async coreStatus(): Promise<LioranCoreStatusResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranCoreStatusResponse>("/core/status");
+  }
+
+  async coreIpc(): Promise<LioranCoreIpcResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranCoreIpcResponse>("/core/ipc");
+  }
+
+  async coreManagers(): Promise<LioranCoreManagersResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranCoreManagersResponse>("/core/managers");
+  }
+
+  async coreDatabases(): Promise<LioranCoreDatabasesResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranCoreDatabasesResponse>("/core/databases");
+  }
+
+  async coreDatabaseStatus(db: string): Promise<LioranCoreDatabaseStatusResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranCoreDatabaseStatusResponse>(
+      `/core/databases/${encodeURIComponent(db)}/status`
+    );
+  }
+
+  async coreDatabaseSchemaVersion(db: string): Promise<LioranDbSchemaVersionResponse> {
+    this.assertAuthenticated();
+    return this.http.get<LioranDbSchemaVersionResponse>(
+      `/core/databases/${encodeURIComponent(db)}/schemaVersion`
+    );
+  }
+
+  async setCoreDatabaseSchemaVersion(
+    db: string,
+    schemaVersion: string
+  ): Promise<LioranDbSchemaVersionResponse> {
+    this.assertAuthenticated();
+    return this.http.put<LioranDbSchemaVersionResponse>(
+      `/core/databases/${encodeURIComponent(db)}/schemaVersion`,
+      { schemaVersion }
     );
   }
 
@@ -246,7 +331,7 @@ export class LioranClient {
     this.http.clearConnectionString();
   }
 
-  db(name: string): DB {
+  async db(name: string): Promise<DB> {
     this.assertAuthenticated();
     return new DB(name, this.http);
   }
