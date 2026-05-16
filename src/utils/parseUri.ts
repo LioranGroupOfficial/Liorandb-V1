@@ -28,21 +28,24 @@ export function parseUri(uri: string): ParsedURI {
     };
   }
 
-  if (uri.startsWith("lioran://")) {
+  if (uri.startsWith("lioran://") || uri.startsWith("liorans://")) {
     return parseLegacyLioranUri(uri);
   }
 
-  if (uri.startsWith("liorandb://")) {
+  if (uri.startsWith("liorandb://") || uri.startsWith("liorandbs://")) {
     return parseConnectionStringUri(uri);
   }
 
   throw new Error(
-    "Invalid URI. Must start with http(s)://, lioran://, or liorandb://"
+    "Invalid URI. Must start with http(s)://, lioran(s)://, or liorandb(s)://"
   );
 }
 
 function parseLegacyLioranUri(uri: string): ParsedURI {
-  const stripped = uri.replace("lioran://", "");
+  const protocol: ParsedURI["protocol"] = uri.startsWith("liorans://")
+    ? "https"
+    : "http";
+  const stripped = uri.replace(/^liorans?:\/\//, "");
   const [creds, server] = stripped.split("@");
 
   if (!server) {
@@ -53,7 +56,7 @@ function parseLegacyLioranUri(uri: string): ParsedURI {
       throw new Error("Invalid LioranDB URI");
     }
 
-    return { protocol: "http", host, port, scheme: "lioran" };
+    return { protocol, host, port, scheme: "lioran" };
   }
 
   if (!creds) {
@@ -69,7 +72,7 @@ function parseLegacyLioranUri(uri: string): ParsedURI {
   }
 
   return {
-    protocol: "http",
+    protocol,
     username,
     password,
     host,
