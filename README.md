@@ -50,7 +50,9 @@ The client accepts these URI formats:
 http://<host>:<port>
 https://<host>:<port>
 liorandb://<dbUsername>:<dbPassword>@<host>:<port>/<dbName>
+liorandbs://<dbUsername>:<dbPassword>@<host>:<port>/<dbName>
 lioran://<username>:<password>@<host>:<port>
+liorans://<username>:<password>@<host>:<port>
 ```
 
 Examples:
@@ -67,6 +69,8 @@ Use `http(s)://...` when you want to call `login()`, `superAdminLogin()`, `setTo
 Use `liorandb://...` when you want `connect()` (or `setConnectionString()`) to authenticate using a database connection string.
 
 Use `lioran://...` when you want `connect()` to log in from URI credentials (legacy format).
+
+Note: `lioran://...:443` is treated as HTTPS for backward compatibility; prefer `liorans://...` for explicit TLS.
 
 ## Authentication
 
@@ -101,6 +105,16 @@ await client.register("editor", "password123");
 ```ts
 const client = new LioranClient(
   "lioran://admin:password123@localhost:4000"
+);
+
+await client.connect();
+```
+
+For TLS:
+
+```ts
+const client = new LioranClient(
+  "liorans://admin:password123@db.example.com:443"
 );
 
 await client.connect();

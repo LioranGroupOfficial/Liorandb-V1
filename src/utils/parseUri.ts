@@ -42,7 +42,7 @@ export function parseUri(uri: string): ParsedURI {
 }
 
 function parseLegacyLioranUri(uri: string): ParsedURI {
-  const protocol: ParsedURI["protocol"] = uri.startsWith("liorans://")
+  let protocol: ParsedURI["protocol"] = uri.startsWith("liorans://")
     ? "https"
     : "http";
   const stripped = uri.replace(/^liorans?:\/\//, "");
@@ -55,6 +55,10 @@ function parseLegacyLioranUri(uri: string): ParsedURI {
     if (!host || !port) {
       throw new Error("Invalid LioranDB URI");
     }
+
+    // Back-compat: many users historically wrote `lioran://...:443` for HTTPS.
+    // Auto-upgrade to HTTPS when the port is clearly an HTTPS default.
+    if (protocol === "http" && port === 443) protocol = "https";
 
     return { protocol, host, port, scheme: "lioran" };
   }
@@ -70,6 +74,9 @@ function parseLegacyLioranUri(uri: string): ParsedURI {
   if (!username || !password || !host || !port) {
     throw new Error("Invalid LioranDB URI");
   }
+
+  // Back-compat: many users historically wrote `lioran://...:443` for HTTPS.
+  if (protocol === "http" && port === 443) protocol = "https";
 
   return {
     protocol,
