@@ -1,6 +1,6 @@
 ---
 title: LioranManager (driver)
-sidebar_position: 2
+sidebar_position: 7
 ---
 
 `@liorandb/driver` exports a `LioranManager` class that intentionally mirrors the common `@liorandb/core` entrypoint shape, but talks to a **remote server** over HTTP.
@@ -30,6 +30,12 @@ You can pass either:
 
 ```ts
 await manager.connect();
+```
+
+Note: `db()` is `async` in the driver (it validates auth before returning a wrapper), so prefer:
+
+```ts
+const db = await manager.db("default");
 ```
 
 ## Close

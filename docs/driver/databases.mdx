@@ -9,7 +9,12 @@ import TabItem from '@theme/TabItem';
 The driver provides both:
 
 - **management APIs** (`client.*`) and
-- **database scoped APIs** (`client.db(name)`)
+- **database scoped APIs** (`await client.db(name)`)
+
+Related pages:
+
+- **Collections** for collection-level CRUD and streaming bulk inserts
+- **Schemas & migrations** for schema versions and doc migration workflows
 
 ## Management (LioranClient)
 
@@ -163,7 +168,7 @@ console.log(await client.databaseStats("app"));
 
 ## Database wrapper (DB)
 
-`client.db(name)` returns a `DB` instance with:
+`await client.db(name)` returns a `DB` instance with:
 
 ## Collections
 
@@ -176,7 +181,7 @@ console.log(await client.databaseStats("app"));
 <TabItem value="ts">
 
 ```ts
-const db = client.db("app");
+const db = await client.db("app");
 const users = db.collection<{ _id?: string; email: string }>("users");
 await users.insertOne({ email: "a@b.com" });
 ```
@@ -185,7 +190,7 @@ await users.insertOne({ email: "a@b.com" });
 <TabItem value="js">
 
 ```js
-const db = client.db("app");
+const db = await client.db("app");
 const users = db.collection("users");
 await users.insertOne({ email: "a@b.com" });
 ```
@@ -288,6 +293,55 @@ console.log(await db.compactAll());
 
 </TabItem>
 </Tabs>
+
+## Schema versions and migrations
+
+The server can store a **database schema version** (a string) and can apply structured migrations.
+
+### `getSchemaVersion()` / `setSchemaVersion(schemaVersion)`
+
+```ts
+console.log(await db.getSchemaVersion()); // string | null
+console.log(await db.setSchemaVersion("2026-05-16"));
+```
+
+### `applyMigrations(targetVersion, migrations)`
+
+The remote driver intentionally does **not** support a function-based `db.migrate()` API.
+
+Use `applyMigrations(...)` instead:
+
+```ts
+await db.applyMigrations("v2", [
+  {
+    from: "v1",
+    to: "v2",
+    actions: [
+      { type: "createIndex", collection: "users", field: "email", options: { unique: true } },
+    ],
+  },
+]);
+```
+
+### `rotateEncryptionKey(newKey)`
+
+If your server is configured to support it:
+
+```ts
+await db.rotateEncryptionKey("<new-key>");
+```
+
+## Collection options (database-scoped admin APIs)
+
+These methods operate on a collection by name (without needing a `Collection` instance):
+
+- `getCollectionOptions(collection)`
+- `setCollectionDateOption(collection, date)`
+
+```ts
+console.log(await db.getCollectionOptions("users"));
+await db.setCollectionDateOption("users", { mode: "epoch_ms" });
+```
 
 ## Indexes
 

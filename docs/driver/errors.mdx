@@ -1,12 +1,14 @@
 ---
 title: Errors
-sidebar_position: 5
+sidebar_position: 8
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
 The driver throws `HttpError` for non-2xx responses.
+
+Related page: **Low-level HTTP client** for `HttpClient` details and NDJSON streaming.
 
 ## `HttpError`
 
@@ -105,7 +107,7 @@ async function withRetry<T>(fn: () => Promise<T>) {
   }
 }
 
-const db = client.db("default");
+const db = await client.db("default");
 const users = db.collection("users");
 console.log(await withRetry(() => users.count()));
 ```
@@ -126,7 +128,7 @@ async function withRetry(fn) {
   }
 }
 
-const db = client.db("default");
+const db = await client.db("default");
 const users = db.collection("users");
 console.log(await withRetry(() => users.count()));
 ```

@@ -1,0 +1,202 @@
+---
+title: Schemas & migrations
+sidebar_position: 5
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+The driver is a thin HTTP wrapper, but it also includes **client-side helpers** for schema parsing and document migrations that run in your application code.
+
+This page covers:
+
+- client-side schema parsing (`collection.setSchema(...)`)
+- client-side doc migrations (`collection.addMigration(...)`)
+- server-side schema versions and migrations (`db.*SchemaVersion*`, `db.applyMigrations(...)`)
+- server-side collection doc-migration config (`collection.getDocMigrations()` / `setDocMigrations()`)
+
+## Client-side schema parsing
+
+`db.collection(name, schema?, schemaVersion?)` accepts an optional `schema` object with a `parse(value)` function.
+
+This is intentionally compatible with popular schema libraries (for example Zod) because they provide `schema.parse(...)`.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { z } from "zod";
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+const db = await client.db("default");
+
+const ItemSchema = z.object({
+  _id: z.string().optional(),
+  sku: z.string(),
+  qty: z.number().int().nonnegative(),
+  __v: z.number().int().optional(),
+});
+
+const items = db.collection("items", ItemSchema, 1);
+
+const created = await items.insertOne({ sku: "A", qty: 1 });
+// `created` is parsed by Zod (throws if it doesn't match)
+console.log(created.sku, created.qty);
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+const db = await client.db("default");
+
+// Any object with `parse(value)` works.
+const PassThrough = { parse: (v) => v };
+const items = db.collection("items", PassThrough, 1);
+
+console.log(await items.insertOne({ sku: "A", qty: 1 }));
+```
+
+</TabItem>
+</Tabs>
+
+### The `__v` field (client-side schema versions)
+
+If you pass `schemaVersion` when creating a collection, the driver will add `__v` on **writes** when it is missing:
+
+- If your document already has `__v`, the driver keeps it.
+- If your document has no `__v`, the driver writes `__v: schemaVersion`.
+
+This is meant to support evolving document shapes over time.
+
+## Client-side document migrations (`addMigration`)
+
+You can register migrations that transform documents from an older `__v` to your current `schemaVersion` as they are read.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { z } from "zod";
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+const db = await client.db("default");
+
+const UserSchemaV2 = z.object({
+  _id: z.string().optional(),
+  email: z.string().email(),
+  active: z.boolean(),
+  __v: z.number().int().optional(),
+});
+
+const users = db.collection("users", UserSchemaV2, 2);
+
+// v1 -> v2: introduce `active`
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, active: true }),
+});
+
+const doc = await users.findOne({ email: "a@b.com" });
+console.log(doc?.active); // always present under v2 schema
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+const db = await client.db("default");
+const users = db.collection("users", { parse: (v) => v }, 2);
+
+users.addMigration({
+  from: 1,
+  to: 2,
+  migrate: (doc) => ({ ...doc, active: true }),
+});
+
+console.log(await users.findOne({ email: "a@b.com" }));
+```
+
+</TabItem>
+</Tabs>
+
+Notes:
+
+- Migrations run only when `schemaVersion` is set and at least one migration exists.
+- The driver repeatedly applies migration steps until the document reaches `schemaVersion`, or until no matching step exists.
+- The driver also parses the final migrated object through `schema.parse(...)` when a schema is configured.
+
+## Server-side database schema versions
+
+The server can store a database-level `schemaVersion` string. The driver exposes:
+
+- `db.getSchemaVersion()` / `db.setSchemaVersion(schemaVersion)`
+- `client.coreDatabaseSchemaVersion(db)` / `client.setCoreDatabaseSchemaVersion(db, schemaVersion)` (core-status endpoints)
+
+Use this for **database-wide** versioning and coordinating rollouts.
+
+## Server-side database migrations (`applyMigrations`)
+
+`db.applyMigrations(targetVersion, migrations)` sends structured migration steps to the server.
+
+Each step is `{ from: string; to: string; actions: [...] }` where actions can include:
+
+- create/drop indexes
+- create/drop text indexes
+- compaction
+- collection rename
+
+This is a server capability; if you are using the remote driver you must use `applyMigrations(...)` (the function-based `db.migrate()` API is intentionally not supported remotely).
+
+## Server-side encryption key rotation
+
+If your server is configured to support it, you can rotate a database encryption key:
+
+```ts
+const db = await client.db("default");
+await db.rotateEncryptionKey("<new-key>");
+```
+
+## Server-side collection doc-migration config
+
+The server can also store a collection-level doc-migration configuration (separate from the driver’s client-side `addMigration`).
+
+APIs:
+
+- `collection.getDocMigrations()`
+- `collection.setDocMigrations(config | null)`
+- `collection.testDocMigration(doc)`
+
+Example (set or clear a config):
+
+```ts
+const db = await client.db("default");
+const users = db.collection("users");
+
+// Clear server-side config:
+await users.setDocMigrations(null);
+```
+

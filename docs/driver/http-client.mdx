@@ -1,0 +1,103 @@
+---
+title: Low-level HTTP client
+sidebar_position: 9
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Most users should stick to `LioranClient`, `DB`, and `Collection`.
+
+If you are building advanced tooling (custom admin endpoints, health probes, or one-off scripts), the driver also exports a small `HttpClient` and `HttpError`.
+
+## `HttpError`
+
+The driver throws `HttpError` for non-2xx responses.
+
+Properties:
+
+- `error.status`: HTTP status code
+- `error.data`: parsed response body (JSON when possible, otherwise raw text)
+
+## `HttpClient`
+
+`HttpClient` is a wrapper around `fetch` that:
+
+- sets `Accept: application/json`
+- sends `Authorization: Bearer <jwt>` when a token is set
+- sends `x-liorandb-connection-string: ...` when a connection string is set
+- parses response bodies as text first, then JSON when possible
+
+The base URL must be the server origin (`http://host:port`).
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { HttpClient, HttpError } from "@liorandb/driver";
+
+const http = new HttpClient("http://localhost:4000");
+http.setToken("<jwt>");
+
+try {
+  const out = await http.get<{ ok: true }>("/health");
+  console.log(out);
+} catch (err) {
+  if (err instanceof HttpError) {
+    console.error("HTTP", err.status, err.data);
+  } else {
+    throw err;
+  }
+}
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { HttpClient, HttpError } from "@liorandb/driver";
+
+const http = new HttpClient("http://localhost:4000");
+http.setToken("<jwt>");
+
+try {
+  console.log(await http.get("/health"));
+} catch (err) {
+  if (err instanceof HttpError) {
+    console.error("HTTP", err.status, err.data);
+  } else {
+    throw err;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## NDJSON streaming (`postNdjson`)
+
+For large bulk inserts, the server supports an NDJSON stream endpoint, and the driver exposes `http.postNdjson(...)`.
+
+`Collection.insertManyStream(...)` uses this under the hood.
+
+Example:
+
+```ts
+import { HttpClient } from "@liorandb/driver";
+
+const http = new HttpClient("http://localhost:4000");
+http.setConnectionString("liorandb://db_user:db_pass@localhost:4000/app");
+
+async function* docs() {
+  for (let i = 0; i < 1000; i++) yield { i, createdAt: Date.now() };
+}
+
+await http.postNdjson(
+  "/db/app/collections/items/bulk/stream",
+  docs()
+);
+```
+

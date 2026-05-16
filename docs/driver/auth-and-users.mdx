@@ -8,13 +8,17 @@ import TabItem from '@theme/TabItem';
 
 `LioranClient` exposes authentication + user management methods.
 
+Related page: **Maintenance & core APIs** for snapshots, server pause/resume/stop, and core introspection endpoints.
+
 ## `connect()` (URI auto-detect)
 
 `connect()` chooses behavior based on your URI:
 
 1) `lioran://username:password@host:port` → logs in and stores a JWT token  
-2) `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses connection-string mode  
-3) `http(s)://host:port` → no auto-login (call `login()` or `setToken()` / `setConnectionString()`)
+2) `liorans://username:password@host:port` → same as `lioran://`, but uses HTTPS  
+3) `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses connection-string mode (database-scoped identity)  
+4) `liorandbs://dbUsername:dbPassword@host[:port]/databaseName` → same as `liorandb://`, but uses HTTPS  
+5) `http(s)://host:port` → no auto-login (call `login()` / `superAdminLogin()` or `setToken()` / `setConnectionString()`)
 
 ### Example: `lioran://` (username/password)
 
@@ -50,7 +54,7 @@ console.log(client.isAuthenticated(), client.getUser()?.role);
 
 ### Example: `liorandb://` (database-scoped connection string)
 
-This mode authenticates as a single database only (no user-management APIs).
+This mode authenticates as a single database only (no user-management APIs). In practice, database-scoped identities are meant for application traffic, not for admin/user-management endpoints.
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -66,7 +70,7 @@ const client = new LioranClient(
 );
 await client.connect();
 
-const db = client.db("app");
+const db = await client.db("app");
 console.log(await db.collection("items").count());
 ```
 
@@ -81,7 +85,7 @@ const client = new LioranClient(
 );
 await client.connect();
 
-const db = client.db("app");
+const db = await client.db("app");
 console.log(await db.collection("items").count());
 ```
 
@@ -505,4 +509,6 @@ console.log(await client.compactAllDatabases());
 
 </TabItem>
 </Tabs>
+
+For server stop/pause/resume/restore and the `core*` introspection APIs, see **Maintenance & core APIs**.
 

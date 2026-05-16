@@ -1,0 +1,137 @@
+---
+title: Maintenance & core APIs
+sidebar_position: 6
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+In addition to databases/collections, `LioranClient` exposes server maintenance and “core” introspection endpoints.
+
+These APIs are primarily useful for admin tooling, operator dashboards, and CLIs.
+
+## Public status endpoints
+
+These do not require authentication:
+
+- `client.health()` → basic liveness + time
+- `client.info()` → host/process information
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+console.log(await client.health());
+console.log(await client.info());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+const client = new LioranClient("http://localhost:4000");
+console.log(await client.health());
+console.log(await client.info());
+```
+
+</TabItem>
+</Tabs>
+
+## Snapshots and maintenance
+
+These endpoints are for operations like snapshotting and compaction.
+
+### Snapshot status and listing
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+console.log((await client.maintenanceStatus()).snapshots);
+console.log(await client.listSnapshots());
+console.log(await client.createSnapshotNow());
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+console.log((await client.maintenanceStatus()).snapshots);
+console.log(await client.listSnapshots());
+console.log(await client.createSnapshotNow());
+```
+
+</TabItem>
+</Tabs>
+
+### Compact all databases
+
+```ts
+console.log(await client.compactAllDatabases());
+```
+
+### Stop/pause/resume/restore (require server secret)
+
+Some maintenance operations are guarded by a server secret (the raw contents of `secret.key`).
+
+```ts
+import fs from "node:fs";
+import { LioranClient } from "@liorandb/driver";
+
+const secret = fs.readFileSync("./secret.key", "utf8").trim();
+const client = new LioranClient("http://localhost:4000");
+await client.superAdminLogin(secret);
+
+// Pause background work (if supported by your server):
+await client.pauseServer(secret);
+await client.resumeServer(secret);
+
+// Restore from a snapshot path known to the server:
+await client.restoreServerSnapshot(secret, "C:/path/to/snapshot.zip");
+
+// Stop the server:
+await client.stopServer(secret);
+```
+
+## Core introspection APIs (require auth)
+
+These endpoints provide introspection into the embedded/core runtime when the server is backed by the core engine.
+
+APIs:
+
+- `client.coreStatus()`
+- `client.coreIpc()`
+- `client.coreManagers()`
+- `client.coreDatabases()`
+- `client.coreDatabaseStatus(db)`
+- `client.coreDatabaseSchemaVersion(db)`
+- `client.setCoreDatabaseSchemaVersion(db, schemaVersion)`
+
+Example:
+
+```ts
+const client = new LioranClient("lioran://admin:admin@localhost:4000");
+await client.connect();
+
+console.log(await client.coreStatus());
+console.log(await client.coreDatabases());
+console.log(await client.coreDatabaseStatus("default"));
+```
+

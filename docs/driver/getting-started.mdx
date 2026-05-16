@@ -6,14 +6,20 @@ sidebar_position: 1
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Install the server and start it:
+This page shows the fastest path to connect to a running LioranDB server from Node.js using the JS/TS driver (`@liorandb/driver`).
+
+## 1) Run a server
+
+Install the server package and start it:
 
 ```bash
 npm i -g @liorandb/db
 ldb-serve
 ```
 
-Install the driver:
+By default the server listens on `http://localhost:4000`.
+
+## 2) Install the driver
 
 ```bash
 npm i @liorandb/driver
@@ -21,7 +27,7 @@ npm i @liorandb/driver
 
 Looking for the Python driver? Go to **Driver (Python: liorandb-driver) -> Getting started**.
 
-## Connect and use a collection
+## 3) Connect and use a collection
 
 <Tabs groupId="language" defaultValue="ts" values={[
   { label: 'TypeScript', value: 'ts' },
@@ -35,7 +41,7 @@ import { LioranClient } from "@liorandb/driver";
 const client = new LioranClient("lioran://admin:admin@localhost:4000");
 await client.connect();
 
-const db = client.db("default");
+const db = await client.db("default");
 const items = db.collection<{ _id?: string; sku: string; qty: number }>("items");
 
 await items.insertOne({ sku: "A", qty: 1 });
@@ -51,7 +57,7 @@ import { LioranClient } from "@liorandb/driver";
 const client = new LioranClient("lioran://admin:admin@localhost:4000");
 await client.connect();
 
-const db = client.db("default");
+const db = await client.db("default");
 const items = db.collection("items");
 
 await items.insertOne({ sku: "A", qty: 1 });
@@ -61,14 +67,23 @@ console.log(await items.findOne({ sku: "A" }));
 </TabItem>
 </Tabs>
 
-## Authentication options
+## Connection URIs (what `connect()` does)
 
 `connect()` behaves differently depending on the URI:
 
-- `lioran://username:password@host:port` -> logs in and stores a JWT token
-- `liorandb://dbUsername:dbPassword@host[:port]/databaseName` -> uses the connection string mode
-- `liorandbs://dbUsername:dbPassword@host[:port]/databaseName` -> same as `liorandb://`, but uses HTTPS
-- `http(s)://host:port` -> does **not** auto-login (call `login()` or `setToken()` / `setConnectionString()`)
+- `lioran://username:password@host:port` → logs in and stores a JWT token
+- `liorans://username:password@host:port` → same as `lioran://`, but uses HTTPS
+- `liorandb://dbUsername:dbPassword@host[:port]/databaseName` → uses database-scoped connection-string mode
+- `liorandbs://dbUsername:dbPassword@host[:port]/databaseName` → same as `liorandb://`, but uses HTTPS
+- `http(s)://host:port` → does **not** auto-login (call `login()` / `superAdminLogin()` or `setToken()` / `setConnectionString()`)
+
+If you pass `:443` with `lioran://...:443`, the driver auto-upgrades the protocol to HTTPS for backward compatibility.
+
+## What you get (high level)
+
+- `client.*` methods: server management and auth helpers (requires auth)
+- `await client.db(name)`: returns a `DB` wrapper
+- `db.collection(name)`: returns a `Collection<T>` wrapper calling HTTP endpoints
 
 ## Core-style API (optional): `LioranManager`
 
@@ -80,7 +95,7 @@ import { LioranManager } from "@liorandb/driver";
 const manager = new LioranManager("lioran://admin:admin@localhost:4000");
 await manager.connect();
 
-const db = manager.db("default");
+const db = await manager.db("default");
 const items = db.collection("items");
 console.log(await items.findOne({ sku: "A" }));
 ```
