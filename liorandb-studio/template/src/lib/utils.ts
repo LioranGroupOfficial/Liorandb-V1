@@ -3,20 +3,25 @@ import { ConnectionConfig } from '@/types';
 export function parseConnectionUri(uri: string): ConnectionConfig {
   const value = uri.trim();
 
-  if (value.startsWith('lioran://')) {
-    const match = value.match(/^lioran:\/\/([^:]+):([^@]+)@([^:\/]+):(\d+)$/);
+  if (value.startsWith('lioran://') || value.startsWith('liorans://')) {
+    const match = value.match(/^liorans?:\/\/([^:]+):([^@]+)@([^:\/]+):(\d+)$/);
 
     if (!match) {
       throw new Error(
-        'Invalid lioran URI. Expected: lioran://username:password@host:port'
+        'Invalid lioran URI. Expected: lioran(s)://username:password@host:port'
       );
     }
 
+    const isSecure = value.startsWith('liorans://');
+    const port = Number(match[4]);
+    const normalizedUri =
+      !isSecure && port === 443 ? value.replace(/^lioran:\/\//, 'liorans://') : value;
+
     return {
-      uri: value,
+      uri: normalizedUri,
       username: decodeURIComponent(match[1]),
       host: match[3],
-      port: Number(match[4]),
+      port,
       protocol: 'lioran',
     };
   }
@@ -61,7 +66,7 @@ export function parseConnectionUri(uri: string): ConnectionConfig {
     };
   } catch {
     throw new Error(
-      'Invalid host URI. Use http://host:port, https://host:port, lioran://user:pass@host:port, or liorandb://dbUser:dbPass@host:port/databaseName'
+      'Invalid host URI. Use http://host:port, https://host:port, lioran(s)://user:pass@host:port, or liorandb(s)://dbUser:dbPass@host:port/databaseName'
     );
   }
 }
@@ -72,7 +77,8 @@ export function formatConnectionUri(
   host: string,
   port: number
 ): string {
-  return `lioran://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}`;
+  const scheme = port === 443 ? 'liorans' : 'lioran';
+  return `${scheme}://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}`;
 }
 
 export function formatHttpUri(protocol: 'http' | 'https', host: string, port: number): string {
