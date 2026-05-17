@@ -58,11 +58,28 @@ export function parseConnectionUri(uri: string): ConnectionConfig {
       throw new Error();
     }
 
+    // If someone provides `http://...:443`, treat it as HTTPS to avoid mixed-content issues.
+    // Back-compat: many users historically wrote `...:443` for HTTPS.
+    const requestedProtocol = parsed.protocol === 'https:' ? 'https' : 'http';
+    const requestedPort = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+
+    if (requestedProtocol === 'http' && requestedPort === 443) {
+      const upgraded = new URL(parsed.toString());
+      upgraded.protocol = 'https:';
+
+      return {
+        uri: upgraded.toString().replace(/\/$/, ''),
+        host: upgraded.hostname,
+        port: Number(upgraded.port || 443),
+        protocol: 'https',
+      };
+    }
+
     return {
       uri: parsed.toString().replace(/\/$/, ''),
       host: parsed.hostname,
-      port: Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80)),
-      protocol: parsed.protocol === 'https:' ? 'https' : 'http',
+      port: requestedPort,
+      protocol: requestedProtocol,
     };
   } catch {
     throw new Error(
