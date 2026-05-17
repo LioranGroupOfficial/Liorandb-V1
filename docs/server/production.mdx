@@ -32,13 +32,38 @@ Use `--root` to place data on a dedicated volume/disk.
 
 Use the published Docker image (recommended) and mount a local folder for persistence.
 
-Example `docker run` (Windows PowerShell, one line):
+Example `docker compose` (recommended):
 
-```powershell
-docker run -d -p 4000:4000 -v "${PWD}\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest
+Create `docker-compose.yml`:
+
+```yaml
+services:
+  liorandb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    # image: ldep/liorandb:latest
+    container_name: liorandb-test
+    ports:
+      - "4000:4000"
+    environment:
+      # Persist data to the mounted volume (recommended for Docker)
+      LIORANDB_ROOT_PATH: /data
+      # Change this in real deployments
+      LIORANDB_RPC_TOKEN: change-me
+      # Ensure host port publishing works in single-node mode
+      LIORANDB_HTTP_HOST: 0.0.0.0
+    volumes:
+      - ./lioran-data:/data
 ```
 
-This creates (or reuses) a local folder at `.\liorandb-data` next to where you run the command.
+Then run:
+
+```bash
+docker compose up -d
+```
+
+This creates (or reuses) a local folder at `./lioran-data` next to where you run `docker compose`.
 
 Then open Studio:
 

@@ -61,6 +61,54 @@ In readonly mode, write endpoints respond with `READONLY_MODE`.
 
 ## Environment variables
 
+## Recommended `.env` (server)
+
+In real deployments, prefer running the server with a local `.env` file (even outside Docker) so configuration is consistent across environments.
+
+Create `.env` next to where you run `ldb-serve`:
+
+```dotenv
+# Server runtime
+# Optional: load env vars from a specific file (defaults to `./.env` if present)
+# LIORANDB_ENV_FILE=.env
+LIORANDB_BASE_URL=http://localhost:4000
+LIORANDB_TRUST_PROXY=1
+LIORANDB_BODY_LIMIT=10mb
+
+# Default admin bootstrap (created only if missing)
+LIORANDB_DEFAULT_ADMIN_USERNAME=admin
+LIORANDB_DEFAULT_ADMIN_PASSWORD=admin
+
+# Engine root path (node-0 uses this path; node-1..node-9 use __cluster_nodes/node-i)
+# LIORANDB_ROOT_PATH=C:\path\to\liorandb-data
+
+# Single-node mode (disables internal multi-node cluster startup)
+# If set, overrides LIORANDB_CLUSTER_NODES to 1.
+# Also disables the local IPC listener used for multi-process access.
+# LIORANDB_SINGLE_NODE=1
+
+# In single-node mode, HTTP stays enabled by default (bound to 127.0.0.1).
+# Set to 0/false/off to disable the API/dashboard.
+# LIORANDB_HTTP_ENABLED=0
+
+# HTTP bind host (useful in Docker so published ports work)
+# LIORANDB_HTTP_HOST=0.0.0.0
+
+# Cluster (server default is 10 nodes if unset)
+LIORANDB_CLUSTER_NODES=10
+LIORANDB_CLUSTER_HOST=127.0.0.1
+LIORANDB_CLUSTER_RAFT_BASE_PORT=7100
+LIORANDB_CLUSTER_WAL_BASE_PORT=8100
+LIORANDB_CLUSTER_CLIENT_BASE_PORT=9100
+LIORANDB_RPC_TOKEN=change-me
+
+# Cache budget per node (MB)
+LIORANDB_MAX_RAM_MB=12,288
+
+# Optional: pass-through engine options (JSON) to enable newer features without server code changes
+# LIORANDB_ENGINE_OPTIONS_JSON={"security":{"enabled":true}}
+```
+
 Common environment variables:
 
 - `PORT` (default `4000`)

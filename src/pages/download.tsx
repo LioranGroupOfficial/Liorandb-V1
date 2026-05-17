@@ -118,6 +118,10 @@ export default function DownloadPage(): ReactNode {
   const [releaseData, setReleaseData] = useState<ReleaseJson | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Keep legacy install options in the codebase, but hide them in the UI.
+  const hideWindowsZip = true;
+  const hidePython = true;
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -140,7 +144,7 @@ export default function DownloadPage(): ReactNode {
   const headlineVersion = releaseData?.currentVersion ?? winZip?.version;
 
   return (
-    <Layout title="Download" description="Download LioranDB and get started via Windows ZIP, npm, pip, or Docker.">
+    <Layout title="Download" description="Download LioranDB and get started via Node.js or Docker.">
       <header className={clsx('hero hero--primary', styles.heroBanner)}>
         <div className="container">
           <Heading as="h1" className="hero__title">
@@ -155,7 +159,7 @@ export default function DownloadPage(): ReactNode {
       <main className="container margin-vert--lg">
         <div className={clsx(styles.grid4)}>
           {/* Windows ZIP Card */}
-          <div className={styles.card}>
+          <div className={styles.card} style={hideWindowsZip ? { display: 'none' } : undefined}>
             <div className={styles.cardIcon}>💾</div>
             <Heading as="h2" className={styles.cardTitle}>
               Windows ZIP
@@ -220,7 +224,7 @@ export default function DownloadPage(): ReactNode {
           </div>
 
           {/* pip Card */}
-          <div className={styles.card}>
+          <div className={styles.card} style={hidePython ? { display: 'none' } : undefined}>
             <div className={styles.cardIcon}>🐍</div>
             <Heading as="h2" className={styles.cardTitle}>
               pip (Python)
@@ -254,7 +258,27 @@ export default function DownloadPage(): ReactNode {
             <p className={styles.description}>
               Run LioranDB in a containerized environment.
             </p>
-            <CodeBlock language="bash">{`docker run -d -p 4000:4000 -v ".\\liorandb-data:/root/LioranDB" --name liorandb ldep/liorandb:latest`}</CodeBlock>
+            <p className={styles.finePrint}>Create <code>docker-compose.yml</code>:</p>
+            <CodeBlock language="yaml">{`services:
+  liorandb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    # image: ldep/liorandb:latest
+    container_name: liorandb-test
+    ports:
+      - "4000:4000"
+    environment:
+      # Persist data to the mounted volume (recommended for Docker)
+      LIORANDB_ROOT_PATH: /data
+      # Change this in real deployments
+      LIORANDB_RPC_TOKEN: change-me
+      # Ensure host port publishing works in single-node mode
+      LIORANDB_HTTP_HOST: 0.0.0.0
+    volumes:
+      - ./lioran-data:/data`}</CodeBlock>
+            <p className={styles.finePrint}>Then run:</p>
+            <CodeBlock language="bash">{`docker compose up -d`}</CodeBlock>
             <p className={styles.muted}>After running the command:</p>
             <p className={styles.description}>
               Visit <a href="http://localhost:4000" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--ifm-link-color)', fontWeight: 'bold' }}>localhost:4000</a> for Studio
@@ -288,7 +312,7 @@ export default function DownloadPage(): ReactNode {
             <Link className="button button--link" to="/docs/driver/getting-started">
               → Node.js Driver
             </Link>
-            <Link className="button button--link" to="/docs/driver-python/getting-started">
+            <Link className="button button--link" to="/docs/driver-python/getting-started" style={hidePython ? { display: 'none' } : undefined}>
               → Python Driver
             </Link>
             <Link className="button button--link" to="/docs/server/users">
@@ -318,7 +342,7 @@ export default function DownloadPage(): ReactNode {
                 Get started
               </Link>
             </div>
-            <div className={styles.nextStepCard}>
+            <div className={styles.nextStepCard} style={hidePython ? { display: 'none' } : undefined}>
               <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🐍</div>
               <Heading as="h3" style={{ marginBottom: '0.75rem' }}>
                 Python
