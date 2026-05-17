@@ -115,12 +115,32 @@ if client.is_authenticated():
 
 All of these require the client to be authenticated first.
 
-### `await client.register(user_id, username=None, password=None, role="user", external_user_id=None)`
+### `await client.register(user_id, password=None)` / `await client.register(input_dict)`
 
 Creates a new user via `/auth/register`.
 
 ```py
-await client.register("alice", password="p@ssw0rd", role="user")
+await client.register("alice", password="p@ssw0rd")
+```
+
+You can also pass an input dict (all keys optional unless noted):
+
+- Required: `userId`
+- Optional: `username` (defaults to `userId`)
+- Optional: `password`
+- Optional: `role` (defaults to `"user"`)
+- Optional: `externalUserId`
+
+```py
+await client.register(
+    {
+        "userId": "alice",
+        "username": "alice@example.com",
+        "password": "p@ssw0rd",
+        "role": "user",
+        "externalUserId": "ext-123",
+    }
+)
 ```
 
 ### `await client.me()`
@@ -205,6 +225,32 @@ print(await client.list_snapshots())
 await client.create_snapshot_now()
 await client.compact_all_databases()
 ```
+
+## Server control
+
+These require authentication and a server secret.
+
+- `await client.stop_server(secret)` / `await client.stopServer(secret)`
+- `await client.pause_server(secret)` / `await client.pauseServer(secret)`
+- `await client.resume_server(secret)` / `await client.resumeServer(secret)`
+- `await client.restore_server_snapshot(secret, snapshotPath)` / `await client.restoreServerSnapshot(secret, snapshotPath)`
+
+```py
+await client.pause_server("my-server-secret")
+await client.resume_server("my-server-secret")
+```
+
+## Core endpoints
+
+Low-level introspection endpoints (primarily for tooling).
+
+- `await client.core_status()` / `await client.coreStatus()`
+- `await client.core_ipc()` / `await client.coreIpc()`
+- `await client.core_managers()` / `await client.coreManagers()`
+- `await client.core_databases()` / `await client.coreDatabases()`
+- `await client.core_database_status(db)` / `await client.coreDatabaseStatus(db)`
+- `await client.core_database_schema_version(db)` / `await client.coreDatabaseSchemaVersion(db)`
+- `await client.set_core_database_schema_version(db, schemaVersion)` / `await client.setCoreDatabaseSchemaVersion(db, schemaVersion)`
 
 ## Databases (admin / management)
 

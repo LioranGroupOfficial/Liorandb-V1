@@ -11,8 +11,10 @@ The package exports a few lightweight typing helpers.
 from liorandb_driver.types import LioranAuthType, LioranRole
 
 # LioranRole: "super_admin" | "admin" | "user"
-# LioranAuthType: "jwt" | "connection_string"
+# LioranAuthType: "jwt" | "connection" | "connection_string"
 ```
+
+`"connection_string"` is kept for backward compatibility with older clients/docs; servers typically report `"connection"` for connection-string auth.
 
 ## `LioranUser`
 

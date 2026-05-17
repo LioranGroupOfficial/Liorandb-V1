@@ -11,10 +11,16 @@ db = client.db("default")
 
 ## Collections
 
-### `db.collection(name) -> Collection`
+### `db.collection(name, schema=None, schemaVersion=None) -> Collection`
 
 ```py
 items = db.collection("items")
+```
+
+Optional schema + version:
+
+```py
+items = db.collection("items", schema=MySchema(), schemaVersion=1)
 ```
 
 ### `await db.list_collections()` / `await db.listCollections()`
@@ -63,6 +69,43 @@ await db.compact_all()
 await db.compact_collection("items")
 ```
 
+## Schema versions and migrations
+
+### `await db.get_schema_version()` / `await db.getSchemaVersion()`
+
+```py
+schema_version = await db.get_schema_version()
+print(schema_version)
+```
+
+### `await db.set_schema_version(schema_version)` / `await db.setSchemaVersion(schemaVersion)`
+
+```py
+await db.set_schema_version("3")
+```
+
+### `await db.apply_migrations(target_version, migrations)` / `await db.applyMigrations(targetVersion, migrations)`
+
+Runs database-level migrations on the server.
+
+```py
+await db.apply_migrations(
+    "3",
+    migrations=[
+        {"from": "1", "to": "2", "up": [{"op": "createIndex", "collection": "items", "field": "sku"}]},
+        {"from": "2", "to": "3", "up": [{"op": "createTextIndex", "collection": "items", "field": "name"}]},
+    ],
+)
+```
+
+`db.migrate()` is not supported in the HTTP driver (it raises); use `apply_migrations()` instead.
+
+### `await db.rotate_encryption_key(new_key)` / `await db.rotateEncryptionKey(newKey)`
+
+```py
+await db.rotate_encryption_key("new-key-material")
+```
+
 ## Indexes (database-level helpers)
 
 These are convenience wrappers around collection index endpoints.
@@ -96,6 +139,31 @@ await db.rebuild_index("items", "sku")
 
 ```py
 await db.rebuild_indexes("items")
+```
+
+### Text indexes
+
+- `await db.create_text_index(collection, field, options=None)` / `await db.createTextIndex(collection, field, options=None)`
+- `await db.drop_text_index(collection, field)` / `await db.dropTextIndex(collection, field)`
+- `await db.rebuild_text_index(collection, field)` / `await db.rebuildTextIndex(collection, field)`
+
+```py
+await db.create_text_index("items", "name", options={"language": "en"})
+```
+
+## Collection options
+
+### `await db.get_collection_options(collection)` / `await db.getCollectionOptions(collection)`
+
+```py
+opts = await db.get_collection_options("items")
+print(opts)
+```
+
+### `await db.set_collection_date_option(collection, date)` / `await db.setCollectionDateOption(collection, date)`
+
+```py
+await db.set_collection_date_option("items", {"field": "createdAt"})
 ```
 
 ## Query planning

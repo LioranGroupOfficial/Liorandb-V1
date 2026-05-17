@@ -18,9 +18,8 @@ The driver accepts multiple URI formats. Internally, `parse_uri(uri)` returns a 
 Supported prefixes:
 
 - `http://...` or `https://...`
-- `lioran://...` (legacy, HTTP)
-- `liorandb://...` (connection string, HTTP)
-- `liorandbs://...` (connection string, HTTPS)
+- `lioran://...` / `liorans://...` (legacy auth URI; `liorans://` uses HTTPS)
+- `liorandb://...` / `liorandbs://...` (connection string; `liorandbs://` uses HTTPS)
 
 Examples:
 

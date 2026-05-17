@@ -3,9 +3,6 @@ title: Getting started
 sidebar_position: 1
 ---
 
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
-
 ## Install
 
 ```bash
@@ -52,9 +49,9 @@ asyncio.run(main())
 
 `LioranClient.connect()` behaves differently depending on the URI:
 
-- `lioran://username:password@host:port` → logs in via `/auth/login` and stores a JWT token
+- `lioran://username:password@host:port` (or `liorans://...`) → logs in via `/auth/login` and stores a JWT token
 - `liorandb://dbUsername:dbPassword@host[:port]/databaseName` (or `liorandbs://...`) → enables **connection string mode**
-- `http(s)://host:port` → does **not** auto-login (call `login()`, `super_admin_login()`, `set_token()`, or `set_connection_string()`)
+- `http://host:port` / `https://host:port` → does **not** auto-login (call `login()`, `super_admin_login()`, `set_token()`, or `set_connection_string()`)
 
 If you prefer manual auth (recommended for many apps), start with `http://host:port` and then call one of:
 
@@ -62,3 +59,8 @@ If you prefer manual auth (recommended for many apps), start with `http://host:p
 - `await client.super_admin_login(secret)`
 - `client.set_token(token)`
 - `client.set_connection_string(connection_string)`
+
+Notes:
+
+- `lioran://host:port` (no credentials in the URI) is allowed, but `connect()` will raise; use explicit auth methods instead.
+- `liorandb(s)://...` connection strings authenticate via the `x-liorandb-connection-string` header (server derives the identity), so `connect()` will call `me()` to populate `client.get_user()`.
