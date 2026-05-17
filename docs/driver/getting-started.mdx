@@ -85,6 +85,14 @@ If you pass `:443` with `lioran://...:443`, the driver auto-upgrades the protoco
 - `await client.db(name)`: returns a `DB` wrapper
 - `db.collection(name)`: returns a `Collection<T>` wrapper calling HTTP endpoints
 
+## Integrations (Next.js / NestJS / Express)
+
+If you’re using a framework, prefer creating **one** `LioranClient` in a dedicated module/provider and importing/injecting it everywhere (instead of creating a new client per request):
+
+- Next.js: **Driver -> Integrations -> Next.js**
+- NestJS: **Driver -> Integrations -> NestJS**
+- Express: **Driver -> Integrations -> Express.js**
+
 ## Core-style API (optional): `LioranManager`
 
 If you prefer the embedded/core "manager -> db -> collection" shape, the driver also exports a remote-compatible `LioranManager` facade:

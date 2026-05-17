@@ -1,0 +1,108 @@
+---
+title: Next.js
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide shows a recommended way to use `@liorandb/driver` in Next.js by creating **one** `LioranClient` in a dedicated module and importing it anywhere you need database access (Route Handlers, Server Actions, API routes).
+
+## Install
+
+```bash
+npm i @liorandb/driver
+```
+
+## 1) Create a shared client module
+
+Create `src/lib/liorandb.ts` (or `app/lib/liorandb.ts`) and keep the client in module scope.
+
+In development, Next.js can hot-reload modules, so the snippet below caches the client on `globalThis` to avoid creating many clients.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+function mustGetEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing env var: ${name}`);
+  return value;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __liorandbClient: LioranClient | undefined;
+  var __liorandbConnectPromise: Promise<void> | undefined;
+}
+
+export const lioranClient =
+  globalThis.__liorandbClient ??
+  new LioranClient(mustGetEnv("LIORAN_URI"));
+
+if (!globalThis.__liorandbClient) {
+  globalThis.__liorandbClient = lioranClient;
+}
+
+export async function ensureLioranConnected() {
+  globalThis.__liorandbConnectPromise ??= lioranClient.connect();
+  return globalThis.__liorandbConnectPromise;
+}
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+import { LioranClient } from "@liorandb/driver";
+
+function mustGetEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing env var: ${name}`);
+  return value;
+}
+
+globalThis.__liorandbClient ??= new LioranClient(mustGetEnv("LIORAN_URI"));
+globalThis.__liorandbConnectPromise ??= undefined;
+
+export const lioranClient = globalThis.__liorandbClient;
+
+export async function ensureLioranConnected() {
+  globalThis.__liorandbConnectPromise ??= lioranClient.connect();
+  return globalThis.__liorandbConnectPromise;
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 2) Use in a Route Handler (App Router)
+
+Example: `app/api/items/route.ts`
+
+```ts
+import { NextResponse } from "next/server";
+import { ensureLioranConnected, lioranClient } from "@/lib/liorandb";
+
+export async function GET() {
+  await ensureLioranConnected();
+
+  const db = await lioranClient.db("default");
+  const items = db.collection<{ sku: string; qty: number }>("items");
+
+  const data = await items.find({}).toArray();
+  return NextResponse.json({ data });
+}
+```
+
+## Notes
+
+- Keep the driver on the server only; don’t import the driver from Client Components.
+- `close()` is a no-op for the driver, so you typically don’t need teardown logic in serverless runtimes.
+- Use `LIORAN_URI` like `lioran://admin:admin@localhost:4000` (or HTTPS variants) as described in **Driver -> Getting started**.
+

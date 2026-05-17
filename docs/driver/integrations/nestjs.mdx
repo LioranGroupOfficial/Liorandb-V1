@@ -1,0 +1,111 @@
+---
+title: NestJS
+sidebar_position: 2
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide shows how to integrate `@liorandb/driver` with NestJS using a dedicated provider so you can inject a shared `LioranClient` (and optionally `DB`) anywhere in your app.
+
+## Install
+
+```bash
+npm i @liorandb/driver
+```
+
+## 1) Create a LioranDB module
+
+This module creates one `LioranClient`, connects once during startup, and exports it for injection.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { Global, Module } from "@nestjs/common";
+import { LioranClient } from "@liorandb/driver";
+
+export const LIORAN_CLIENT = Symbol("LIORAN_CLIENT");
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: LIORAN_CLIENT,
+      useFactory: async () => {
+        const uri = process.env.LIORAN_URI;
+        if (!uri) throw new Error("Missing env var: LIORAN_URI");
+
+        const client = new LioranClient(uri);
+        await client.connect();
+        return client;
+      },
+    },
+  ],
+  exports: [LIORAN_CLIENT],
+})
+export class LioranDbModule {}
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const { Global, Module } = require("@nestjs/common");
+const { LioranClient } = require("@liorandb/driver");
+
+const LIORAN_CLIENT = Symbol("LIORAN_CLIENT");
+
+let LioranDbModule = class LioranDbModule {};
+LioranDbModule = Global()(
+  Module({
+    providers: [
+      {
+        provide: LIORAN_CLIENT,
+        useFactory: async () => {
+          const uri = process.env.LIORAN_URI;
+          if (!uri) throw new Error("Missing env var: LIORAN_URI");
+
+          const client = new LioranClient(uri);
+          await client.connect();
+          return client;
+        },
+      },
+    ],
+    exports: [LIORAN_CLIENT],
+  })(LioranDbModule)
+);
+
+module.exports = { LioranDbModule, LIORAN_CLIENT };
+```
+
+</TabItem>
+</Tabs>
+
+## 2) Inject and use the client
+
+```ts
+import { Inject, Injectable } from "@nestjs/common";
+import type { LioranClient } from "@liorandb/driver";
+import { LIORAN_CLIENT } from "./liorandb.module";
+
+@Injectable()
+export class ItemsService {
+  constructor(@Inject(LIORAN_CLIENT) private readonly client: LioranClient) {}
+
+  async list() {
+    const db = await this.client.db("default");
+    const items = db.collection<{ sku: string; qty: number }>("items");
+    return items.find({}).toArray();
+  }
+}
+```
+
+## Notes
+
+- `close()` is a no-op for the driver; you can still add shutdown hooks if you want, but it’s usually unnecessary.
+- Keep `LIORAN_URI` in environment configuration, not hardcoded in providers.
+

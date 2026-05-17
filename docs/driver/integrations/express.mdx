@@ -1,0 +1,92 @@
+---
+title: Express.js
+sidebar_position: 3
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide shows how to integrate `@liorandb/driver` with Express by creating a single shared `LioranClient` at startup and reusing it from routes and middleware.
+
+## Install
+
+```bash
+npm i @liorandb/driver
+```
+
+## 1) Create a shared client module
+
+Create `src/liorandb.ts` (or similar) and export one `LioranClient`.
+
+<Tabs groupId="language" defaultValue="ts" values={[
+  { label: 'TypeScript', value: 'ts' },
+  { label: 'JavaScript', value: 'js' },
+]}>
+<TabItem value="ts">
+
+```ts
+import { LioranClient } from "@liorandb/driver";
+
+const uri = process.env.LIORAN_URI;
+if (!uri) throw new Error("Missing env var: LIORAN_URI");
+
+export const lioranClient = new LioranClient(uri);
+
+export async function connectLioran() {
+  await lioranClient.connect();
+}
+```
+
+</TabItem>
+<TabItem value="js">
+
+```js
+const { LioranClient } = require("@liorandb/driver");
+
+const uri = process.env.LIORAN_URI;
+if (!uri) throw new Error("Missing env var: LIORAN_URI");
+
+const lioranClient = new LioranClient(uri);
+
+async function connectLioran() {
+  await lioranClient.connect();
+}
+
+module.exports = { lioranClient, connectLioran };
+```
+
+</TabItem>
+</Tabs>
+
+## 2) Connect once at startup, then use in routes
+
+```ts
+import express from "express";
+import { connectLioran, lioranClient } from "./liorandb";
+
+async function main() {
+  await connectLioran();
+
+  const app = express();
+  app.use(express.json());
+
+  app.get("/items", async (_req, res) => {
+    const db = await lioranClient.db("default");
+    const items = db.collection<{ sku: string; qty: number }>("items");
+    res.json({ data: await items.find({}).toArray() });
+  });
+
+  app.listen(3000, () => console.log("http://localhost:3000"));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+## Notes
+
+- Keep the `LioranClient` in module scope and share it via imports; don’t create a new client per request.
+- `close()` is a no-op for the driver, so shutdown handling is optional.
+
