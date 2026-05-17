@@ -94,27 +94,22 @@ const config: Config = {
         alt: 'My Site Logo',
         src: 'img/logo.svg',
       },
-      items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
-          position: 'left',
-          label: 'Docs',
-        },
-        {
-          to: '/download',
-          label: 'Download',
-          position: 'left',
-        },
-        // {to: '/blog', label: 'Blog', position: 'left'},
-        {
-          href: 'https://discord.gg/WsWWThjPMp',
-          label: 'Discord',
-          position: 'right',
-        },
-        {
-          href: 'https://github.com/LioranGroupOfficial/Liorandb',
-          label: 'GitHub',
+        items: [
+          {
+            type: 'docSidebar',
+            sidebarId: 'tutorialSidebar',
+            position: 'left',
+            label: 'Docs',
+          },
+          {
+            to: '/download',
+            label: 'Download',
+            position: 'left',
+          },
+          // {to: '/blog', label: 'Blog', position: 'left'},
+          {
+            href: 'https://github.com/LioranGroupOfficial/Liorandb/tree/core',
+            label: 'GitHub',
           position: 'right',
         },
       ],

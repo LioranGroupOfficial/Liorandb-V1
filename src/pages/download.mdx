@@ -2,16 +2,120 @@
 title: Download
 ---
 
-## Server downloads
+This page covers two common ways to run the LioranDB server:
 
-- Stable downloads: `https://db.lioransolutions.com/download`
-- GitHub releases: `https://github.com/LioranGroupOfficial/Liorandb/releases`
+- Install via npm (`@liorandb/db`) and run `ldb-serve` directly
+- Run via Docker with persistent storage and environment configuration
 
-## Quickstart
+For a complete reference, see `Docs → Server & CLI (@liorandb/db)`.
 
-After downloading, start the server:
+## Option A: Install server via npm
+
+Install globally (recommended for dev/ops machines):
+
+```bash
+npm i -g @liorandb/db
+```
+
+Start the server:
 
 ```bash
 ldb-serve
 ```
+
+Studio:
+
+- `http://localhost:4000`
+
+### Environment setup (`.env`)
+
+Create a `.env` file next to where you run `ldb-serve`:
+
+```dotenv
+# Server runtime
+LIORANDB_BASE_URL=http://localhost:4000
+LIORANDB_TRUST_PROXY=1
+LIORANDB_BODY_LIMIT=10mb
+
+# Default admin bootstrap (created only if missing)
+LIORANDB_DEFAULT_ADMIN_USERNAME=admin
+LIORANDB_DEFAULT_ADMIN_PASSWORD=admin
+
+# Optional: change where data is stored
+# LIORANDB_ROOT_PATH=/absolute/path/to/liorandb-data
+
+# Optional: ensure HTTP binds to all interfaces (useful inside containers/VMs)
+# LIORANDB_HTTP_HOST=0.0.0.0
+
+# Cluster defaults (server uses 10 nodes if unset)
+LIORANDB_CLUSTER_NODES=10
+LIORANDB_CLUSTER_HOST=127.0.0.1
+LIORANDB_CLUSTER_RAFT_BASE_PORT=7100
+LIORANDB_CLUSTER_WAL_BASE_PORT=8100
+LIORANDB_CLUSTER_CLIENT_BASE_PORT=9100
+LIORANDB_RPC_TOKEN=change-me
+
+# Cache budget per node (MB)
+LIORANDB_MAX_RAM_MB=12,288
+```
+
+Common env vars:
+
+- `PORT` (default `4000`)
+- `NODE_ENV`
+- `LOG_LEVEL`
+- `LIORANDB_IPC_MODE` (`primary|client|readonly`) (equivalent to `--ipc`)
+
+## Option B: Docker (recommended for deployments)
+
+Use Docker with a mounted volume for persistence.
+
+### Docker Compose
+
+Create `docker-compose.yml`:
+
+```yaml
+services:
+  liorandb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    # Or use a published image if you have one available:
+    # image: ldep/liorandb:latest
+    container_name: liorandb
+    ports:
+      - "4000:4000"
+    environment:
+      # Persist data to the mounted volume (recommended for Docker)
+      LIORANDB_ROOT_PATH: /data
+      # Change this in real deployments
+      LIORANDB_RPC_TOKEN: change-me
+      # Ensure host port publishing works in single-node mode
+      LIORANDB_HTTP_HOST: 0.0.0.0
+    volumes:
+      - ./lioran-data:/data
+```
+
+Run:
+
+```bash
+docker compose up -d
+```
+
+Then open Studio:
+
+- `http://localhost:4000`
+
+### Managing users inside Docker
+
+```bash
+docker exec -it liorandb sh
+ldb-users list
+```
+
+## Direct binary downloads
+
+If you prefer not using npm, download a packaged build here:
+
+- `https://db.lioransolutions.com/download`
 
