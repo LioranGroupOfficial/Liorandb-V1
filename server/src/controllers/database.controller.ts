@@ -16,6 +16,10 @@ import {
 import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth";
 import { sendApiError } from "../utils/apiError";
 import { openConfiguredCollection } from "../utils/collectionConfig";
+import { getPaused, setPaused } from "../utils/pause";
+import { recreateManager } from "../config/database";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
+import { isSnapshotRunning } from "../utils/snapshots";
 
 export const listDatabases = async (req: Request, res: Response) => {
   try {
@@ -252,11 +256,32 @@ export const compactDatabase = async (req: Request, res: Response) => {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
 
-    const database = await getWriteManager().db(db);
-    await database.compactAll();
+    if (isSnapshotRunning()) {
+      return res.status(409).json({ ok: false, error: "snapshot already running" });
+    }
 
-    return res.json({ ok: true, db });
+    return res.json(
+      await runExclusiveMaintenance(`compactDatabase:${db}`, async () => {
+        const wasPaused = getPaused();
+        if (!wasPaused) setPaused(true);
+
+        try {
+          await recreateManager();
+          const database = await getWriteManager().db(db);
+          await database.compactAll();
+          return { ok: true, db };
+        } finally {
+          if (!wasPaused) {
+            await recreateManager();
+            setPaused(false);
+          }
+        }
+      })
+    );
   } catch (error) {
+    if ((error as any)?.code === "MAINTENANCE_RUNNING") {
+      return res.status(409).json({ ok: false, error: (error as Error).message });
+    }
     return sendApiError(res, error, 400);
   }
 };

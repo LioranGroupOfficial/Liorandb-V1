@@ -14,6 +14,10 @@ import {
   type CollectionDateOption,
   openConfiguredCollection,
 } from "../utils/collectionConfig";
+import { getPaused, setPaused } from "../utils/pause";
+import { recreateManager } from "../config/database";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
+import { isSnapshotRunning } from "../utils/snapshots";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
@@ -82,11 +86,32 @@ export const compactCollection = async (req: Request, res: Response) => {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
 
-    const database = await getWriteManager().db(db);
-    await database.compactCollection(col);
+    if (isSnapshotRunning()) {
+      return res.status(409).json({ ok: false, error: "snapshot already running" });
+    }
 
-    return res.json({ ok: true, db, collection: col });
+    return res.json(
+      await runExclusiveMaintenance(`compactCollection:${db}/${col}`, async () => {
+        const wasPaused = getPaused();
+        if (!wasPaused) setPaused(true);
+
+        try {
+          await recreateManager();
+          const database = await getWriteManager().db(db);
+          await database.compactCollection(col);
+          return { ok: true, db, collection: col };
+        } finally {
+          if (!wasPaused) {
+            await recreateManager();
+            setPaused(false);
+          }
+        }
+      })
+    );
   } catch (error) {
+    if ((error as any)?.code === "MAINTENANCE_RUNNING") {
+      return res.status(409).json({ ok: false, error: (error as Error).message });
+    }
     return sendApiError(res, error, 400);
   }
 };

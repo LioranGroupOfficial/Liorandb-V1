@@ -12,6 +12,7 @@ import { sendApiError } from "../utils/apiError";
 import { JWT_SECRET } from "../utils/token";
 import { requestShutdown } from "../utils/shutdown";
 import { getPaused, setPaused } from "../utils/pause";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
 import path from "path";
 
 function requireAdmin(req: Request, res: Response) {
@@ -65,15 +66,40 @@ export const compactAllDatabases = async (req: Request, res: Response) => {
   if (!auth) return;
 
   try {
-    const names = await listDatabaseNames();
-
-    for (const name of names) {
-      const db = await manager.db(name);
-      await db.compactAll();
+    if (isSnapshotRunning()) {
+      return res.status(409).json({ ok: false, error: "snapshot already running" });
     }
 
-    return res.json({ ok: true, databases: names.length });
+    return res.json(
+      await runExclusiveMaintenance("compactAllDatabases", async () => {
+        const wasPaused = getPaused();
+        if (!wasPaused) setPaused(true);
+
+        try {
+          // Ensure all database handles are closed before compaction starts,
+          // otherwise LevelDB locks may be held by this same process.
+          await recreateManager();
+
+          const names = await listDatabaseNames();
+          for (const name of names) {
+            const db = await manager.db(name);
+            await db.compactAll();
+          }
+
+          return { ok: true, databases: names.length };
+        } finally {
+          if (!wasPaused) {
+            // Recreate again to ensure post-compaction reads/writes start from fresh handles.
+            await recreateManager();
+            setPaused(false);
+          }
+        }
+      })
+    );
   } catch (error) {
+    if ((error as any)?.code === "MAINTENANCE_RUNNING") {
+      return res.status(409).json({ ok: false, error: (error as Error).message });
+    }
     return sendApiError(res, error, 500);
   }
 };
