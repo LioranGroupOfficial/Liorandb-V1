@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { getReadManager, getWriteManager } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database";
 import {
   createCollectionByName,
   deleteCollectionByName,
@@ -67,7 +67,7 @@ export const collectionStats = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     const collection = openConfiguredCollection<any>(database, col);
 
     const count = await collection.countDocuments();
@@ -97,7 +97,7 @@ export const compactCollection = async (req: Request, res: Response) => {
 
         try {
           await recreateManager();
-          const database = await getWriteManager().db(db);
+          const database = await openWriteDatabase(db);
           await database.compactCollection(col);
           return { ok: true, db, collection: col };
         } finally {
@@ -120,7 +120,7 @@ export const getCollectionOptions = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
 
     return res.json({
       ok: true,
@@ -138,7 +138,7 @@ export const patchCollectionOptions = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
 
     const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
     const nextDate: CollectionDateOption | undefined = body.date;

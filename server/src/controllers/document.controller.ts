@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { getReadManager, getWriteManager } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 import { openConfiguredCollection } from "../utils/collectionConfig";
@@ -103,7 +103,7 @@ function normalizeFindPayload(body: any): { query: any; options?: any } {
 export const insertDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const doc = await collection.insertOne(req.body);
@@ -116,7 +116,7 @@ export const insertDocument = async (req: Request, res: Response) => {
 export const insertMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -130,7 +130,7 @@ export const insertMany = async (req: Request, res: Response) => {
 export const findDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -148,7 +148,7 @@ export const findDocuments = async (req: Request, res: Response) => {
 
         if (mig.writeBackOnRead && migrated.changed && migrated.doc && (migrated.doc as any)._id) {
           try {
-            const wdb = await getWriteManager().db(req.params.db);
+            const wdb = await openWriteDatabase(req.params.db);
             const wcol = openConfiguredCollection<any>(wdb, req.params.col);
             await (wcol as any).updateOne(
               { _id: (migrated.doc as any)._id },
@@ -173,7 +173,7 @@ export const findDocuments = async (req: Request, res: Response) => {
 export const findOneDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -186,7 +186,7 @@ export const findOneDocument = async (req: Request, res: Response) => {
       const migrated = migrateDocIfNeeded(doc, mig);
       if (mig.writeBackOnRead && migrated.changed && migrated.doc && (migrated.doc as any)._id) {
         try {
-          const wdb = await getWriteManager().db(req.params.db);
+          const wdb = await openWriteDatabase(req.params.db);
           const wcol = openConfiguredCollection<any>(wdb, req.params.col);
           await (wcol as any).updateOne(
             { _id: (migrated.doc as any)._id },
@@ -226,7 +226,7 @@ async function *parseNdjson(stream: NodeJS.ReadableStream) {
 export const insertManyStream = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const fn = (collection as any).insertManyStream;
@@ -256,7 +256,7 @@ export const insertManyStream = async (req: Request, res: Response) => {
 export const updateOne = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -270,7 +270,7 @@ export const updateOne = async (req: Request, res: Response) => {
 export const updateMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -284,7 +284,7 @@ export const updateMany = async (req: Request, res: Response) => {
 export const deleteOne = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -298,7 +298,7 @@ export const deleteOne = async (req: Request, res: Response) => {
 export const deleteMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -312,7 +312,7 @@ export const deleteMany = async (req: Request, res: Response) => {
 export const countDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
@@ -326,7 +326,7 @@ export const countDocuments = async (req: Request, res: Response) => {
 export const aggregateDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const pipeline = Array.isArray((req.body as any)?.pipeline) ? (req.body as any).pipeline : [];
@@ -340,7 +340,7 @@ export const aggregateDocuments = async (req: Request, res: Response) => {
 export const explainQuery = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);

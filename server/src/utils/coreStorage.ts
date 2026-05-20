@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { manager } from "../config/database";
+import { manager, openWriteDatabase } from "../config/database";
 
 export const AUTH_DB_NAME = "_auth";
 const WAL_DIR_NAME = "__wal";
@@ -72,7 +72,7 @@ export async function listDatabaseNames() {
 export async function createDatabaseByName(name: string) {
   assertSafeName(name, "database");
   assertAllowedDatabaseName(name);
-  await manager.db(name);
+  await openWriteDatabase(name);
   return name;
 }
 
@@ -114,14 +114,14 @@ export async function renameDatabaseByName(currentName: string, nextName: string
 
 export async function listCollectionNames(dbName: string) {
   assertAllowedDatabaseName(dbName);
-  const db = await manager.db(dbName);
+  const db = await openWriteDatabase(dbName);
   return listSubdirectories(db.basePath).sort((a, b) => a.localeCompare(b));
 }
 
 export async function createCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
   assertAllowedDatabaseName(dbName);
-  const db = await manager.db(dbName);
+  const db = await openWriteDatabase(dbName);
   db.collection(collectionName);
   return collectionName;
 }
@@ -129,7 +129,7 @@ export async function createCollectionByName(dbName: string, collectionName: str
 export async function deleteCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
   assertAllowedDatabaseName(dbName);
-  const db = await manager.db(dbName);
+  const db = await openWriteDatabase(dbName);
   const collectionPath = path.join(db.basePath, collectionName);
 
   const openCollection = db.collections.get(collectionName);
@@ -155,7 +155,7 @@ export async function renameCollectionByName(
   assertSafeName(nextName, "collection");
   assertAllowedDatabaseName(dbName);
 
-  const db = await manager.db(dbName);
+  const db = await openWriteDatabase(dbName);
   const currentPath = path.join(db.basePath, currentName);
   const nextPath = path.join(db.basePath, nextName);
 

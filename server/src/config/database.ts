@@ -291,6 +291,55 @@ export function getReadManager() {
   return readers[readIndex++ % readers.length];
 }
 
+type RecoverableCoreError = {
+  code?: unknown;
+  message?: unknown;
+  name?: unknown;
+};
+
+function isRecoverableCoreError(error: unknown) {
+  const err = error as RecoverableCoreError | null | undefined;
+  const code = typeof err?.code === "string" ? err.code : undefined;
+  const message = typeof err?.message === "string" ? err.message : "";
+  const name = typeof err?.name === "string" ? err.name : "";
+
+  if (code === "LEVEL_ITERATOR_NOT_OPEN") return true;
+  if (code === "LEVEL_DATABASE_NOT_OPEN") return true;
+
+  // Some abstract-level errors surface as ModuleError with only message.
+  if (name === "ModuleError" && /iterator is not open/i.test(message)) return true;
+  if (/cannot call next\(\) after close\(\)/i.test(message)) return true;
+
+  return false;
+}
+
+async function openDatabaseWithRecovery(
+  getManager: () => LioranManager,
+  dbName: string,
+  attempt = 1
+) {
+  try {
+    return await getManager().db(dbName);
+  } catch (error) {
+    if (!isRecoverableCoreError(error) || attempt >= 2) throw error;
+
+    console.error(
+      `[core-recovery] ${String((error as any)?.code || (error as any)?.name || "error")} while opening "${dbName}". Recreating manager...`
+    );
+
+    await recreateManager();
+    return openDatabaseWithRecovery(getManager, dbName, attempt + 1);
+  }
+}
+
+export async function openWriteDatabase(dbName: string) {
+  return openDatabaseWithRecovery(() => getWriteManager(), dbName);
+}
+
+export async function openReadDatabase(dbName: string) {
+  return openDatabaseWithRecovery(() => getReadManager(), dbName);
+}
+
 export async function closeManager() {
   await Promise.allSettled(allManagers.map((m) => m.closeAll()));
 }
@@ -311,11 +360,11 @@ export async function recreateManager() {
 }
 
 export async function getAuthCollection() {
-  const db = await getWriteManager().db("_auth");
+  const db = await openWriteDatabase("_auth");
   return db.collection<AuthUser>("users");
 }
 
 export async function getDatabaseMetadataCollection() {
-  const db = await getWriteManager().db("_auth");
+  const db = await openWriteDatabase("_auth");
   return db.collection<ManagedDatabaseRecord>("databases");
 }

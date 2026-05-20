@@ -1,6 +1,13 @@
 import { Request, Response } from "express";
 import { getBaseDBFolder } from "@liorandb/core";
-import { allManagers, baseRootPath, clusterNodeCount, getReadManager, getWriteManager, manager } from "../config/database";
+import {
+  allManagers,
+  baseRootPath,
+  clusterNodeCount,
+  manager,
+  openReadDatabase,
+  openWriteDatabase,
+} from "../config/database";
 import { listDatabaseNames } from "../utils/coreStorage";
 import { getPaused } from "../utils/pause";
 import { getRequestAuth, isAdminRole } from "../utils/auth";
@@ -90,7 +97,7 @@ export const coreDbStatus = async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   const dbName = String(req.params.db || "").trim();
   if (!dbName) return res.status(400).json({ error: "db required" });
-  const db = await getReadManager().db(dbName);
+  const db = await openReadDatabase(dbName);
   await (db as any).ready;
   return res.json({
     ok: true,
@@ -104,7 +111,7 @@ export const coreDbSchemaVersion = async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   const dbName = String(req.params.db || "").trim();
   if (!dbName) return res.status(400).json({ error: "db required" });
-  const db = await getReadManager().db(dbName);
+  const db = await openReadDatabase(dbName);
   await (db as any).ready;
   const schemaVersion = typeof (db as any).getSchemaVersion === "function" ? (db as any).getSchemaVersion() : null;
   return res.json({ ok: true, db: dbName, schemaVersion });
@@ -120,7 +127,7 @@ export const setCoreDbSchemaVersion = async (req: Request, res: Response) => {
     return res.status(400).json({ error: "schemaVersion (string) required" });
   }
 
-  const db = await getWriteManager().db(dbName);
+  const db = await openWriteDatabase(dbName);
   await (db as any).ready;
   if (typeof (db as any).setSchemaVersion !== "function") {
     return res.status(400).json({ error: "db does not support setSchemaVersion()" });

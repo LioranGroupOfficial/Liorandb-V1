@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { getReadManager, getWriteManager } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 import { getCollectionDocMigrations, migrateDocIfNeeded, setCollectionDocMigrations, type CollectionDocMigrationsConfig } from "../utils/docMigrations";
@@ -12,7 +12,7 @@ export const getDbSchemaVersion = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     await (database as any).ready;
     const schemaVersion =
       typeof (database as any).getSchemaVersion === "function"
@@ -34,7 +34,7 @@ export const setDbSchemaVersion = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "schemaVersion (string) required" });
     }
 
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
     await (database as any).ready;
     if (typeof (database as any).setSchemaVersion !== "function") {
       return res.status(400).json({ error: "db does not support setSchemaVersion()" });
@@ -68,7 +68,7 @@ export const applyDbMigrations = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "targetVersion (string) required" });
     }
 
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
     await (database as any).ready;
 
     if (typeof (database as any).migrate !== "function" || typeof (database as any).applyMigrations !== "function") {
@@ -130,7 +130,7 @@ export const getCollectionMigrations = async (req: Request, res: Response) => {
   try {
     const { db, col } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     await (database as any).ready;
     const config = getCollectionDocMigrations(database as any, col);
     return res.json({ ok: true, db, collection: col, config });
@@ -147,7 +147,7 @@ export const putCollectionMigrations = async (req: Request, res: Response) => {
     const config = body.config;
 
     if (config === null) {
-      const database = await getWriteManager().db(db);
+      const database = await openWriteDatabase(db);
       await (database as any).ready;
       setCollectionDocMigrations(database as any, col, null);
       return res.json({ ok: true, db, collection: col, config: null });
@@ -168,7 +168,7 @@ export const putCollectionMigrations = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "config.currentVersion must be a positive number" });
     }
 
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
     await (database as any).ready;
     setCollectionDocMigrations(database as any, col, next);
     return res.json({ ok: true, db, collection: col, config: next });
@@ -187,7 +187,7 @@ export const testCollectionMigration = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "doc object required" });
     }
 
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     await (database as any).ready;
     const config = getCollectionDocMigrations(database as any, col);
     const migrated = migrateDocIfNeeded(doc, config);

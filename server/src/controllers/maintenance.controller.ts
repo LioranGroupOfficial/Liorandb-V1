@@ -6,7 +6,7 @@ import {
   runSnapshot,
   getSnapshotConfig,
 } from "../utils/snapshots";
-import { closeManager, manager, recreateManager } from "../config/database";
+import { closeManager, manager, openWriteDatabase, recreateManager } from "../config/database";
 import { listDatabaseNames } from "../utils/coreStorage";
 import { sendApiError } from "../utils/apiError";
 import { JWT_SECRET } from "../utils/token";
@@ -82,7 +82,7 @@ export const compactAllDatabases = async (req: Request, res: Response) => {
 
           const names = await listDatabaseNames();
           for (const name of names) {
-            const db = await manager.db(name);
+            const db = await openWriteDatabase(name);
             await db.compactAll();
           }
 

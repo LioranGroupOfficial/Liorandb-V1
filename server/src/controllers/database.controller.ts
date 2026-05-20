@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { getReadManager, getWriteManager } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database";
 import { listCollectionNames } from "../utils/coreStorage";
 import {
   buildDatabaseResponse,
@@ -111,7 +111,7 @@ export const databaseStats = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     const cols = await listCollectionNames(db);
 
     let totalDocs = 0;
@@ -267,7 +267,7 @@ export const compactDatabase = async (req: Request, res: Response) => {
 
         try {
           await recreateManager();
-          const database = await getWriteManager().db(db);
+          const database = await openWriteDatabase(db);
           await database.compactAll();
           return { ok: true, db };
         } finally {
@@ -297,7 +297,7 @@ export const explainDatabase = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "collection is required" });
     }
 
-    const database = await getReadManager().db(db);
+    const database = await openReadDatabase(db);
     const explain = await database.explain(collection, body.query || {}, body.options || undefined);
 
     return res.json({ explain });
@@ -329,7 +329,7 @@ export const rotateDatabaseEncryptionKey = async (req: Request, res: Response) =
       return res.status(400).json({ error: "newKey (string) required" });
     }
 
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
     if (typeof (database as any).rotateEncryptionKey !== "function") {
       return res.status(400).json({ error: "db does not support rotateEncryptionKey()" });
     }
@@ -379,7 +379,7 @@ export const runTransaction = async (req: Request, res: Response) => {
       }
     }
 
-    const database = await getWriteManager().db(db);
+    const database = await openWriteDatabase(db);
 
     // Ensure collections are opened with configured options (e.g. date timestamps)
     // before the transaction context accesses them.

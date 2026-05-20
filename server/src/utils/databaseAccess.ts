@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { Request } from "express";
 import fs from "fs";
 import path from "path";
-import { getDatabaseMetadataCollection, manager } from "../config/database";
+import { getDatabaseMetadataCollection, manager, openWriteDatabase } from "../config/database";
 import { AuthRole, ManagedDatabaseRecord, RequestAuthContext } from "../types/auth-user";
 import { decryptValue, encryptValue } from "./crypto";
 import { getRequestAuth, isAdminRole } from "./auth";
@@ -56,7 +56,7 @@ export async function createManagedDatabase(input: {
     throw new Error("database already exists");
   }
 
-  await manager.db(databaseName);
+  await openWriteDatabase(databaseName);
 
   const now = new Date().toISOString();
   const created = await metadata.insertOne({

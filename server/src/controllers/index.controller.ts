@@ -1,7 +1,7 @@
 ﻿import fs from "fs";
 import path from "path";
 import { Request, Response } from "express";
-import { getReadManager, getWriteManager } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 import type { TextIndexOptions } from "../utils/collectionConfig";
@@ -55,7 +55,7 @@ export const createIndex = async (req: Request, res: Response) => {
       const textOptions: TextIndexOptions =
         body.textOptions && typeof body.textOptions === "object" ? body.textOptions : body.options || {};
 
-      const db = await getWriteManager().db(req.params.db);
+      const db = await openWriteDatabase(req.params.db);
       await (db as any).createTextIndex(req.params.col, field, textOptions);
 
       return res.json({ ok: true, collection: req.params.col, field, type: "text", options: textOptions });
@@ -63,7 +63,7 @@ export const createIndex = async (req: Request, res: Response) => {
 
     const unique = !!body.unique;
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.createIndex(req.params.col, field, { unique });
 
     return res.json({ ok: true, collection: req.params.col, field, type: "btree", unique });
@@ -80,7 +80,7 @@ export const createTextIndex = async (req: Request, res: Response) => {
     const field = sanitizeSegment(body.field, "field");
     const textOptions: TextIndexOptions = body.options && typeof body.options === "object" ? body.options : {};
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await (db as any).createTextIndex(req.params.col, field, textOptions);
 
     return res.json({ ok: true, collection: req.params.col, field, type: "text", options: textOptions });
@@ -93,7 +93,7 @@ export const listIndexes = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
 
-    const db = await getReadManager().db(req.params.db);
+    const db = await openReadDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -142,7 +142,7 @@ export const dropIndex = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "cannot drop _id index" });
     }
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -176,7 +176,7 @@ export const dropTextIndex = async (req: Request, res: Response) => {
 
     const field = sanitizeSegment(req.params.field, "field");
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -213,7 +213,7 @@ export const rebuildIndex = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "cannot rebuild _id index" });
     }
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -242,7 +242,7 @@ export const rebuildTextIndex = async (req: Request, res: Response) => {
 
     const field = sanitizeSegment(req.params.field, "field");
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
@@ -277,7 +277,7 @@ export const rebuildAllIndexes = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
 
-    const db = await getWriteManager().db(req.params.db);
+    const db = await openWriteDatabase(req.params.db);
     await db.ready;
 
     const meta = getDbMeta(db);
