@@ -173,3 +173,5 @@ log-d.txt
 log-pd.txt
 log-soak.txt
 docker
+docusaurus.config.js
+sidebars.js

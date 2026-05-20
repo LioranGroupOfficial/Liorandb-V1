@@ -34,7 +34,8 @@ export async function compactCollectionEngine(col: Collection, aggressive = true
       await col.db.open();
     } catch {}
     // Full keyspace compaction.
-    await col.db.compactRange("\x00", "\uffff");
+    // `compactRange()` requires an open handle; if open failed (e.g. transient lock), skip.
+    await col.db.compactRange("\x00", "\uffff").catch(() => {});
     return;
   }
 
@@ -84,15 +85,20 @@ async function snapshotRebuild(col: Collection, tmpDir: string) {
   await tmpDB.open();
   await col.db.open();
 
-  for await (const [key, val] of col.db.iterator()) {
-    if (key.startsWith(COLLECTION_META_KEY_PREFIX)) continue;
-    if (val !== undefined) {
-      await tmpDB.put(key, val);
+  // Ensure iterator is fully closed before closing/swapping the underlying DB directory.
+  const it = col.db.iterator();
+  try {
+    for await (const [key, val] of it as any) {
+      if (key.startsWith(COLLECTION_META_KEY_PREFIX)) continue;
+      if (val !== undefined) {
+        await tmpDB.put(key, val);
+      }
     }
+  } finally {
+    try { await (it as any)?.close?.(); } catch {}
+    try { await tmpDB.close(); } catch {}
+    try { await col.db.close(); } catch {} // important: close before swap
   }
-
-  await tmpDB.close();
-  await col.db.close(); // important: close before swap
 }
 
 /* ---------------------------------------------------------
@@ -220,18 +226,23 @@ export async function rebuildIndexes(col: Collection) {
       docs.length = 0;
     };
 
-    for await (const [key, enc] of col.db.iterator()) {
-      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+    const it = col.db.iterator();
+    try {
+      for await (const [key, enc] of it as any) {
+        if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
 
-      try {
-        encBatch.push(enc);
-        if (encBatch.length >= 5000) {
-          await decryptIntoDocs();
-          await flush();
+        try {
+          encBatch.push(enc);
+          if (encBatch.length >= 5000) {
+            await decryptIntoDocs();
+            await flush();
+          }
+        } catch {
+          // Skip corrupted doc safely
         }
-      } catch {
-        // Skip corrupted doc safely
       }
+    } finally {
+      try { await (it as any)?.close?.(); } catch {}
     }
 
     await decryptIntoDocs();
@@ -267,15 +278,20 @@ export async function rebuildIndexes(col: Collection) {
       docs.length = 0;
     };
 
-    for await (const [key, enc] of col.db.iterator()) {
-      if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
-      try {
-        encBatch.push(enc);
-        if (encBatch.length >= 5000) {
-          await decryptIntoDocs();
-          await flush();
-        }
-      } catch {}
+    const it = col.db.iterator();
+    try {
+      for await (const [key, enc] of it as any) {
+        if (key.startsWith(COLLECTION_META_KEY_PREFIX) || !enc) continue;
+        try {
+          encBatch.push(enc);
+          if (encBatch.length >= 5000) {
+            await decryptIntoDocs();
+            await flush();
+          }
+        } catch {}
+      }
+    } finally {
+      try { await (it as any)?.close?.(); } catch {}
     }
 
     await decryptIntoDocs();
