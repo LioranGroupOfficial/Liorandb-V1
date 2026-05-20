@@ -129,6 +129,7 @@ export interface LioranManagerOptions {
 export class LioranManager {
   rootPath: string;
   openDBs: Map<string, LioranDB>;
+  private openingDBs: Map<string, Promise<LioranDB>>;
   public readonly cache: GlobalCacheEngine;
   public readonly metrics: MetricsCollector;
   public readonly admission: AdmissionController;
@@ -177,6 +178,7 @@ export class LioranManager {
     }
 
     this.openDBs = new Map();
+    this.openingDBs = new Map();
 
     this.authorizeHook = options.security?.authorize ?? defaultAuthorize;
     if (options.security?.audit?.enabled) {
@@ -647,19 +649,43 @@ export class LioranManager {
         return this.openDBs.get(name)!;
       }
 
-      const dbPath = path.join(this.rootPath, name);
-      await fs.promises.mkdir(dbPath, { recursive: true });
+      const inFlight = this.openingDBs.get(name);
+      if (inFlight) {
+        return await inFlight;
+      }
 
-      const db = new LioranDB(dbPath, name, this, {
-        writeQueue: this.options.writeQueue,
-        batch: this.options.batch,
-        durability: this.options.durability,
-        storage: this.options.storage,
-        latency: this.options.latency,
-        sharding: this.options.sharding
-      });
-      await db.ready;
-      this.openDBs.set(name, db);
+      const dbPath = path.join(this.rootPath, name);
+
+      const openPromise = (async () => {
+        await fs.promises.mkdir(dbPath, { recursive: true });
+        const db = new LioranDB(dbPath, name, this, {
+          writeQueue: this.options.writeQueue,
+          batch: this.options.batch,
+          durability: this.options.durability,
+          storage: this.options.storage,
+          latency: this.options.latency,
+          sharding: this.options.sharding
+        });
+        await db.ready;
+
+        // If the manager is closing while we were opening, do not leak the db handle.
+        if (this.closed) {
+          try { await db.close(); } catch {}
+          throw new LiorandbError("CLOSED", "LioranManager is closed");
+        }
+
+        this.openDBs.set(name, db);
+        return db;
+      })();
+
+      this.openingDBs.set(name, openPromise);
+
+      let db: LioranDB;
+      try {
+        db = await openPromise;
+      } finally {
+        this.openingDBs.delete(name);
+      }
 
       // Audit WAL stream (leader only): best-effort, non-blocking.
       try {
@@ -874,6 +900,20 @@ export class LioranManager {
         await this.ipcClient?.close();
       } catch {}
       return;
+    }
+
+    // Best-effort: allow any in-flight opens to resolve/reject so we can close their handles too.
+    if (this.openingDBs.size > 0) {
+      const inflight = Array.from(this.openingDBs.values());
+      this.openingDBs.clear();
+      try {
+        const settled = await Promise.allSettled(inflight);
+        for (const s of settled) {
+          if (s.status === "fulfilled") {
+            try { await s.value.close(); } catch {}
+          }
+        }
+      } catch {}
     }
 
     for (const db of this.openDBs.values()) {
