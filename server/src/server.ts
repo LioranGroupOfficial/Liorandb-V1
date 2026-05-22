@@ -18,6 +18,26 @@ process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
 });
 
+// Some low-level socket errors can bubble up as uncaught exceptions if a library forgets to attach
+// an 'error' handler on a Socket/stream. For embedded clusters this can happen during peer restarts
+// or leader re-elections. Avoid crashing the whole HTTP server on transient connection resets.
+process.on("uncaughtException", async (err: any) => {
+  const code = typeof err?.code === "string" ? err.code : "";
+  const msg = typeof err?.message === "string" ? err.message : "";
+
+  if (code === "ECONNRESET" || /ECONNRESET/i.test(msg)) {
+    console.warn("[uncaughtException] ECONNRESET (ignored):", msg || err);
+    return;
+  }
+
+  console.error("[uncaughtException] Fatal error:", err);
+  try {
+    await closeManager();
+  } finally {
+    process.exit(1);
+  }
+});
+
 console.log("Runtime Config:");
 console.log(`DB Root Path : ${cli.rootPath || "Default"}`);
 console.log(`Encryption   : ${cli.encryptionKey ? "Enabled" : "Disabled"}`);
@@ -65,9 +85,49 @@ function toBool(raw: unknown, defaultValue = false) {
   return defaultValue;
 }
 
+type MajorityAckTimeoutLike = {
+  code?: unknown;
+  message?: unknown;
+  details?: { originalMessage?: unknown } | undefined;
+  cause?: { message?: unknown } | undefined;
+};
+
+function isMajorityAckTimeout(error: unknown) {
+  const err = error as MajorityAckTimeoutLike | null | undefined;
+  const msg = typeof err?.message === "string" ? err.message : "";
+  const detailsMsg =
+    typeof err?.details?.originalMessage === "string" ? err.details.originalMessage : "";
+  const causeMsg = typeof err?.cause?.message === "string" ? err.cause.message : "";
+
+  return (
+    /majority ack timeout/i.test(msg) ||
+    /majority ack timeout/i.test(detailsMsg) ||
+    /majority ack timeout/i.test(causeMsg)
+  );
+}
+
 async function start() {
   await awaitClusterReady();
-  const adminState = await ensureAdminUser();
+  let adminState: any = null;
+  // In large embedded clusters (e.g. 10 nodes) the Raft leader election + WAL streaming setup
+  // can lag behind initial boot, causing the very first write (_auth bootstrap) to time out on
+  // majority replication acks. Retry briefly instead of aborting the entire server startup.
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    try {
+      adminState = await ensureAdminUser();
+      break;
+    } catch (error) {
+      if (!isMajorityAckTimeout(error) || attempt >= 12) {
+        throw error;
+      }
+      const delayMs = Math.min(15_000, 1000 * attempt);
+      console.warn(
+        `[cluster-startup] majority ack timeout during admin bootstrap (attempt ${attempt}/12). Retrying in ${delayMs}ms...`
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+      await awaitClusterReady();
+    }
+  }
 
   if ((adminState as any).skipped) {
     console.log('Readonly mode: skipping default "admin" bootstrap.');

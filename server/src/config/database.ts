@@ -76,13 +76,20 @@ function makeNodeOptions(
   } else {
     // For the `ldb-serve`/server entrypoint, default to an embedded primary (no external IPC dependency).
     // Other entrypoints may prefer `auto`/client behavior.
-    base.ipc =
-      cli.ipc ||
-      (process.env.LIORANDB_IPC_MODE as any) ||
-      (isServerEntry() ? "primary" : "auto");
+    const requested =
+      cli.ipc || (process.env.LIORANDB_IPC_MODE as any) || (isServerEntry() ? "primary" : "auto");
+    // In embedded multi-node mode, only node-0 should host IPC. Having every node try to be an IPC
+    // primary can cause startup races and port/file contention (especially on Windows).
+    base.ipc = cluster && nodeId !== "node-0" ? "disabled" : requested;
   }
 
   if (cluster) {
+    const waitTimeoutMs =
+      readEnvInt("LIORANDB_CLUSTER_WAIT_TIMEOUT_MS") ??
+      readEnvInt("LIORANDB_REPLICATION_WAIT_TIMEOUT_MS") ??
+      15_000;
+    const waitForMajority = toBool(process.env.LIORANDB_CLUSTER_WAIT_FOR_MAJORITY, true);
+
     base.cluster = {
       enabled: true,
       nodeId,
@@ -91,8 +98,8 @@ function makeNodeOptions(
       walStreamPort: cluster.walStreamPort,
       clientPort: cluster.clientPort,
       peers,
-      waitForMajority: true,
-      waitTimeoutMs: 1500,
+      waitForMajority,
+      waitTimeoutMs,
       client: {
         port: cluster.clientPort,
         maxMessageBytes: 256 * 1024,
