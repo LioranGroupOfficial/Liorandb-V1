@@ -245,6 +245,11 @@ export class ClusterRPCClient {
     const sock = this.socket!;
     sock.setNoDelay(true);
     sock.setEncoding("utf8");
+    sock.on("error", () => {
+      // Ensure socket errors never surface as unhandled 'error' events.
+      // Close handling will reject inflight requests.
+      try { sock.destroy(); } catch {}
+    });
     sock.on("data", (chunk: string) => {
       this.buf += chunk;
       if (this.buf.length > (this.opts.maxMessageBytes ?? 1024 * 1024)) {
@@ -286,7 +291,37 @@ export class ClusterRPCClient {
     const s = this.socket;
     this.socket = null;
     await new Promise<void>(resolve => {
-      try { s.end(() => resolve()); } catch { resolve(); }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+
+      const timer = setTimeout(() => {
+        try { s.destroy(); } catch {}
+        finish();
+      }, 500);
+      (timer as any).unref?.();
+
+      try {
+        s.once("close", () => {
+          try { clearTimeout(timer); } catch {}
+          finish();
+        });
+        s.once("error", () => {
+          try { clearTimeout(timer); } catch {}
+          finish();
+        });
+        s.end(() => {
+          try { clearTimeout(timer); } catch {}
+          finish();
+        });
+      } catch {
+        try { clearTimeout(timer); } catch {}
+        try { s.destroy(); } catch {}
+        finish();
+      }
     });
   }
 

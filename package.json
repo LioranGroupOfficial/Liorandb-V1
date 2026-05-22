@@ -1,6 +1,6 @@
 {
   "name": "@liorandb/core",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "LioranDB Core Module – Lightweight, local-first, peer-to-peer database management for Node.js.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/wal-partial-write.test.mjs && node __tests__/ipc-multiprocess.test.mjs && node __tests__/replication-follower.test.mjs && node __tests__/replication-stream.test.mjs && node __tests__/sharding.test.mjs && node __tests__/storage-options.test.mjs && node __tests__/latency-budgets.test.mjs && node __tests__/stats.test.mjs && node __tests__/background-scheduler.test.mjs && node __tests__/transactions.test.mjs && node __tests__/query-optimization.test.mjs && node __tests__/pagination-skip-limit.test.mjs && node __tests__/cache-engine.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs && node __tests__/backup-pitr.test.mjs && node __tests__/id-index-startup.test.mjs && node __tests__/ipc-timeout-retry.test.mjs && node __tests__/manager-open-dedupe.test.mjs",
+    "test": "npm run build && node __tests__/compaction.test.mjs && node __tests__/wal-recovery.test.mjs && node __tests__/wal-partial-write.test.mjs && node __tests__/ipc-multiprocess.test.mjs && node __tests__/replication-follower.test.mjs && node __tests__/replication-stream.test.mjs && node __tests__/sharding.test.mjs && node __tests__/storage-options.test.mjs && node __tests__/latency-budgets.test.mjs && node __tests__/stats.test.mjs && node __tests__/background-scheduler.test.mjs && node __tests__/transactions.test.mjs && node __tests__/query-optimization.test.mjs && node __tests__/pagination-skip-limit.test.mjs && node __tests__/cache-engine.test.mjs && node __tests__/backpressure.test.mjs && node __tests__/chunked-inserts.test.mjs && node __tests__/indexing.test.mjs && node __tests__/backup-pitr.test.mjs && node __tests__/id-index-startup.test.mjs && node __tests__/ipc-timeout-retry.test.mjs && node __tests__/manager-open-dedupe.test.mjs && node __tests__/socket-error-handling.test.mjs",
     "test:crud": "npm run build && node test/crud-basic.test.mjs && node test/crud-index-sort-date.test.mjs && node test/crud-mixed-ops.test.mjs",
     "test:simple": "npm run build && node test/crud-basic.test.mjs",
     "bench:storage": "npm run build && node bench/storage-bench.mjs",

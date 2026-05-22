@@ -60,6 +60,9 @@ export class WALStreamServer {
     this.server = net.createServer(socket => {
       socket.setNoDelay(true);
       socket.setEncoding("utf8");
+      socket.on("error", () => {
+        try { socket.destroy(); } catch {}
+      });
       socket.write(safeJsonLine({ type: "hello", node: this.opts.nodeId } satisfies ServerHello));
 
       let buf = "";
@@ -231,6 +234,9 @@ export class WALStreamClient {
     this.socket = net.createConnection(this.opts.port, this.opts.host);
     this.socket.setNoDelay(true);
     this.socket.setEncoding("utf8");
+    this.socket.on("error", () => {
+      try { this.socket?.destroy(); } catch {}
+    });
 
     this.socket.on("data", (chunk: string) => {
       this.buf += chunk;
@@ -260,10 +266,36 @@ export class WALStreamClient {
       const s = this.socket;
       this.socket = null;
       await new Promise<void>(resolve => {
-        try {
-          s.end(() => resolve());
-        } catch {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
           resolve();
+        };
+
+        const timer = setTimeout(() => {
+          try { s.destroy(); } catch {}
+          finish();
+        }, 500);
+        (timer as any).unref?.();
+
+        try {
+          s.once("close", () => {
+            try { clearTimeout(timer); } catch {}
+            finish();
+          });
+          s.once("error", () => {
+            try { clearTimeout(timer); } catch {}
+            finish();
+          });
+          s.end(() => {
+            try { clearTimeout(timer); } catch {}
+            finish();
+          });
+        } catch {
+          try { clearTimeout(timer); } catch {}
+          try { s.destroy(); } catch {}
+          finish();
         }
       });
     }

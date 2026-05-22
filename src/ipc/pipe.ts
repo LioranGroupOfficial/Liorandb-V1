@@ -61,6 +61,9 @@ export class IPCServer {
     this.server = net.createServer(socket => {
       socket.setNoDelay(true);
       socket.setEncoding("utf8");
+      socket.on("error", () => {
+        try { socket.destroy(); } catch {}
+      });
 
       let buf = "";
 
