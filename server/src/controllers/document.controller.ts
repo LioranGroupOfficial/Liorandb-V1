@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { openReadDatabase, openWriteDatabase } from "../config/database";
+import { clusterNodeCount, openReadDatabase, openWriteDatabase } from "../config/database";
 import { requireDatabaseAccess } from "../utils/databaseAccess";
 import { sendApiError } from "../utils/apiError";
 import { openConfiguredCollection } from "../utils/collectionConfig";
@@ -17,6 +17,32 @@ function parseSortDir(value: unknown): 1 | -1 | undefined {
   if (value === 1 || value === "1" || value === "asc" || value === "ASC") return 1;
   if (value === -1 || value === "-1" || value === "desc" || value === "DESC") return -1;
   return undefined;
+}
+
+function shouldForceLeaderRead(req: Request, query: any, options: any, endpoint: "find" | "findOne") {
+  if (clusterNodeCount <= 1) return false;
+
+  const header = String(req.header("x-liorandb-read") || "").trim().toLowerCase();
+  if (header === "leader" || header === "primary") return true;
+  if (header === "replica" || header === "follower" || header === "secondary") return false;
+
+  const optPref =
+    options && typeof options === "object"
+      ? String((options as any).read || (options as any).readPreference || (options as any).consistency || "")
+          .trim()
+          .toLowerCase()
+      : "";
+  if (optPref === "leader" || optPref === "primary" || optPref === "strong") return true;
+  if (optPref === "replica" || optPref === "follower" || optPref === "secondary") return false;
+
+  if (query && typeof query === "object" && (query as any).$text) return true;
+
+  const forceFindOne = String(process.env.LIORANDB_FINDONE_STRONG || "1").trim().toLowerCase();
+  if (endpoint === "findOne" && forceFindOne !== "0" && forceFindOne !== "false" && forceFindOne !== "off") {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeFindPayload(body: any): { query: any; options?: any } {
@@ -130,11 +156,14 @@ export const insertMany = async (req: Request, res: Response) => {
 export const findDocuments = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await openReadDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
     const { query, options } = normalizeFindPayload(body);
+
+    const db = shouldForceLeaderRead(req, query, options, "find")
+      ? await openWriteDatabase(req.params.db)
+      : await openReadDatabase(req.params.db);
+    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const results = await collection.find(query, options);
 
@@ -173,11 +202,14 @@ export const findDocuments = async (req: Request, res: Response) => {
 export const findOneDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await openReadDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
     const { query, options } = normalizeFindPayload(body);
+
+    const db = shouldForceLeaderRead(req, query, options, "findOne")
+      ? await openWriteDatabase(req.params.db)
+      : await openReadDatabase(req.params.db);
+    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const doc = await collection.findOne(query, options);
 
@@ -340,11 +372,14 @@ export const aggregateDocuments = async (req: Request, res: Response) => {
 export const explainQuery = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await openReadDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const body = getBodyObject(req);
     const { query, options } = normalizeFindPayload(body);
+
+    const db = shouldForceLeaderRead(req, query, options, "find")
+      ? await openWriteDatabase(req.params.db)
+      : await openReadDatabase(req.params.db);
+    const collection = openConfiguredCollection<any>(db, req.params.col);
 
     const result = await (collection as any).explain(query, options);
     res.json({ explain: result });

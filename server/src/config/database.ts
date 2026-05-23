@@ -233,6 +233,55 @@ async function waitForClusterLeader(m: LioranManager, timeoutMs = 10_000) {
   return null;
 }
 
+type ClusterLeaderLike = {
+  id?: unknown;
+  host?: unknown;
+  clientPort?: unknown;
+};
+
+function getManagerClusterIdentity(m: LioranManager): { nodeId?: string; host?: string; clientPort?: number } {
+  const anyM: any = m as any;
+  const opts = anyM?.options ?? anyM ?? {};
+  const cluster = opts?.cluster ?? null;
+
+  const nodeId = typeof cluster?.nodeId === "string" ? cluster.nodeId : undefined;
+  const host = typeof cluster?.host === "string" ? cluster.host : undefined;
+
+  // Historically the core has used a few shapes for client port.
+  const directClientPort =
+    typeof cluster?.clientPort === "number"
+      ? cluster.clientPort
+      : typeof cluster?.client?.port === "number"
+        ? cluster.client.port
+        : undefined;
+
+  return { nodeId, host, clientPort: directClientPort };
+}
+
+function findManagerForLeader(leader: ClusterLeaderLike | null | undefined) {
+  if (!leader) return null;
+  const leaderId = typeof leader.id === "string" ? leader.id : undefined;
+  const leaderHost = typeof leader.host === "string" ? leader.host : undefined;
+  const leaderClientPort = typeof leader.clientPort === "number" ? leader.clientPort : undefined;
+
+  // Prefer matching by node id (stable across host/port changes).
+  if (leaderId) {
+    const byId = allManagers.find((m) => getManagerClusterIdentity(m).nodeId === leaderId);
+    if (byId) return byId;
+  }
+
+  // Fallback: match by host + clientPort.
+  if (leaderHost && leaderClientPort) {
+    const byPort = allManagers.find((m) => {
+      const id = getManagerClusterIdentity(m);
+      return id.host === leaderHost && id.clientPort === leaderClientPort;
+    });
+    if (byPort) return byPort;
+  }
+
+  return null;
+}
+
 async function waitForClusterPrimary(timeoutMs = 20_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -286,6 +335,13 @@ export async function awaitClusterReady() {
       "Cluster leader not discovered (timeout). Check port availability and LIORANDB_CLUSTER_* settings."
     );
   }
+
+  // If we are not currently pointing at the elected leader, switch our write manager.
+  // Otherwise write requests can fail with NOT_LEADER in embedded multi-node mode.
+  const leaderManager = findManagerForLeader(leader);
+  if (leaderManager) {
+    manager = leaderManager;
+  }
 }
 
 export function getWriteManager() {
@@ -302,6 +358,7 @@ type RecoverableCoreError = {
   code?: unknown;
   message?: unknown;
   name?: unknown;
+  details?: unknown;
 };
 
 function isRecoverableCoreError(error: unknown) {
@@ -320,6 +377,20 @@ function isRecoverableCoreError(error: unknown) {
   return false;
 }
 
+type NotLeaderErrorLike = {
+  code?: unknown;
+  details?: { leader?: ClusterLeaderLike } | null | undefined;
+};
+
+function getNotLeaderLeader(error: unknown): ClusterLeaderLike | null {
+  const err = error as NotLeaderErrorLike | null | undefined;
+  if (!err || err.code !== "NOT_LEADER") return null;
+  const leader = err.details?.leader;
+  if (!leader) return null;
+  if (typeof leader === "object") return leader as ClusterLeaderLike;
+  return null;
+}
+
 async function openDatabaseWithRecovery(
   getManager: () => LioranManager,
   dbName: string,
@@ -328,6 +399,17 @@ async function openDatabaseWithRecovery(
   try {
     return await getManager().db(dbName);
   } catch (error) {
+    // If we hit a follower, update manager to the current leader and retry once.
+    // This can happen at startup or after a leader re-election in embedded cluster mode.
+    const leader = getNotLeaderLeader(error);
+    if (leader && attempt < 2) {
+      const leaderManager = findManagerForLeader(leader);
+      if (leaderManager) {
+        manager = leaderManager;
+        return openDatabaseWithRecovery(getManager, dbName, attempt + 1);
+      }
+    }
+
     if (!isRecoverableCoreError(error) || attempt >= 2) throw error;
 
     console.error(
