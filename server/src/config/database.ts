@@ -374,6 +374,7 @@ function isRecoverableCoreError(error: unknown) {
   if (name === "ModuleError" && /iterator is not open/i.test(message)) return true;
   if (name === "ModuleError" && /database is not open/i.test(message)) return true;
   if (/cannot call next\(\) after close\(\)/i.test(message)) return true;
+  if (/failed to insert index entry/i.test(message)) return true;
 
   return false;
 }

@@ -388,17 +388,22 @@ export const runTransaction = async (req: Request, res: Response) => {
       openConfiguredCollection<any>(database, op.col);
     }
 
-    const result = await database.transaction(async (tx: any) => {
+    const applyOps = async (ctx: any) => {
       for (const op of ops) {
-        const col = tx.collection(op.col);
+        const col = typeof ctx.collection === "function" ? ctx.collection(op.col) : openConfiguredCollection<any>(ctx, op.col);
         const fn = (col as any)[op.op];
         if (typeof fn !== "function") {
           throw new Error(`unsupported operation: ${op.op}`);
         }
-        fn(...op.args);
+        await fn.apply(col, op.args);
       }
       return { applied: ops.length };
-    });
+    };
+
+    const result =
+      typeof (database as any).transaction === "function"
+        ? await (database as any).transaction(async (tx: any) => await applyOps(tx))
+        : await applyOps(database);
 
     return res.json({ ok: true, result });
   } catch (error) {

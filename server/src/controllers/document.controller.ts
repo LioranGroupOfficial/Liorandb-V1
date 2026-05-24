@@ -1,5 +1,5 @@
 ﻿import { Request, Response } from "express";
-import { clusterNodeCount, openReadDatabase, openWriteDatabase } from "../config/database.js";
+import { clusterNodeCount, openReadDatabase, openWriteDatabase, withCoreRecovery } from "../config/database.js";
 import { requireDatabaseAccess } from "../utils/databaseAccess.js";
 import { sendApiError } from "../utils/apiError.js";
 import { openConfiguredCollection } from "../utils/collectionConfig.js";
@@ -36,6 +36,11 @@ function shouldForceLeaderRead(req: Request, query: any, options: any, endpoint:
   if (optPref === "replica" || optPref === "follower" || optPref === "secondary") return false;
 
   if (query && typeof query === "object" && (query as any).$text) return true;
+
+  const forceFind = String(process.env.LIORANDB_FIND_STRONG || "1").trim().toLowerCase();
+  if (endpoint === "find" && forceFind !== "0" && forceFind !== "false" && forceFind !== "off") {
+    return true;
+  }
 
   const forceFindOne = String(process.env.LIORANDB_FINDONE_STRONG || "1").trim().toLowerCase();
   if (endpoint === "findOne" && forceFindOne !== "0" && forceFindOne !== "false" && forceFindOne !== "off") {
@@ -129,10 +134,11 @@ function normalizeFindPayload(body: any): { query: any; options?: any } {
 export const insertDocument = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await openWriteDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
-
-    const doc = await collection.insertOne(req.body);
+    const doc = await withCoreRecovery(`insertOne(${req.params.db}/${req.params.col})`, async () => {
+      const db = await openWriteDatabase(req.params.db);
+      const collection = openConfiguredCollection<any>(db, req.params.col);
+      return await collection.insertOne(req.body);
+    });
     res.json({ ok: true, doc });
   } catch (error) {
     return sendApiError(res, error, 400);
@@ -142,11 +148,12 @@ export const insertDocument = async (req: Request, res: Response) => {
 export const insertMany = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
-    const db = await openWriteDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
-
     const body = getBodyObject(req);
-    const docs = await collection.insertMany(body.docs || []);
+    const docs = await withCoreRecovery(`insertMany(${req.params.db}/${req.params.col})`, async () => {
+      const db = await openWriteDatabase(req.params.db);
+      const collection = openConfiguredCollection<any>(db, req.params.col);
+      return await collection.insertMany(body.docs || []);
+    });
     res.json({ ok: true, docs });
   } catch (error) {
     return sendApiError(res, error, 400);
@@ -160,14 +167,19 @@ export const findDocuments = async (req: Request, res: Response) => {
     const body = getBodyObject(req);
     const { query, options } = normalizeFindPayload(body);
 
-    const db = shouldForceLeaderRead(req, query, options, "find")
-      ? await openWriteDatabase(req.params.db)
-      : await openReadDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
+    const { results, dbForMigrations } = await withCoreRecovery(
+      `find(${req.params.db}/${req.params.col})`,
+      async () => {
+        const db = shouldForceLeaderRead(req, query, options, "find")
+          ? await openWriteDatabase(req.params.db)
+          : await openReadDatabase(req.params.db);
+        const collection = openConfiguredCollection<any>(db, req.params.col);
+        const results = await collection.find(query, options);
+        return { results, dbForMigrations: db };
+      }
+    );
 
-    const results = await collection.find(query, options);
-
-    const mig = getCollectionDocMigrations(db as any, req.params.col);
+    const mig = getCollectionDocMigrations(dbForMigrations as any, req.params.col);
     if (mig && mig.enabled !== false && Array.isArray(results) && results.length) {
       const migratedDocs: any[] = [];
 
@@ -206,14 +218,19 @@ export const findOneDocument = async (req: Request, res: Response) => {
     const body = getBodyObject(req);
     const { query, options } = normalizeFindPayload(body);
 
-    const db = shouldForceLeaderRead(req, query, options, "findOne")
-      ? await openWriteDatabase(req.params.db)
-      : await openReadDatabase(req.params.db);
-    const collection = openConfiguredCollection<any>(db, req.params.col);
+    const { doc, dbForMigrations } = await withCoreRecovery(
+      `findOne(${req.params.db}/${req.params.col})`,
+      async () => {
+        const db = shouldForceLeaderRead(req, query, options, "findOne")
+          ? await openWriteDatabase(req.params.db)
+          : await openReadDatabase(req.params.db);
+        const collection = openConfiguredCollection<any>(db, req.params.col);
+        const doc = await collection.findOne(query, options);
+        return { doc, dbForMigrations: db };
+      }
+    );
 
-    const doc = await collection.findOne(query, options);
-
-    const mig = getCollectionDocMigrations(db as any, req.params.col);
+    const mig = getCollectionDocMigrations(dbForMigrations as any, req.params.col);
     if (mig && mig.enabled !== false && doc) {
       const migrated = migrateDocIfNeeded(doc, mig);
       if (mig.writeBackOnRead && migrated.changed && migrated.doc && (migrated.doc as any)._id) {

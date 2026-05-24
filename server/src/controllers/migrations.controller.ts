@@ -8,6 +8,13 @@ function isPlainObject(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function readSchemaVersionFromBody(body: unknown) {
+  if (typeof body === "string") return body;
+  if (!isPlainObject(body)) return undefined;
+  const v = (body as any).schemaVersion ?? (body as any).version ?? (body as any).schema_version;
+  return typeof v === "string" ? v : undefined;
+}
+
 export const getDbSchemaVersion = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
@@ -28,8 +35,7 @@ export const setDbSchemaVersion = async (req: Request, res: Response) => {
   try {
     const { db } = req.params;
     await requireDatabaseAccess(req, db);
-    const body = isPlainObject(req.body) ? (req.body as any) : {};
-    const schemaVersion = body.schemaVersion;
+    const schemaVersion = readSchemaVersionFromBody(req.body);
     if (typeof schemaVersion !== "string" || !schemaVersion.trim()) {
       return res.status(400).json({ error: "schemaVersion (string) required" });
     }

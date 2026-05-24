@@ -17,6 +17,13 @@ function anyOf<T>(v: T): any {
   return v as any;
 }
 
+function readSchemaVersionFromBody(body: unknown) {
+  if (typeof body === "string") return body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const v = (body as any).schemaVersion ?? (body as any).version ?? (body as any).schema_version;
+  return typeof v === "string" ? v : undefined;
+}
+
 function requireAdmin(req: Request, res: Response) {
   const auth = getRequestAuth(req);
   if (!auth || auth.authType !== "jwt" || !isAdminRole(auth.role)) {
@@ -122,8 +129,7 @@ export const setCoreDbSchemaVersion = async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   const dbName = String(req.params.db || "").trim();
   if (!dbName) return res.status(400).json({ error: "db required" });
-  const body = req.body && typeof req.body === "object" ? (req.body as any) : {};
-  const schemaVersion = body.schemaVersion;
+  const schemaVersion = readSchemaVersionFromBody(req.body);
   if (typeof schemaVersion !== "string" || !schemaVersion.trim()) {
     return res.status(400).json({ error: "schemaVersion (string) required" });
   }

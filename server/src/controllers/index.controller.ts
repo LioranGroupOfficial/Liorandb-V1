@@ -43,6 +43,32 @@ async function resetCollectionHandle(db: any, colName: string) {
   }
 }
 
+async function safeCreateIndex(db: any, col: string, field: string, opts: { unique?: boolean }) {
+  if (typeof db?.createIndex === "function") {
+    return await db.createIndex(col, field, opts);
+  }
+
+  const c = typeof db?.collection === "function" ? db.collection(col) : null;
+  if (c && typeof (c as any).createIndex === "function") {
+    return await (c as any).createIndex(field, opts);
+  }
+
+  throw new Error("db.createIndex is not supported");
+}
+
+async function safeCreateTextIndex(db: any, col: string, field: string, options: TextIndexOptions) {
+  if (typeof db?.createTextIndex === "function") {
+    return await db.createTextIndex(col, field, options);
+  }
+
+  const c = typeof db?.collection === "function" ? db.collection(col) : null;
+  if (c && typeof (c as any).createTextIndex === "function") {
+    return await (c as any).createTextIndex(field, options);
+  }
+
+  throw new Error("db.createTextIndex is not supported");
+}
+
 export const createIndex = async (req: Request, res: Response) => {
   try {
     await requireDatabaseAccess(req, req.params.db);
@@ -56,7 +82,7 @@ export const createIndex = async (req: Request, res: Response) => {
         body.textOptions && typeof body.textOptions === "object" ? body.textOptions : body.options || {};
 
       const db = await openWriteDatabase(req.params.db);
-      await (db as any).createTextIndex(req.params.col, field, textOptions);
+      await safeCreateTextIndex(db as any, req.params.col, field, textOptions);
 
       return res.json({ ok: true, collection: req.params.col, field, type: "text", options: textOptions });
     }
@@ -64,7 +90,7 @@ export const createIndex = async (req: Request, res: Response) => {
     const unique = !!body.unique;
 
     const db = await openWriteDatabase(req.params.db);
-    await db.createIndex(req.params.col, field, { unique });
+    await safeCreateIndex(db as any, req.params.col, field, { unique });
 
     return res.json({ ok: true, collection: req.params.col, field, type: "btree", unique });
   } catch (error) {
@@ -81,7 +107,7 @@ export const createTextIndex = async (req: Request, res: Response) => {
     const textOptions: TextIndexOptions = body.options && typeof body.options === "object" ? body.options : {};
 
     const db = await openWriteDatabase(req.params.db);
-    await (db as any).createTextIndex(req.params.col, field, textOptions);
+    await safeCreateTextIndex(db as any, req.params.col, field, textOptions);
 
     return res.json({ ok: true, collection: req.params.col, field, type: "text", options: textOptions });
   } catch (error) {
@@ -228,7 +254,7 @@ export const rebuildIndex = async (req: Request, res: Response) => {
       await fs.promises.rm(indexDir, { recursive: true, force: true });
     }
 
-    await db.createIndex(req.params.col, field, { unique });
+    await safeCreateIndex(db as any, req.params.col, field, { unique });
 
     return res.json({ ok: true, collection: req.params.col, field, type: "btree", unique });
   } catch (error) {
@@ -265,7 +291,7 @@ export const rebuildTextIndex = async (req: Request, res: Response) => {
       await fs.promises.rm(indexDir, { recursive: true, force: true });
     }
 
-    await (db as any).createTextIndex(req.params.col, field, textOptions);
+    await safeCreateTextIndex(db as any, req.params.col, field, textOptions);
 
     return res.json({ ok: true, collection: req.params.col, field, type: "text", options: textOptions });
   } catch (error) {
@@ -305,9 +331,9 @@ export const rebuildAllIndexes = async (req: Request, res: Response) => {
           if (next.length === 0) delete meta.indexes[req.params.col];
           (db as any).saveMeta?.();
         }
-        await (db as any).createTextIndex(req.params.col, field, idx.textOptions ?? {});
+        await safeCreateTextIndex(db as any, req.params.col, field, idx.textOptions ?? {});
       } else {
-        await db.createIndex(req.params.col, field, { unique: !!idx.options?.unique });
+        await safeCreateIndex(db as any, req.params.col, field, { unique: !!idx.options?.unique });
       }
     }
 

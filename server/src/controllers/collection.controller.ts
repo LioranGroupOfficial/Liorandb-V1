@@ -98,7 +98,15 @@ export const compactCollection = async (req: Request, res: Response) => {
         try {
           await recreateManager();
           const database = await openWriteDatabase(db);
-          await database.compactCollection(col);
+          if (typeof (database as any).compactCollection === "function") {
+            await (database as any).compactCollection(col);
+          } else {
+            const c = typeof (database as any).collection === "function" ? (database as any).collection(col) : null;
+            if (!c || typeof (c as any).compact !== "function") {
+              throw new Error("database.compactCollection is not a function");
+            }
+            await (c as any).compact({ aggressive: true });
+          }
           return { ok: true, db, collection: col };
         } finally {
           if (!wasPaused) {
