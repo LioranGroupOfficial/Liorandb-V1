@@ -1,7 +1,7 @@
-import fs from "fs";
+﻿import fs from "fs";
 import path from "path";
 import { getBaseDBFolder } from "@liorandb/core";
-import { parseCLIArgs } from "./cli";
+import { parseCLIArgs } from "./cli.js";
 
 export type ServerRestartCommand = {
   command: string;
@@ -59,3 +59,4 @@ export function writeServerConfig(config: ServerConfigFileV1) {
   fs.writeFileSync(tmp, JSON.stringify(config, null, 2), { encoding: "utf8" });
   fs.renameSync(tmp, file);
 }
+

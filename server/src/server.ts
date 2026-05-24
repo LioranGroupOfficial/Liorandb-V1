@@ -1,14 +1,14 @@
 ﻿#!/usr/bin/env node
 
 import os from "os";
-import app from "./app";
-import { awaitClusterReady, closeManager, clusterNodeCount, manager } from "./config/database";
-import { parseCLIArgs } from "./utils/cli";
-import { ensureAdminUser } from "./utils/startup";
-import { startSnapshotScheduler } from "./utils/snapshots";
-import { logDiskIntegrityWarnings } from "./utils/integrity";
-import { registerShutdownHandler, requestShutdown } from "./utils/shutdown";
-import { readServerConfig, writeServerConfig } from "./utils/serverConfig";
+import app from "./app.js";
+import { awaitClusterReady, closeManager, clusterNodeCount, manager } from "./config/database.js";
+import { parseCLIArgs } from "./utils/cli.js";
+import { ensureAdminUser } from "./utils/startup.js";
+import { startSnapshotScheduler } from "./utils/snapshots.js";
+import { logDiskIntegrityWarnings } from "./utils/integrity.js";
+import { registerShutdownHandler, requestShutdown } from "./utils/shutdown.js";
+import { readServerConfig, writeServerConfig } from "./utils/serverConfig.js";
 
 const cli = parseCLIArgs();
 const PORT = 4000;
@@ -274,3 +274,4 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 // Handle kill command (e.g. systemd, docker)
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+

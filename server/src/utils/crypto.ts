@@ -1,5 +1,5 @@
-import crypto from "crypto";
-import { JWT_SECRET } from "./token";
+﻿import crypto from "crypto";
+import { JWT_SECRET } from "./token.js";
 
 const ALGORITHM = "aes-256-gcm";
 
@@ -41,3 +41,4 @@ export function decryptValue(payload: { cipherText: string; iv: string; tag: str
 
   return decrypted.toString("utf8");
 }
+

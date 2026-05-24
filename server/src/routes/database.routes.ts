@@ -14,10 +14,10 @@ import {
   explainDatabase,
   runTransaction,
   rotateDatabaseEncryptionKey,
-} from "../controllers/database.controller";
-import { applyDbMigrations, getDbSchemaVersion, setDbSchemaVersion } from "../controllers/migrations.controller";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+} from "../controllers/database.controller.js";
+import { applyDbMigrations, getDbSchemaVersion, setDbSchemaVersion } from "../controllers/migrations.controller.js";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 
 const router = Router();
 
@@ -43,3 +43,4 @@ router.post("/:db/migrations/apply", applyDbMigrations);
 router.post("/:db/encryption/rotate", rotateDatabaseEncryptionKey);
 
 export default router;
+

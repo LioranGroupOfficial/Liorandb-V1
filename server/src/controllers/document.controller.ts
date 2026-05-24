@@ -1,9 +1,9 @@
 ﻿import { Request, Response } from "express";
-import { clusterNodeCount, openReadDatabase, openWriteDatabase } from "../config/database";
-import { requireDatabaseAccess } from "../utils/databaseAccess";
-import { sendApiError } from "../utils/apiError";
-import { openConfiguredCollection } from "../utils/collectionConfig";
-import { getCollectionDocMigrations, migrateDocIfNeeded } from "../utils/docMigrations";
+import { clusterNodeCount, openReadDatabase, openWriteDatabase } from "../config/database.js";
+import { requireDatabaseAccess } from "../utils/databaseAccess.js";
+import { sendApiError } from "../utils/apiError.js";
+import { openConfiguredCollection } from "../utils/collectionConfig.js";
+import { getCollectionDocMigrations, migrateDocIfNeeded } from "../utils/docMigrations.js";
 
 function getBodyObject(req: Request) {
   return req.body && typeof req.body === "object" ? (req.body as any) : {};
@@ -387,3 +387,4 @@ export const explainQuery = async (req: Request, res: Response) => {
     return sendApiError(res, error, 400);
   }
 };
+

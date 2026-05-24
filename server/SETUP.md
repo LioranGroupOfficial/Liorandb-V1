@@ -394,6 +394,21 @@ sudo ipfw add allow tcp from any to any 4000
 netstat -tlnp | grep 4000
 ```
 
+### `ERR_REQUIRE_ESM` on startup (Linux/Ubuntu)
+
+If you see an error like:
+
+```
+Error [ERR_REQUIRE_ESM]: require() of ES Module .../@liorandb/core/... not supported
+```
+
+Update to the latest global version and ensure you’re using Node.js 18+:
+
+```bash
+node -v
+npm i -g @liorandb/db@latest
+```
+
 ### High Memory Usage
 
 1. Check for memory leaks:

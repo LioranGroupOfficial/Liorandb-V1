@@ -1,5 +1,6 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { getBaseDBFolder } from "@liorandb/core";
+import type { LioranManager } from "@liorandb/core";
 import {
   allManagers,
   baseRootPath,
@@ -7,10 +8,10 @@ import {
   manager,
   openReadDatabase,
   openWriteDatabase,
-} from "../config/database";
-import { listDatabaseNames } from "../utils/coreStorage";
-import { getPaused } from "../utils/pause";
-import { getRequestAuth, isAdminRole } from "../utils/auth";
+} from "../config/database.js";
+import { listDatabaseNames } from "../utils/coreStorage.js";
+import { getPaused } from "../utils/pause.js";
+import { getRequestAuth, isAdminRole } from "../utils/auth.js";
 
 function anyOf<T>(v: T): any {
   return v as any;
@@ -84,7 +85,7 @@ export const coreIpcMode = async (req: Request, res: Response) => {
 
 export const coreManagers = async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
-  const entries = allManagers.map((m, idx) => ({
+  const entries = allManagers.map((m: LioranManager, idx: number) => ({
     index: idx,
     primary: typeof m.isPrimary === "function" ? m.isPrimary() : null,
     client: typeof m.isClient === "function" ? m.isClient() : null,
@@ -136,3 +137,4 @@ export const setCoreDbSchemaVersion = async (req: Request, res: Response) => {
   (db as any).setSchemaVersion(schemaVersion);
   return res.json({ ok: true, db: dbName, schemaVersion });
 };
+

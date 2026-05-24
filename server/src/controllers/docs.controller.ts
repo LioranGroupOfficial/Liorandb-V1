@@ -1,12 +1,17 @@
 import fs from "fs";
 import path from "path";
 import { Request, Response } from "express";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 type DocEntry = { id: string; title: string; filePath: string };
 
 function serverRoot() {
-  // src -> dist; we want server/ folder
-  return path.join(__dirname, "..");
+  // dist/controllers -> server/ folder
+  return path.join(__dirname, "..", "..");
 }
 
 function buildDocsIndex(): DocEntry[] {

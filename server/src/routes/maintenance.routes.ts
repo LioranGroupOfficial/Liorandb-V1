@@ -1,6 +1,6 @@
 ﻿import { Router } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 import {
   createSnapshotNow,
   listSnapshotFiles,
@@ -10,7 +10,7 @@ import {
   pauseServer,
   resumeServer,
   restoreSnapshot,
-} from "../controllers/maintenance.controller";
+} from "../controllers/maintenance.controller.js";
 
 const router = Router();
 
@@ -29,3 +29,4 @@ router.post("/snapshots", createSnapshotNow);
 router.post("/compact/all", compactAllDatabases);
 
 export default router;
+

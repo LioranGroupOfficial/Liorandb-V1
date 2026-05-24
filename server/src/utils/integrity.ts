@@ -1,6 +1,6 @@
-import fs from "fs";
+﻿import fs from "fs";
 import path from "path";
-import { manager } from "../config/database";
+import { manager } from "../config/database.js";
 
 const DB_META = "__db_meta.json";
 
@@ -50,4 +50,5 @@ export async function logDiskIntegrityWarnings() {
     console.warn("[integrity] scan failed:", error);
   }
 }
+
 

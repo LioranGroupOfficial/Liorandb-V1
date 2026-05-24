@@ -1,8 +1,8 @@
-// src/middleware/auth.middleware.ts
+﻿// src/middleware/auth.middleware.ts
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { JWT_SECRET } from "../utils/token";
-import { getDatabaseRecord, parseConnectionString, verifyDatabaseCredential } from "../utils/databaseAccess";
+import { JWT_SECRET } from "../utils/token.js";
+import { getDatabaseRecord, parseConnectionString, verifyDatabaseCredential } from "../utils/databaseAccess.js";
 
 export async function authMiddleware(
   req: Request,
@@ -54,3 +54,4 @@ export async function authMiddleware(
     return res.status(401).json({ error: "Invalid token or connection string" });
   }
 }
+

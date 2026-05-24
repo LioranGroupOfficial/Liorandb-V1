@@ -8,11 +8,11 @@ import {
   compactCollection,
   getCollectionOptions,
   patchCollectionOptions,
-} from "../controllers/collection.controller";
-import { getCollectionMigrations, putCollectionMigrations, testCollectionMigration } from "../controllers/migrations.controller";
+} from "../controllers/collection.controller.js";
+import { getCollectionMigrations, putCollectionMigrations, testCollectionMigration } from "../controllers/migrations.controller.js";
 
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 
 const router = Router({ mergeParams: true });
 
@@ -31,3 +31,4 @@ router.put("/:col/migrations", putCollectionMigrations);
 router.post("/:col/migrations/test", testCollectionMigration);
 
 export default router;
+

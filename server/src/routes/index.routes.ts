@@ -8,10 +8,10 @@ import {
   rebuildIndex,
   rebuildTextIndex,
   rebuildAllIndexes,
-} from "../controllers/index.controller";
+} from "../controllers/index.controller.js";
 
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 
 const router = Router({ mergeParams: true });
 
@@ -27,3 +27,4 @@ router.delete("/text/:field", dropTextIndex);
 router.delete("/:field", dropIndex);
 
 export default router;
+

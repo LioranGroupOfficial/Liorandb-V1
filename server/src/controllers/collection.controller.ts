@@ -1,23 +1,23 @@
 ﻿import { Request, Response } from "express";
-import { openReadDatabase, openWriteDatabase } from "../config/database";
+import { openReadDatabase, openWriteDatabase } from "../config/database.js";
 import {
   createCollectionByName,
   deleteCollectionByName,
   listCollectionNames,
   renameCollectionByName,
-} from "../utils/coreStorage";
-import { requireDatabaseAccess } from "../utils/databaseAccess";
-import { sendApiError } from "../utils/apiError";
+} from "../utils/coreStorage.js";
+import { requireDatabaseAccess } from "../utils/databaseAccess.js";
+import { sendApiError } from "../utils/apiError.js";
 import {
   readCollectionDateOption,
   reconfigureCollectionDateOption,
   type CollectionDateOption,
   openConfiguredCollection,
-} from "../utils/collectionConfig";
-import { getPaused, setPaused } from "../utils/pause";
-import { recreateManager } from "../config/database";
-import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
-import { isSnapshotRunning } from "../utils/snapshots";
+} from "../utils/collectionConfig.js";
+import { getPaused, setPaused } from "../utils/pause.js";
+import { recreateManager } from "../config/database.js";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance.js";
+import { isSnapshotRunning } from "../utils/snapshots.js";
 
 export const listCollections = async (req: Request, res: Response) => {
   try {
@@ -163,3 +163,4 @@ export const patchCollectionOptions = async (req: Request, res: Response) => {
     return sendApiError(res, error, 400);
   }
 };
+

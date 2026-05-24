@@ -1,8 +1,8 @@
-// src/controllers/auth.controller.ts
+﻿// src/controllers/auth.controller.ts
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
-import { getAuthCollection } from "../config/database";
-import { AuthRole, AuthUser } from "../types/auth-user";
+import { getAuthCollection } from "../config/database.js";
+import { AuthRole, AuthUser } from "../types/auth-user.js";
 import {
   buildAuthTokenPayload,
   canManageRole,
@@ -12,8 +12,8 @@ import {
   issueUserToken,
   listUsers,
   setUserCorsOrigins
-} from "../utils/auth";
-import { JWT_SECRET } from "../utils/token";
+} from "../utils/auth.js";
+import { JWT_SECRET } from "../utils/token.js";
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -134,7 +134,7 @@ export const listManagedUsers = async (req: Request, res: Response) => {
 
   const users = await listUsers();
   return res.json({
-    users: users.map((user) => ({
+    users: users.map((user: AuthUser) => ({
       userId: user.userId,
       username: user.username,
       role: user.role,
@@ -221,3 +221,4 @@ export const updateUserCors = async (req: Request, res: Response) => {
     return res.status(status).json({ error: message });
   }
 };
+

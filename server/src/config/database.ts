@@ -1,9 +1,9 @@
-// src/config/database.ts
+﻿// src/config/database.ts
 import path from "path";
 import { LioranManager, getBaseDBFolder } from "@liorandb/core";
-import type { AuthUser, ManagedDatabaseRecord } from "../types/auth-user";
-import { parseCLIArgs } from "../utils/cli";
-import { loadEnvFile } from "../utils/envFile";
+import type { AuthUser, ManagedDatabaseRecord } from "../types/auth-user.js";
+import { parseCLIArgs } from "../utils/cli.js";
+import { loadEnvFile } from "../utils/envFile.js";
 
 loadEnvFile();
 
@@ -372,9 +372,41 @@ function isRecoverableCoreError(error: unknown) {
 
   // Some abstract-level errors surface as ModuleError with only message.
   if (name === "ModuleError" && /iterator is not open/i.test(message)) return true;
+  if (name === "ModuleError" && /database is not open/i.test(message)) return true;
   if (/cannot call next\(\) after close\(\)/i.test(message)) return true;
 
   return false;
+}
+
+export async function withCoreRecovery<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempt = 1
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    // If we hit a follower, update manager to the current leader and retry once.
+    const leader = getNotLeaderLeader(error);
+    if (leader && attempt < 2) {
+      const leaderManager = findManagerForLeader(leader);
+      if (leaderManager) {
+        manager = leaderManager;
+        return withCoreRecovery(label, fn, attempt + 1);
+      }
+    }
+
+    if (!isRecoverableCoreError(error) || attempt >= 2) {
+      throw error;
+    }
+
+    console.error(
+      `[core-recovery] ${String((error as any)?.code || (error as any)?.name || "error")} during ${label}. Recreating manager...`
+    );
+
+    await recreateManager();
+    return withCoreRecovery(label, fn, attempt + 1);
+  }
 }
 
 type NotLeaderErrorLike = {
@@ -457,3 +489,4 @@ export async function getDatabaseMetadataCollection() {
   const db = await openWriteDatabase("_auth");
   return db.collection<ManagedDatabaseRecord>("databases");
 }
+

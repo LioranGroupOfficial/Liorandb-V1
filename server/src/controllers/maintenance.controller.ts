@@ -1,18 +1,18 @@
 ﻿import { Request, Response } from "express";
-import { getRequestAuth, isAdminRole } from "../utils/auth";
+import { getRequestAuth, isAdminRole } from "../utils/auth.js";
 import {
   isSnapshotRunning,
   listSnapshots,
   runSnapshot,
   getSnapshotConfig,
-} from "../utils/snapshots";
-import { closeManager, manager, openWriteDatabase, recreateManager } from "../config/database";
-import { listDatabaseNames } from "../utils/coreStorage";
-import { sendApiError } from "../utils/apiError";
-import { JWT_SECRET } from "../utils/token";
-import { requestShutdown } from "../utils/shutdown";
-import { getPaused, setPaused } from "../utils/pause";
-import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
+} from "../utils/snapshots.js";
+import { closeManager, manager, openWriteDatabase, recreateManager } from "../config/database.js";
+import { listDatabaseNames } from "../utils/coreStorage.js";
+import { sendApiError } from "../utils/apiError.js";
+import { JWT_SECRET } from "../utils/token.js";
+import { requestShutdown } from "../utils/shutdown.js";
+import { getPaused, setPaused } from "../utils/pause.js";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance.js";
 import path from "path";
 
 function requireAdmin(req: Request, res: Response) {
@@ -205,3 +205,4 @@ export const restoreSnapshot = async (req: Request, res: Response) => {
 
   (timer as any).unref?.();
 };
+

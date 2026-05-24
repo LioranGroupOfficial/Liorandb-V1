@@ -1,10 +1,10 @@
 ﻿import fs from "fs";
 import path from "path";
 import { Request, Response } from "express";
-import { openReadDatabase, openWriteDatabase } from "../config/database";
-import { requireDatabaseAccess } from "../utils/databaseAccess";
-import { sendApiError } from "../utils/apiError";
-import type { TextIndexOptions } from "../utils/collectionConfig";
+import { openReadDatabase, openWriteDatabase } from "../config/database.js";
+import { requireDatabaseAccess } from "../utils/databaseAccess.js";
+import { sendApiError } from "../utils/apiError.js";
+import type { TextIndexOptions } from "../utils/collectionConfig.js";
 
 function sanitizeSegment(value: string, kind: string) {
   if (!value || typeof value !== "string") {
@@ -316,3 +316,4 @@ export const rebuildAllIndexes = async (req: Request, res: Response) => {
     return sendApiError(res, error, 400);
   }
 };
+

@@ -1,12 +1,12 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 
 import { execFileSync } from "child_process";
 import fs from "fs";
 import bcrypt from "bcryptjs";
-import { getAuthCollection, manager } from "../config/database";
-import { AuthUser } from "../types/auth-user";
-import { getSecretFilePath } from "../utils/secret";
-import { readServerConfig } from "../utils/serverConfig";
+import { getAuthCollection, manager } from "../config/database.js";
+import { AuthUser } from "../types/auth-user.js";
+import { getSecretFilePath } from "../utils/secret.js";
+import { readServerConfig } from "../utils/serverConfig.js";
 
 function printUsage() {
   console.log(`Usage:
@@ -292,3 +292,4 @@ main()
   .finally(async () => {
     await manager.closeAll();
   });
+

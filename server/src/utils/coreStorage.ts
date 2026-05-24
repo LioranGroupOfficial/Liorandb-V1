@@ -1,6 +1,6 @@
-import fs from "fs";
+﻿import fs from "fs";
 import path from "path";
-import { manager, openWriteDatabase } from "../config/database";
+import { manager, openWriteDatabase, withCoreRecovery } from "../config/database.js";
 
 export const AUTH_DB_NAME = "_auth";
 const WAL_DIR_NAME = "__wal";
@@ -114,36 +114,42 @@ export async function renameDatabaseByName(currentName: string, nextName: string
 
 export async function listCollectionNames(dbName: string) {
   assertAllowedDatabaseName(dbName);
-  const db = await openWriteDatabase(dbName);
-  return listSubdirectories(db.basePath).sort((a, b) => a.localeCompare(b));
+  return withCoreRecovery(`listCollectionNames(${dbName})`, async () => {
+    const db = await openWriteDatabase(dbName);
+    return listSubdirectories(db.basePath).sort((a, b) => a.localeCompare(b));
+  });
 }
 
 export async function createCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
   assertAllowedDatabaseName(dbName);
-  const db = await openWriteDatabase(dbName);
-  db.collection(collectionName);
-  return collectionName;
+  return withCoreRecovery(`createCollectionByName(${dbName}/${collectionName})`, async () => {
+    const db = await openWriteDatabase(dbName);
+    db.collection(collectionName);
+    return collectionName;
+  });
 }
 
 export async function deleteCollectionByName(dbName: string, collectionName: string) {
   assertSafeName(collectionName, "collection");
   assertAllowedDatabaseName(dbName);
-  const db = await openWriteDatabase(dbName);
-  const collectionPath = path.join(db.basePath, collectionName);
+  return withCoreRecovery(`deleteCollectionByName(${dbName}/${collectionName})`, async () => {
+    const db = await openWriteDatabase(dbName);
+    const collectionPath = path.join(db.basePath, collectionName);
 
-  const openCollection = db.collections.get(collectionName);
-  if (openCollection) {
-    await openCollection.close();
-    db.collections.delete(collectionName);
-  }
+    const openCollection = db.collections.get(collectionName);
+    if (openCollection) {
+      await openCollection.close();
+      db.collections.delete(collectionName);
+    }
 
-  if (!fs.existsSync(collectionPath)) {
-    return false;
-  }
+    if (!fs.existsSync(collectionPath)) {
+      return false;
+    }
 
-  await fs.promises.rm(collectionPath, { recursive: true, force: true });
-  return true;
+    await fs.promises.rm(collectionPath, { recursive: true, force: true });
+    return true;
+  });
 }
 
 export async function renameCollectionByName(
@@ -155,24 +161,27 @@ export async function renameCollectionByName(
   assertSafeName(nextName, "collection");
   assertAllowedDatabaseName(dbName);
 
-  const db = await openWriteDatabase(dbName);
-  const currentPath = path.join(db.basePath, currentName);
-  const nextPath = path.join(db.basePath, nextName);
+  return withCoreRecovery(`renameCollectionByName(${dbName}/${currentName}->${nextName})`, async () => {
+    const db = await openWriteDatabase(dbName);
+    const currentPath = path.join(db.basePath, currentName);
+    const nextPath = path.join(db.basePath, nextName);
 
-  if (!fs.existsSync(currentPath)) {
-    throw new Error("collection not found");
-  }
+    if (!fs.existsSync(currentPath)) {
+      throw new Error("collection not found");
+    }
 
-  if (fs.existsSync(nextPath)) {
-    throw new Error("target collection already exists");
-  }
+    if (fs.existsSync(nextPath)) {
+      throw new Error("target collection already exists");
+    }
 
-  const openCollection = db.collections.get(currentName);
-  if (openCollection) {
-    await openCollection.close();
-    db.collections.delete(currentName);
-  }
+    const openCollection = db.collections.get(currentName);
+    if (openCollection) {
+      await openCollection.close();
+      db.collections.delete(currentName);
+    }
 
-  await fs.promises.rename(currentPath, nextPath);
-  return nextName;
+    await fs.promises.rename(currentPath, nextPath);
+    return nextName;
+  });
 }
+

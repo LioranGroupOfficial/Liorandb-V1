@@ -1,12 +1,12 @@
-import bcrypt from "bcryptjs";
+﻿import bcrypt from "bcryptjs";
 import { Request } from "express";
 import fs from "fs";
 import path from "path";
-import { getDatabaseMetadataCollection, manager, openWriteDatabase } from "../config/database";
-import { AuthRole, ManagedDatabaseRecord, RequestAuthContext } from "../types/auth-user";
-import { decryptValue, encryptValue } from "./crypto";
-import { getRequestAuth, isAdminRole } from "./auth";
-import { listDatabaseNames } from "./coreStorage";
+import { getDatabaseMetadataCollection, manager, openWriteDatabase, withCoreRecovery } from "../config/database.js";
+import { AuthRole, ManagedDatabaseRecord, RequestAuthContext } from "../types/auth-user.js";
+import { decryptValue, encryptValue } from "./crypto.js";
+import { getRequestAuth, isAdminRole } from "./auth.js";
+import { listDatabaseNames } from "./coreStorage.js";
 
 function sanitizeSegment(value: string, kind: string) {
   if (!value || typeof value !== "string") {
@@ -31,14 +31,18 @@ function toConnectionString(host: string, record: ManagedDatabaseRecord, passwor
 }
 
 export async function getDatabaseRecord(databaseName: string) {
-  const metadata = await getDatabaseMetadataCollection();
-  return await metadata.findOne({ databaseName }) as ManagedDatabaseRecord | null;
+  return withCoreRecovery(`getDatabaseRecord(${databaseName})`, async () => {
+    const metadata = await getDatabaseMetadataCollection();
+    return await metadata.findOne({ databaseName }) as ManagedDatabaseRecord | null;
+  });
 }
 
 export async function listManagedDatabases(ownerUserId?: string) {
-  const metadata = await getDatabaseMetadataCollection();
-  const records = await metadata.find(ownerUserId ? { ownerUserId } : {}) as ManagedDatabaseRecord[];
-  return records.sort((a, b) => a.databaseName.localeCompare(b.databaseName));
+  return withCoreRecovery(`listManagedDatabases(${ownerUserId || "all"})`, async () => {
+    const metadata = await getDatabaseMetadataCollection();
+    const records = await metadata.find(ownerUserId ? { ownerUserId } : {}) as ManagedDatabaseRecord[];
+    return records.sort((a, b) => a.databaseName.localeCompare(b.databaseName));
+  });
 }
 
 export async function createManagedDatabase(input: {
@@ -47,74 +51,80 @@ export async function createManagedDatabase(input: {
   ownerRole: AuthRole;
   requestedName: string;
 }) {
-  const metadata = await getDatabaseMetadataCollection();
-  const requestedName = sanitizeSegment(input.requestedName, "database name");
-  const databaseName = buildOwnedDatabaseName(input.ownerUserId, requestedName, input.ownerRole);
+  return withCoreRecovery(`createManagedDatabase(${input.requestedName})`, async () => {
+    const metadata = await getDatabaseMetadataCollection();
+    const requestedName = sanitizeSegment(input.requestedName, "database name");
+    const databaseName = buildOwnedDatabaseName(input.ownerUserId, requestedName, input.ownerRole);
 
-  const existing = await metadata.findOne({ databaseName });
-  if (existing) {
-    throw new Error("database already exists");
-  }
+    const existing = await metadata.findOne({ databaseName });
+    if (existing) {
+      throw new Error("database already exists");
+    }
 
-  await openWriteDatabase(databaseName);
+    await openWriteDatabase(databaseName);
 
-  const now = new Date().toISOString();
-  const created = await metadata.insertOne({
-    databaseName,
-    requestedName,
-    ownerUserId: input.ownerUserId,
-    ownerRole: input.ownerRole,
-    createdAt: now,
-    updatedAt: now,
-    createdBy: input.actor.userId,
-  } as ManagedDatabaseRecord) as ManagedDatabaseRecord;
+    const now = new Date().toISOString();
+    const created = await metadata.insertOne({
+      databaseName,
+      requestedName,
+      ownerUserId: input.ownerUserId,
+      ownerRole: input.ownerRole,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: input.actor.userId,
+    } as ManagedDatabaseRecord) as ManagedDatabaseRecord;
 
-  return created;
+    return created;
+  });
 }
 
 export async function deleteManagedDatabase(record: ManagedDatabaseRecord) {
-  const metadata = await getDatabaseMetadataCollection();
-  const db = manager.openDBs.get(record.databaseName);
-  if (db) {
-    await db.close();
-    manager.openDBs.delete(record.databaseName);
-  }
+  return withCoreRecovery(`deleteManagedDatabase(${record.databaseName})`, async () => {
+    const metadata = await getDatabaseMetadataCollection();
+    const db = manager.openDBs.get(record.databaseName);
+    if (db) {
+      await db.close();
+      manager.openDBs.delete(record.databaseName);
+    }
 
-  const dbPath = path.join(manager.rootPath, record.databaseName);
-  if (fs.existsSync(dbPath)) {
-    await fs.promises.rm(dbPath, { recursive: true, force: true });
-  }
+    const dbPath = path.join(manager.rootPath, record.databaseName);
+    if (fs.existsSync(dbPath)) {
+      await fs.promises.rm(dbPath, { recursive: true, force: true });
+    }
 
-  await metadata.deleteMany({ databaseName: record.databaseName });
+    await metadata.deleteMany({ databaseName: record.databaseName });
+  });
 }
 
 export async function setDatabaseCredentials(record: ManagedDatabaseRecord, username: string, password: string) {
-  const metadata = await getDatabaseMetadataCollection();
-  const cleanUsername = sanitizeSegment(username, "username");
+  return withCoreRecovery(`setDatabaseCredentials(${record.databaseName})`, async () => {
+    const metadata = await getDatabaseMetadataCollection();
+    const cleanUsername = sanitizeSegment(username, "username");
 
-  if (password.length < 8) {
-    throw new Error("password must be at least 8 characters");
-  }
+    if (password.length < 8) {
+      throw new Error("password must be at least 8 characters");
+    }
 
-  const encrypted = encryptValue(password);
-  const passwordHash = await bcrypt.hash(password, 10);
-  const updatedAt = new Date().toISOString();
+    const encrypted = encryptValue(password);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const updatedAt = new Date().toISOString();
 
-  const updated: ManagedDatabaseRecord = {
-    ...record,
-    dbUsername: cleanUsername,
-    dbPasswordHash: passwordHash,
-    dbPasswordCipherText: encrypted.cipherText,
-    dbPasswordIv: encrypted.iv,
-    dbPasswordTag: encrypted.tag,
-    credentialsUpdatedAt: updatedAt,
-    updatedAt,
-  };
+    const updated: ManagedDatabaseRecord = {
+      ...record,
+      dbUsername: cleanUsername,
+      dbPasswordHash: passwordHash,
+      dbPasswordCipherText: encrypted.cipherText,
+      dbPasswordIv: encrypted.iv,
+      dbPasswordTag: encrypted.tag,
+      credentialsUpdatedAt: updatedAt,
+      updatedAt,
+    };
 
-  await metadata.deleteMany({ databaseName: record.databaseName });
-  await metadata.insertOne(updated as ManagedDatabaseRecord);
+    await metadata.deleteMany({ databaseName: record.databaseName });
+    await metadata.insertOne(updated as ManagedDatabaseRecord);
 
-  return updated;
+    return updated;
+  });
 }
 
 export function getDatabasePassword(record: ManagedDatabaseRecord) {
@@ -236,3 +246,4 @@ export async function resolveDatabaseListForAuth(auth: RequestAuthContext) {
 
   return managed.sort((a, b) => a.databaseName.localeCompare(b.databaseName));
 }
+

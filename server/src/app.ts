@@ -1,24 +1,29 @@
 ﻿import express from "express";
 import path from "path";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import authRoutes from "./routes/auth.routes";
-import databaseRoutes from "./routes/database.routes";
-import collectionRoutes from "./routes/collection.routes";
-import documentRoutes from "./routes/document.routes";
-import indexRoutes from "./routes/index.routes";
-import maintenanceRoutes from "./routes/maintenance.routes";
-import docsRoutes from "./routes/docs.routes";
-import coreRoutes from "./routes/core.routes";
+import authRoutes from "./routes/auth.routes.js";
+import databaseRoutes from "./routes/database.routes.js";
+import collectionRoutes from "./routes/collection.routes.js";
+import documentRoutes from "./routes/document.routes.js";
+import indexRoutes from "./routes/index.routes.js";
+import maintenanceRoutes from "./routes/maintenance.routes.js";
+import docsRoutes from "./routes/docs.routes.js";
+import coreRoutes from "./routes/core.routes.js";
 
-import { requestLogger } from "./middleware/requestLogger.middleware";
-import { securityHeaders } from "./middleware/securityHeaders.middleware";
-import { createRateLimiter } from "./middleware/rateLimit.middleware";
-import { createConcurrencyLimiter } from "./middleware/concurrency.middleware";
-import { buildCorsMiddleware } from "./middleware/corsConfig.middleware";
-import { maintenanceMiddleware } from "./middleware/maintenance.middleware";
+import { requestLogger } from "./middleware/requestLogger.middleware.js";
+import { securityHeaders } from "./middleware/securityHeaders.middleware.js";
+import { createRateLimiter } from "./middleware/rateLimit.middleware.js";
+import { createConcurrencyLimiter } from "./middleware/concurrency.middleware.js";
+import { buildCorsMiddleware } from "./middleware/corsConfig.middleware.js";
+import { maintenanceMiddleware } from "./middleware/maintenance.middleware.js";
 
 const app = express();
 app.disable("x-powered-by");
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // trust proxy
 const trustProxy = process.env.LIORANDB_TRUST_PROXY;
@@ -119,3 +124,4 @@ app.use("/db/:db/collections/:col/indexes", indexRoutes);
 app.use("/db/:db/collections/:col", documentRoutes);
 
 export default app;
+

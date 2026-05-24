@@ -1,6 +1,6 @@
-import { NextFunction, Request, Response } from "express";
-import { isSnapshotRunning } from "../utils/snapshots";
-import { getPaused } from "../utils/pause";
+﻿import { NextFunction, Request, Response } from "express";
+import { isSnapshotRunning } from "../utils/snapshots.js";
+import { getPaused } from "../utils/pause.js";
 
 export function maintenanceMiddleware(req: Request, res: Response, next: NextFunction) {
   if (getPaused()) {
@@ -23,4 +23,5 @@ export function maintenanceMiddleware(req: Request, res: Response, next: NextFun
   res.setHeader("Retry-After", "30");
   return res.status(503).json({ error: "server maintenance in progress" });
 }
+
 

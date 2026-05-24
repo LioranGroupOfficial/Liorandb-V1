@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import {
   issueManagedUserToken,
   listManagedUsers,
@@ -8,9 +8,9 @@ import {
   register,
   updateMyCors,
   updateUserCors
-} from "../controllers/auth.controller";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+} from "../controllers/auth.controller.js";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 
 const router = Router();
 
@@ -24,3 +24,4 @@ router.post("/users/:userId/token", authMiddleware, userCorsMiddleware, issueMan
 router.put("/users/:userId/cors", authMiddleware, userCorsMiddleware, updateUserCors);
 
 export default router;
+

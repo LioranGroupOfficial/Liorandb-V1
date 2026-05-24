@@ -1,8 +1,8 @@
-import { Request, Response } from "express";
-import { openReadDatabase, openWriteDatabase } from "../config/database";
-import { requireDatabaseAccess } from "../utils/databaseAccess";
-import { sendApiError } from "../utils/apiError";
-import { getCollectionDocMigrations, migrateDocIfNeeded, setCollectionDocMigrations, type CollectionDocMigrationsConfig } from "../utils/docMigrations";
+﻿import { Request, Response } from "express";
+import { openReadDatabase, openWriteDatabase } from "../config/database.js";
+import { requireDatabaseAccess } from "../utils/databaseAccess.js";
+import { sendApiError } from "../utils/apiError.js";
+import { getCollectionDocMigrations, migrateDocIfNeeded, setCollectionDocMigrations, type CollectionDocMigrationsConfig } from "../utils/docMigrations.js";
 
 function isPlainObject(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -196,3 +196,4 @@ export const testCollectionMigration = async (req: Request, res: Response) => {
     return sendApiError(res, error, 400);
   }
 };
+

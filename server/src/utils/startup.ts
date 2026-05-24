@@ -1,6 +1,6 @@
 ﻿import bcrypt from "bcryptjs";
-import { getAuthCollection, manager, recreateManager } from "../config/database";
-import { AuthUser } from "../types/auth-user";
+import { getAuthCollection, manager, recreateManager } from "../config/database.js";
+import { AuthUser } from "../types/auth-user.js";
 
 function getDefaultAdminCreds() {
   const username = (process.env.LIORANDB_DEFAULT_ADMIN_USERNAME || "admin").trim() || "admin";
@@ -72,3 +72,4 @@ export async function ensureAdminUser() {
     return ensureOnce();
   }
 }
+

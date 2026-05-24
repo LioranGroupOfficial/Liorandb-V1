@@ -1,6 +1,6 @@
-// src/utils/token.ts
+﻿// src/utils/token.ts
 import jwt, { SignOptions } from "jsonwebtoken";
-import { ensurePersistentSecret } from "./secret";
+import { ensurePersistentSecret } from "./secret.js";
 
 export const JWT_SECRET = ensurePersistentSecret();
 
@@ -16,3 +16,4 @@ export function signToken(payload: object) {
 export function verifyToken<T = any>(token: string): T {
   return jwt.verify(token, JWT_SECRET) as T;
 }
+

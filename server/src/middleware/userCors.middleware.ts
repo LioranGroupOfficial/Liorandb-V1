@@ -1,5 +1,5 @@
-import { NextFunction, Request, Response } from "express";
-import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth";
+﻿import { NextFunction, Request, Response } from "express";
+import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth.js";
 
 type CacheEntry = { origins: string[] | null; expiresAt: number };
 const cache = new Map<string, CacheEntry>();
@@ -51,4 +51,5 @@ export async function userCorsMiddleware(req: Request, res: Response, next: Next
 
   return next();
 }
+
 

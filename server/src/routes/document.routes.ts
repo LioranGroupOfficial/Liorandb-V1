@@ -12,10 +12,10 @@ import {
   aggregateDocuments,
   explainQuery,
   insertManyStream,
-} from "../controllers/document.controller";
+} from "../controllers/document.controller.js";
 
-import { authMiddleware } from "../middleware/auth.middleware";
-import { userCorsMiddleware } from "../middleware/userCors.middleware";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { userCorsMiddleware } from "../middleware/userCors.middleware.js";
 
 const router = Router({ mergeParams: true });
 
@@ -35,3 +35,4 @@ router.post("/deleteMany", deleteMany);
 router.post("/count", countDocuments);
 
 export default router;
+

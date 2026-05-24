@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from "express";
-import { hostLog } from "../utils/hostLogger";
+﻿import { Request, Response, NextFunction } from "express";
+import { hostLog } from "../utils/hostLogger.js";
 
 export function requestLogger(req: Request, res: Response, next: NextFunction) {
   const start = Date.now();
@@ -13,4 +13,5 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
 
   next();
 }
+
 

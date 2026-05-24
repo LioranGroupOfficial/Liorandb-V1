@@ -1,6 +1,7 @@
 ﻿import { Request, Response } from "express";
-import { openReadDatabase, openWriteDatabase } from "../config/database";
-import { listCollectionNames } from "../utils/coreStorage";
+import { openReadDatabase, openWriteDatabase } from "../config/database.js";
+import { listCollectionNames } from "../utils/coreStorage.js";
+import type { ManagedDatabaseRecord } from "../types/auth-user.js";
 import {
   buildDatabaseResponse,
   createManagedDatabase,
@@ -12,14 +13,14 @@ import {
   requireDatabaseAccess,
   resolveDatabaseListForAuth,
   setDatabaseCredentials,
-} from "../utils/databaseAccess";
-import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth";
-import { sendApiError } from "../utils/apiError";
-import { openConfiguredCollection } from "../utils/collectionConfig";
-import { getPaused, setPaused } from "../utils/pause";
-import { recreateManager } from "../config/database";
-import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance";
-import { isSnapshotRunning } from "../utils/snapshots";
+} from "../utils/databaseAccess.js";
+import { findUserById, getRequestAuth, isAdminRole } from "../utils/auth.js";
+import { sendApiError } from "../utils/apiError.js";
+import { openConfiguredCollection } from "../utils/collectionConfig.js";
+import { getPaused, setPaused } from "../utils/pause.js";
+import { recreateManager } from "../config/database.js";
+import { runExclusiveMaintenance } from "../utils/exclusiveMaintenance.js";
+import { isSnapshotRunning } from "../utils/snapshots.js";
 
 export const listDatabases = async (req: Request, res: Response) => {
   try {
@@ -32,7 +33,7 @@ export const listDatabases = async (req: Request, res: Response) => {
     const host = getRequestHost(req);
 
     res.json({
-      databases: databases.map((record) => buildDatabaseResponse(record, host)),
+      databases: databases.map((record: ManagedDatabaseRecord) => buildDatabaseResponse(record, host)),
     });
   } catch {
     res.status(500).json({ error: "server error" });
@@ -148,7 +149,7 @@ export const listDatabasesByUser = async (req: Request, res: Response) => {
   return res.json({
     userId: user.userId,
     count: records.length,
-    databases: records.map((record) => buildDatabaseResponse(record, host)),
+    databases: records.map((record: ManagedDatabaseRecord) => buildDatabaseResponse(record, host)),
   });
 };
 
@@ -404,3 +405,4 @@ export const runTransaction = async (req: Request, res: Response) => {
     return sendApiError(res, error, 400);
   }
 };
+
