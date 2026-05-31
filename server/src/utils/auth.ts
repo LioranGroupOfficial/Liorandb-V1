@@ -72,7 +72,7 @@ export async function createManagedUser(input: {
 
     const createdAt = new Date().toISOString();
 
-    const created = await users.insertOne({
+    const record: AuthUser = {
       userId,
       username,
       role: input.role,
@@ -83,9 +83,12 @@ export async function createManagedUser(input: {
       createdAt,
       updatedAt: createdAt,
       createdBy: input.createdBy,
-    } as AuthUser) as AuthUser;
+    } as AuthUser;
 
-    return created;
+    // `insertOne()` return shape can vary across engine modes; return the record we wrote.
+    await users.insertOne(record as AuthUser);
+
+    return record;
   });
 }
 

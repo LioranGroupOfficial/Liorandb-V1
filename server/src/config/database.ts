@@ -69,15 +69,23 @@ function makeNodeOptions(
     cache: maxRAMMB ? { enabled: true, maxRAMMB } : undefined,
   };
 
+  // The HTTP server embeds the engine in-process. IPC modes can downgrade the DB handle to an IPC proxy
+  // that doesn't expose the full surface area (e.g. indexes), and can also introduce per-node contention
+  // in embedded clusters on Windows. Default to no IPC for the server entrypoint unless explicitly set.
+  const serverPreferNoIpc =
+    isServerEntry() && !(cli.ipc || process.env.LIORANDB_IPC_MODE);
+
   if (singleNodeMode) {
     // Ensure we never fall back to CLIENT mode (which requires an external IPC primary).
     // We immediately close/disable the IPC listener in `disableIPCForSingleNode()`.
-    base.ipc = "primary";
+    base.ipc = serverPreferNoIpc ? "disabled" : "primary";
   } else {
     // For the `ldb-serve`/server entrypoint, default to an embedded primary (no external IPC dependency).
     // Other entrypoints may prefer `auto`/client behavior.
     const requested =
-      cli.ipc || (process.env.LIORANDB_IPC_MODE as any) || (isServerEntry() ? "primary" : "auto");
+      (serverPreferNoIpc
+        ? "disabled"
+        : cli.ipc || (process.env.LIORANDB_IPC_MODE as any) || (isServerEntry() ? "primary" : "auto"));
     // In embedded multi-node mode, only node-0 should host IPC. Having every node try to be an IPC
     // primary can cause startup races and port/file contention (especially on Windows).
     base.ipc = cluster && nodeId !== "node-0" ? "disabled" : requested;

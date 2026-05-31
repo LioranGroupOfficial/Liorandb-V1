@@ -1,12 +1,10 @@
 ﻿import bcrypt from "bcryptjs";
 import { Request } from "express";
-import fs from "fs";
-import path from "path";
 import { getDatabaseMetadataCollection, manager, openWriteDatabase, withCoreRecovery } from "../config/database.js";
 import { AuthRole, ManagedDatabaseRecord, RequestAuthContext } from "../types/auth-user.js";
 import { decryptValue, encryptValue } from "./crypto.js";
 import { getRequestAuth, isAdminRole } from "./auth.js";
-import { listDatabaseNames } from "./coreStorage.js";
+import { deleteDatabaseByName, listDatabaseNames } from "./coreStorage.js";
 
 function sanitizeSegment(value: string, kind: string) {
   if (!value || typeof value !== "string") {
@@ -64,7 +62,7 @@ export async function createManagedDatabase(input: {
     await openWriteDatabase(databaseName);
 
     const now = new Date().toISOString();
-    const created = await metadata.insertOne({
+    const record: ManagedDatabaseRecord = {
       databaseName,
       requestedName,
       ownerUserId: input.ownerUserId,
@@ -72,25 +70,27 @@ export async function createManagedDatabase(input: {
       createdAt: now,
       updatedAt: now,
       createdBy: input.actor.userId,
-    } as ManagedDatabaseRecord) as ManagedDatabaseRecord;
+    };
 
-    return created;
+    // `insertOne()` return shape can vary across engine modes; return the record we wrote.
+    await metadata.insertOne(record as ManagedDatabaseRecord);
+
+    return record;
   });
 }
 
 export async function deleteManagedDatabase(record: ManagedDatabaseRecord) {
   return withCoreRecovery(`deleteManagedDatabase(${record.databaseName})`, async () => {
     const metadata = await getDatabaseMetadataCollection();
+
+    // Close any open handle in this process, then ask the engine to drop the database.
     const db = manager.openDBs.get(record.databaseName);
     if (db) {
       await db.close();
       manager.openDBs.delete(record.databaseName);
     }
 
-    const dbPath = path.join(manager.rootPath, record.databaseName);
-    if (fs.existsSync(dbPath)) {
-      await fs.promises.rm(dbPath, { recursive: true, force: true });
-    }
+    await deleteDatabaseByName(record.databaseName);
 
     await metadata.deleteMany({ databaseName: record.databaseName });
   });

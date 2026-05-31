@@ -63,6 +63,17 @@ export function getDatabasePath(name: string) {
 }
 
 export async function listDatabaseNames() {
+  // Prefer engine APIs when available (cluster-safe). Fall back to disk scan.
+  const anyM: any = manager as any;
+  if (typeof anyM.listDatabases === "function") {
+    const names = await anyM.listDatabases();
+    return (Array.isArray(names) ? names : [])
+      .filter((name) => typeof name === "string")
+      .filter((name) => name !== AUTH_DB_NAME && !name.startsWith("."))
+      .filter((name) => (isSingleNodeMode() ? !INTERNAL_DB_NAMES.has(name) : true))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   return listSubdirectories(manager.rootPath)
     .filter((name) => name !== AUTH_DB_NAME && !name.startsWith("."))
     .filter((name) => (isSingleNodeMode() ? !INTERNAL_DB_NAMES.has(name) : true))
@@ -72,6 +83,12 @@ export async function listDatabaseNames() {
 export async function createDatabaseByName(name: string) {
   assertSafeName(name, "database");
   assertAllowedDatabaseName(name);
+  const anyM: any = manager as any;
+  if (typeof anyM.createDatabase === "function") {
+    await withCoreRecovery(`createDatabaseByName(${name})`, async () => {
+      await anyM.createDatabase(name);
+    });
+  }
   await openWriteDatabase(name);
   return name;
 }
@@ -79,6 +96,13 @@ export async function createDatabaseByName(name: string) {
 export async function deleteDatabaseByName(name: string) {
   assertSafeName(name, "database");
   assertAllowedDatabaseName(name);
+
+  const anyM: any = manager as any;
+  if (typeof anyM.dropDatabase === "function") {
+    return await withCoreRecovery(`deleteDatabaseByName(${name})`, async () => {
+      return await anyM.dropDatabase(name);
+    });
+  }
 
   const dbPath = getDatabasePath(name);
   if (!fs.existsSync(dbPath)) {
@@ -95,6 +119,14 @@ export async function renameDatabaseByName(currentName: string, nextName: string
   assertSafeName(nextName, "database");
   assertAllowedDatabaseName(currentName);
   assertAllowedDatabaseName(nextName);
+
+  const anyM: any = manager as any;
+  if (typeof anyM.renameDatabase === "function") {
+    await withCoreRecovery(`renameDatabaseByName(${currentName}->${nextName})`, async () => {
+      await anyM.renameDatabase(currentName, nextName);
+    });
+    return nextName;
+  }
 
   const currentPath = getDatabasePath(currentName);
   const nextPath = getDatabasePath(nextName);
@@ -116,6 +148,14 @@ export async function listCollectionNames(dbName: string) {
   assertAllowedDatabaseName(dbName);
   return withCoreRecovery(`listCollectionNames(${dbName})`, async () => {
     const db = await openWriteDatabase(dbName);
+    const anyDb: any = db as any;
+    if (typeof anyDb.listCollections === "function") {
+      const cols = await anyDb.listCollections();
+      return (Array.isArray(cols) ? cols : [])
+        .filter((c) => typeof c === "string" && c.trim())
+        .sort((a, b) => a.localeCompare(b));
+    }
+
     return listSubdirectories(db.basePath).sort((a, b) => a.localeCompare(b));
   });
 }
@@ -125,7 +165,18 @@ export async function createCollectionByName(dbName: string, collectionName: str
   assertAllowedDatabaseName(dbName);
   return withCoreRecovery(`createCollectionByName(${dbName}/${collectionName})`, async () => {
     const db = await openWriteDatabase(dbName);
+    const anyDb: any = db as any;
+    if (typeof anyDb.createCollection === "function") {
+      await anyDb.createCollection(collectionName);
+      return collectionName;
+    }
+
+    // Fallback: opening the handle may be lazy and not create on disk until first write.
     db.collection(collectionName);
+    const basePath = (db as any).basePath;
+    if (typeof basePath === "string" && basePath) {
+      await fs.promises.mkdir(path.join(basePath, collectionName), { recursive: true });
+    }
     return collectionName;
   });
 }
@@ -135,6 +186,11 @@ export async function deleteCollectionByName(dbName: string, collectionName: str
   assertAllowedDatabaseName(dbName);
   return withCoreRecovery(`deleteCollectionByName(${dbName}/${collectionName})`, async () => {
     const db = await openWriteDatabase(dbName);
+    const anyDb: any = db as any;
+    if (typeof anyDb.dropCollection === "function") {
+      const res = await anyDb.dropCollection(collectionName);
+      return !!(res?.ok ?? res);
+    }
     const collectionPath = path.join(db.basePath, collectionName);
 
     const openCollection = db.collections.get(collectionName);
@@ -163,6 +219,11 @@ export async function renameCollectionByName(
 
   return withCoreRecovery(`renameCollectionByName(${dbName}/${currentName}->${nextName})`, async () => {
     const db = await openWriteDatabase(dbName);
+    const anyDb: any = db as any;
+    if (typeof anyDb.renameCollection === "function") {
+      await anyDb.renameCollection(currentName, nextName);
+      return nextName;
+    }
     const currentPath = path.join(db.basePath, currentName);
     const nextPath = path.join(db.basePath, nextName);
 
